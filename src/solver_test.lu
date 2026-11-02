@@ -1,0 +1,134 @@
+//! Exhaustive abstract graph oracle, independent of search and checker predicates.
+use model
+use solver
+use checker
+
+struct Vertex {
+    family: int, revision: int, abi: int, foreign: bool,
+    dependency: int, minimum: int, offer: int, offered: int,
+    conflict: int, replacement: int,
+}
+
+fn bit(mask: int, i: int) -> bool {
+    var div = 1
+    for _j in 0..i { div *= 2 }
+    mask / div % 2 == 1
+}
+
+fn provides(v: Vertex, family: int, minimum: int) -> bool {
+    !v.foreign && v.abi == 0 && (v.family == family && v.revision >= minimum || v.offer == family && v.offered >= minimum)
+}
+
+fn oracle(vs: List[Vertex], mask: int, installed: bool, held: bool) -> bool {
+    if held && !bit(mask, 0) { return false }
+    var want = false
+    for i in 0..vs.len {
+        if !bit(mask, i) { continue }
+        let a = vs[i]
+        if a.foreign { return false }
+        if provides(a, 0, 1) { want = true }
+        if a.dependency >= 0 {
+            var satisfied = false
+            for j in 0..vs.len { if bit(mask, j) && provides(vs[j], a.dependency, a.minimum) { satisfied = true } }
+            if !satisfied { return false }
+        }
+        for j in 0..i {
+            if !bit(mask, j) { continue }
+            let b = vs[j]
+            if a.family == b.family && a.abi == b.abi { return false }
+            if a.conflict >= 0 && provides(b, a.conflict, 1) || b.conflict >= 0 && provides(a, b.conflict, 1) { return false }
+        }
+    }
+    if !want { return false }
+    if installed {
+        let old = vs[0]
+        var keep = false
+        for i in 0..vs.len {
+            if !bit(mask, i) { continue }
+            let a = vs[i]
+            if !old.foreign && a.family == old.family && a.abi == old.abi { keep = true }
+            if !old.foreign && old.abi == 0 && a.replacement == old.family { keep = true }
+        }
+        if !keep { return false }
+    }
+    true
+}
+
+fn need(family: int, minimum: int) -> model.Need {
+    model.Need { name: "p{family}", op: ">=", version: "{minimum}-1", arch: "x86_64", slot: "s0" }
+}
+
+fn any(family: int) -> model.Need {
+    model.Need { name: "p{family}", op: "any", version: "", arch: "x86_64", slot: "s0" }
+}
+
+fn package(v: Vertex) -> model.Package {
+    var required = List[model.Need]()
+    var offers = List[model.Offer]()
+    var conflicts = List[model.Need]()
+    var replacements = List[model.Need]()
+    if v.dependency >= 0 { (mut required).push(need(v.dependency, v.minimum)) }
+    if v.offer >= 0 { (mut offers).push(model.Offer { name: "p{v.offer}", version: "{v.offered}-1" }) }
+    if v.conflict >= 0 { (mut conflicts).push(any(v.conflict)) }
+    if v.replacement >= 0 { (mut replacements).push(any(v.replacement)) }
+    var arch = "x86_64"
+    if v.foreign { arch = "aarch64" }
+    model.Package { name: "p{v.family}", version: "{v.revision}-1", arch, slot: "s{v.abi}", requires: required, optional: [any(999)], provides: offers, conflicts, replaces: replacements }
+}
+
+fn draw(mut state: int, bound: int) -> int {
+    state = (state * 1664525 + 1013904223) % 4294967296
+    state / 65536 % bound
+}
+
+fn main() {
+    let seed = 1347240241
+    print("solver exhaustive seed={seed} graphs=10000 subsets-per-graph=64")
+    var rng = seed
+    for graph in 0..10000 {
+        var vs = List[Vertex]()
+        var ps = List[model.Package]()
+        for i in 0..6 {
+            let v = Vertex { family: i / 2, revision: i % 2 + 1, abi: draw(mut rng, 2), foreign: draw(mut rng, 5) == 0, dependency: draw(mut rng, 5) - 2, minimum: draw(mut rng, 2) + 1, offer: draw(mut rng, 5) - 2, offered: draw(mut rng, 2) + 1, conflict: draw(mut rng, 5) - 2, replacement: draw(mut rng, 5) - 2 }
+            (mut vs).push(v)
+            (mut ps).push(package(v))
+        }
+        let installed = draw(mut rng, 2) == 0
+        let held = installed && draw(mut rng, 2) == 0
+        var old = List[str]()
+        var holds = List[str]()
+        if installed { (mut old).push(model.id(ps[0])) }
+        if held { (mut holds).push(model.id(ps[0])) }
+        let s = model.Snapshot { packages: ps, installed: old, holds, arch: "x86_64", slot: "s0", budget: 1000000 }
+        let wants = [any(0)]
+        var exists = false
+        for mask in 0..64 {
+            let accepted = oracle(vs, mask, installed, held)
+            var ids = List[int]()
+            for i in 0..6 { if bit(mask, i) { (mut ids).push(i) } }
+            let checked = checker.check(s, wants, ids) == ""
+            assert(accepted == checked, "S3-checker-exhaustive graph={graph} mask={mask} seed={seed}")
+            if accepted { exists = true }
+        }
+        let p = solver.resolve(s, wants)
+        assert((p.status == "solved") == exists, "S3-solver-exhaustive graph={graph} seed={seed} status={p.status}")
+        assert(p.status != "budget-exceeded", "S2-small-graph-budget")
+        if exists { assert(checker.check(s, wants, p.selected) == "", "S3-returned-plan-checked") }
+    }
+    let v1 = Vertex { family: 0, revision: 1, abi: 0, foreign: false, dependency: -1, minimum: 1, offer: -1, offered: 1, conflict: -1, replacement: -1 }
+    let v2 = Vertex { family: 0, revision: 2, abi: 0, foreign: false, dependency: -1, minimum: 1, offer: -1, offered: 1, conflict: -1, replacement: -1 }
+    let a = package(v1)
+    let b = package(v2)
+    let s = model.Snapshot { packages: [a, b], installed: [model.id(a)], holds: [model.id(a)], arch: "x86_64", slot: "s0", budget: 1000 }
+    assert(solver.resolve(s, [need(0, 2)]).status == "unsatisfiable", "S1-held-package-refused")
+    assert(checker.check(s, [need(0, 2)], [1]) != "", "S3-held-package-checker")
+    let free = model.Snapshot { packages: [a, b], installed: List[str](), holds: List[str](), arch: "x86_64", slot: "s0", budget: 1000 }
+    let latest = solver.resolve(free, [any(0)])
+    assert(latest.status == "solved" && latest.selected.len == 1 && latest.selected[0] == 1, "S2-latest-compatible")
+    let tiny = model.Snapshot { packages: [a, b], installed: List[str](), holds: List[str](), arch: "x86_64", slot: "s0", budget: 1 }
+    assert(solver.resolve(tiny, [any(0)]).status == "budget-exceeded", "S2-budget-not-unsat")
+    assert(checker.check(free, [any(0)], [-1]) == "unknown-package", "S3-unknown-index")
+    assert(checker.check(free, [any(0)], [0, 0]) == "duplicate-package", "S3-duplicate-index")
+    print("END solver-exhaustive-10000 exit=0")
+    print("END held-package-refused exit=0")
+}
