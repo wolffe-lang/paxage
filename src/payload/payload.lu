@@ -7,12 +7,16 @@ use std.sort as sort
 use std.cmp as cmp
 use std.x.crypto.sha2 as sha2
 
+/// One validated logical installed record and its payload offset.
 pub struct Entry {
     path: str, kind: str, mode: int, owner: int, group: int,
     length: int, hash: str, target: str, offset: int,
 }
+/// Bounded metadata inventory; error must be empty before use.
 pub struct Inventory { entries: List[Entry], error: str }
+/// Held file descriptor and a declared bounded input window.
 pub struct Stream { fd: int, pos: int, length: int, error: str }
+/// Incremental exact-byte digest result.
 pub struct Digest { hash: str, length: int, error: str }
 
 /// Exact bounded read, never seeking beyond the declared authenticated window.
@@ -33,6 +37,7 @@ pub fn read(mut s: Stream, n: int) -> List[byte] {
     out
 }
 
+/// Whether every supplied byte is zero.
 pub fn zero(b: List[byte]) -> bool {
     for c in b { if c != 0 as byte { return false } }
     true
@@ -49,7 +54,7 @@ pub fn number(b: List[byte], base: int) -> int {
     var digits = false
     for c in b {
         let v = c as int
-        if v == 0 || v == 32 {
+        if base == 8 && (v == 0 || v == 32) {
             ended = true
         } else {
             if ended || v < 48 || v >= 48 + base { return -1 }
@@ -75,6 +80,7 @@ fn bad_text(s: str) -> bool {
     for c in s.bytes() { if c < 32 as byte || c == 127 as byte { return true } }
     false
 }
+/// F5 normalized nonreserved relative path validation.
 pub fn allowed_path(p: str) -> bool {
     if !schema.path(p) { return false }
     let head = text.split(p, "/")[0]
@@ -83,6 +89,7 @@ pub fn allowed_path(p: str) -> bool {
     }
     true
 }
+/// Lexically resolve a relative symlink without escaping the root.
 pub fn safe_link(p: str, target: str) -> bool {
     if target == "" || target.len > 4096 || text.starts_with(target, "/") || bad_text(target) { return false }
     var depth = text.split(p, "/").len - 1
@@ -108,7 +115,9 @@ fn compare(a: Entry, b: Entry) -> cmp.Ordering {
     if n > 0 { return cmp.Ordering.Greater }
     cmp.Ordering.Equal
 }
+/// Sort bounded inventory metadata by UTF-8 path bytes.
 pub fn ordered(mut es: List[Entry]) { sort.sort_by(mut es, compare) }
+/// Binary lookup in a path-ordered inventory; -1 means absent.
 pub fn find(es: List[Entry], p: str) -> int {
     var lo = 0; var hi = es.len
     while lo < hi {
