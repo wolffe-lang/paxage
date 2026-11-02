@@ -36,12 +36,12 @@ pub fn check(s: model.Snapshot, wants: List[model.Need], ids: List[int]) -> str 
     for a in 0..ids.len {
         let i = ids[a]
         if i < 0 || i >= s.packages.len { return "unknown-package" }
-        let p = s.packages[i]
+        let p = copy s.packages[i]
         if p.arch != s.arch { return "architecture {model.id(p)}" }
         for b in 0..a {
             let j = ids[b]
             if i == j { return "duplicate-package" }
-            let q = s.packages[j]
+            let q = copy s.packages[j]
             if p.name == q.name && p.arch == q.arch && p.slot == q.slot {
                 return "slot {model.id(p)}"
             }
@@ -85,7 +85,7 @@ pub fn check(s: model.Snapshot, wants: List[model.Need], ids: List[int]) -> str 
         for p in s.packages {
             if model.id(p) == old {
                 for i in ids {
-                    let q = s.packages[i]
+                    let q = copy s.packages[i]
                     if q.name == p.name && q.arch == p.arch && q.slot == p.slot { found = true }
                     for n in q.replaces { if offers(p, n, false) { found = true } }
                 }

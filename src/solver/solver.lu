@@ -52,10 +52,10 @@ fn replaced(p: model.Package, old: model.Package) -> bool {
 }
 
 fn compatible(s: model.Snapshot, chosen: List[int], candidate: int) -> str {
-    let p = s.packages[candidate]
+    let p = copy s.packages[candidate]
     if p.arch != s.arch { return "architecture {model.id(p)}" }
     for i in chosen {
-        let q = s.packages[i]
+        let q = copy s.packages[i]
         if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return "slot {model.id(p)}" }
         for c in p.conflicts {
             if satisfies(q, c) { return "conflict {model.id(p)} {model.id(q)}" }
@@ -147,8 +147,8 @@ fn walk(
             var at = -1
             for i in 0..s.packages.len { if model.id(s.packages[i]) == old { at = i } }
             for i in chosen {
-                let p = s.packages[i]
-                let q = s.packages[at]
+                let p = copy s.packages[i]
+                let q = copy s.packages[at]
                 if p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q) {
                     kept = true
                 }
@@ -168,12 +168,12 @@ fn walk(
     }
     var tried = false
     for candidate in order {
-        let p = s.packages[candidate]
+        let p = copy s.packages[candidate]
         var fits = false
         if kind == "hold" {
             fits = model.id(p) == exact
         } else if kind == "installed" {
-            let q = s.packages[old_index]
+            let q = copy s.packages[old_index]
             fits = p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q)
         } else {
             fits = satisfies(p, need)

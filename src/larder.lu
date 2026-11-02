@@ -154,7 +154,7 @@ fn emit(s: model.Snapshot, p: solver.Plan, wants: List[str], as_json: bool) {
         for old_pkg in s.packages {
             if model.id(old_pkg) != old { continue }
             for i in p.selected {
-                let q = s.packages[i]
+                let q = copy s.packages[i]
                 if q.name == old_pkg.name && q.arch == old_pkg.arch && q.slot == old_pkg.slot {
                     replacement = model.id(q)
                     reason = "same-slot upgrade"
