@@ -1,0 +1,24 @@
+pm02 prediction, 2026-11-02. Authority: wolf planning trunk 914c529,
+02-pack-and-stage contract; larder eef47678 F1-F6; pax 5da8daaf design.
+The pinned std SHA-256 new256/update256/final256 is incremental: digest state
+and a <=64 KiB input chunk should give payload-size-independent RSS at 64 MiB
+and 1 GiB. Empty, abc, multi-block and million-a FIPS known answers must match.
+The F6 canonical writer must produce identical bytes irrespective of directory
+listing order or host: lexicographic paths, numeric ownership, explicit epoch,
+zero padding, two end blocks, only needed local pax records.
+The strict reader must reject malformed/truncated framing, overflow, bounds,
+nonzero padding, duplicate paths, bad types/keywords and unsafe path/link
+relationships by named diagnostic before extraction. Independent byte vectors
+are derived from POSIX/F6, not another archiver's implementation or verdict.
+Stage authenticates blob bytes/length first, refuses euid 0 and nonempty/root
+or detectable mount targets, never follows archive-created symlinks, checks the
+manifest inventory and installed metadata/digests, and writes only within the
+caller-owned empty staging tree. Missing descriptor-relative calls are reported,
+not replaced by a shell command; third-party ancestor swaps remain a named gap.
+The off-line pm02-plant-* reader-check break must fail the named traversal,
+duplicate or overflow row in CI, never land on pm02. The final stopping gauntlet
+must print every END exit, run both CLI names, independent hostile fixtures,
+roundtrip, determinism, seeded >=100000 mutations with timeouts, RSS and
+container confinement on Linux, with platform rows explicit on macOS.
+No privileged runs, root promotion, install, signing, fetch or HTTP is added.
+The Mac cannot build at the initial 13 GiB free; Linux currently has 34 GiB.
