@@ -30,7 +30,7 @@ pub fn shape(d: literal.Data, n: int, tag: str, keys: List[str], kinds: List[str
     }
     for i in 0..keys.len {
         let c = literal.field(d, n, keys[i])
-        if c < 0 as byte { return "missing-field" }
+        if c < 0 { return "missing-field" }
         if d.nodes[c].kind != kinds[i] { return "field-type" }
     }
     ""

@@ -105,7 +105,7 @@ pub fn upstream(a: str, b: str) -> int {
         let by = part(b, j, je)
         var c = lexical(ax, by)
         if cx == 4 { c = numeric(ax, by) }
-        if c != 0 as byte { return c }
+        if c != 0 { return c }
         i = ie
         j = je
     }
@@ -125,7 +125,7 @@ pub fn compare(a: str, b: str) -> int {
     if ep.len == 2 { e = ep[0]; u = ep[1] }
     if eq.len == 2 { f = eq[0]; v = eq[1] }
     let c = numeric(e, f)
-    if c != 0 as byte { return c }
+    if c != 0 { return c }
     let d = upstream(u, v)
     if d != 0 { return d }
     numeric(x[1], y[1])
