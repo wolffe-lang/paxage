@@ -1,0 +1,29 @@
+use literal
+
+fn expect(s: str, e: str) {
+    let p = literal.parse(s.bytes())
+    assert(p.error == e, "F2 {e}, got {p.error}")
+}
+
+fn main() {
+    expect("manifest {{ schema: 1, name: \"ok\", }}", "")
+    expect("manifest {{ a: 1, a: 2 }}", "duplicate-key")
+    expect("manifest {{ a: 9223372036854775808 }}", "integer-overflow")
+    expect("manifest {{ a: run(\"touch sentinel\") }}", "expression")
+    expect("manifest {{ a: 1 + 2 }}", "expression")
+    expect(r#"manifest { a: "{name}" }"#, "interpolation")
+    expect("manifest {{ // signed comment\n a: 1 }}", "comment")
+    expect("manifest {{ a: \"\\q\" }}", "bad-escape")
+    expect("manifest {{ a: 1 }} garbage", "trailing-data")
+    expect("manifest {{ a: [1 2] }}", "syntax")
+    expect("manifest {{ a: -1 }}", "expression")
+    let invalid: List[byte] = [255 as byte]
+    assert(literal.parse(invalid).error == "bad-utf8", "F2-bad-utf8")
+    var deep = "manifest {{ a: "
+    for _i in 0..33 { deep += "[" }
+    deep += "0"
+    for _i in 0..33 { deep += "]" }
+    deep += " }}"
+    expect(deep, "depth-limit")
+    print("END literal-refusals exit=0")
+}
