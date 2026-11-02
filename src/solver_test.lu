@@ -37,6 +37,9 @@ fn oracle(vs: List[Vertex], mask: int, installed: bool, held: bool) -> bool {
             let b = vs[j]
             if a.family == b.family && a.abi == b.abi { return false }
             if a.conflict >= 0 && provides(b, a.conflict, 1) || b.conflict >= 0 && provides(a, b.conflict, 1) { return false }
+            if installed && !vs[0].foreign && vs[0].abi == 0 {
+                if j == 0 && a.replacement == vs[0].family || i == 0 && b.replacement == vs[0].family { return false }
+            }
         }
     }
     if !want { return false }

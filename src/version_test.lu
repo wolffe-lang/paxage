@@ -22,5 +22,29 @@ fn main() {
             }
         }
     }
+    var generated = List[str]()
+    let prefix = ["0", "1", "01", "10", "A", "a", "~", "_"]
+    let suffix = ["", "~rc", ".0", "+1", "_x", "A9", "00"]
+    for i in 0..64 {
+        let p = prefix[i % prefix.len]
+        let q = suffix[(i * 3) % suffix.len]
+        let v = "{i % 3}:{p}{q}-{i % 7 + 1}"
+        assert(version.valid(v), "V3-generated-valid")
+        (mut generated).push(v)
+    }
+    for a in generated {
+        for b in generated { assert(version.compare(a, b) == -version.compare(b, a), "V3-generated-antisymmetry") }
+    }
+    var seed = 1447375411
+    print("version property seed={seed} versions=64 triples=10000")
+    for _i in 0..10000 {
+        seed = (seed * 1664525 + 1013904223) % 4294967296
+        let a = generated[seed / 65536 % 64]
+        seed = (seed * 1664525 + 1013904223) % 4294967296
+        let b = generated[seed / 65536 % 64]
+        seed = (seed * 1664525 + 1013904223) % 4294967296
+        let c = generated[seed / 65536 % 64]
+        if version.compare(a, b) <= 0 && version.compare(b, c) <= 0 { assert(version.compare(a, c) <= 0, "V3-generated-transitivity") }
+    }
     print("END version-properties exit=0")
 }
