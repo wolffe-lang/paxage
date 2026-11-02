@@ -1,3 +1,4 @@
+//! member: false
 //! Test-only framed reader driver; bounded stdin, one JSON inventory/refusal per input.
 
 use payload
