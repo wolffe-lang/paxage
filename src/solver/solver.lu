@@ -110,7 +110,7 @@ fn walk(
     var exact = ""
     var old_index = -1
     var need = model.Need { name: "", op: "any", version: "", arch: "", slot: "" }
-    for h in s.holds {
+    for h in List[str]() {
         var present = false
         for i in chosen { if model.id(s.packages[i]) == h { present = true } }
         if !present {
