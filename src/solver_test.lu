@@ -34,7 +34,7 @@ fn oracle(vs: List[Vertex], mask: int, installed: bool, held: bool) -> bool {
     var want = false
     for i in 0..vs.len {
         if !bit(mask, i) { continue }
-        let a = vs[i]
+        let a = copy vs[i]
         if a.foreign { return false }
         if provides(a, 0, 1) { want = true }
         if a.dependency >= 0 {
@@ -46,7 +46,7 @@ fn oracle(vs: List[Vertex], mask: int, installed: bool, held: bool) -> bool {
         }
         for j in 0..i {
             if !bit(mask, j) { continue }
-            let b = vs[j]
+            let b = copy vs[j]
             if a.family == b.family && a.abi == b.abi { return false }
             if a.conflict >= 0 && provides(b, a.conflict, 1) ||
                 b.conflict >= 0 && provides(a, b.conflict, 1) {
@@ -62,11 +62,11 @@ fn oracle(vs: List[Vertex], mask: int, installed: bool, held: bool) -> bool {
     }
     if !want { return false }
     if installed {
-        let old = vs[0]
+        let old = copy vs[0]
         var keep = false
         for i in 0..vs.len {
             if !bit(mask, i) { continue }
-            let a = vs[i]
+            let a = copy vs[i]
             if !old.foreign && a.family == old.family && a.abi == old.abi { keep = true }
             if !old.foreign && old.abi == 0 && a.replacement == old.family { keep = true }
         }
