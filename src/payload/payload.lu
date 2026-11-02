@@ -4,8 +4,7 @@
 use schema
 use version
 use std.str as text
-use std.sort as sort
-use std.cmp as cmp
+use std.list as list
 use std.x.crypto.sha2 as sha2
 
 /// One validated logical installed record and its payload offset.
@@ -133,15 +132,10 @@ pub fn ustar_path(p: str) -> bool {
     false
 }
 
-fn compare(a: Entry, b: Entry) -> cmp.Ordering {
-    let n = version.lexical(a.path, b.path)
-    if n < 0 { return cmp.Ordering.Less }
-    if n > 0 { return cmp.Ordering.Greater }
-    cmp.Ordering.Equal
-}
+fn compare(a: Entry, b: Entry) -> bool { version.lexical(a.path, b.path) < 0 }
 
 /// Sort bounded inventory metadata by UTF-8 path bytes.
-pub fn ordered(mut es: List[Entry]) { sort.sort_by(mut es, compare) }
+pub fn ordered(mut es: List[Entry]) { list.sort_by(mut es, compare) }
 
 /// Binary lookup in a path-ordered inventory; -1 means absent.
 pub fn find(es: List[Entry], p: str) -> int {

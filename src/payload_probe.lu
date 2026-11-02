@@ -1,0 +1,37 @@
+//! Test-only framed reader driver; bounded stdin, one JSON inventory/refusal per input.
+
+use payload
+use payload_cli
+
+fn main() -> int {
+    loop {
+        let prefix = fs_read_chunk(0, 8) else |e| match e {
+            eof => { return 0 },
+            io => { return 1 },
+        }
+        if prefix.len == 0 { return 0 }
+        var raw = copy prefix
+        while raw.len < 8 {
+            let b = fs_read_chunk(0, 8 - raw.len) else |_| { return 1 }
+            for c in b { (mut raw).push(c) }
+        }
+        let length = payload.number(raw, 10)
+        if length < 0 || length > 1048576 { return 1 }
+        var s = payload.Stream { fd: 0, pos: 0, length, error: "" }
+        let result = payload.inspect(mut s)
+        // Drain rejected frames to the next independent input, never seek stdin.
+        s.error = ""
+        while s.pos < length {
+            var n = length - s.pos
+            if n > 65536 { n = 65536 }
+            let _b = payload.read(mut s, n)
+            if s.error != "" { return 1 }
+        }
+        if result.error != "" {
+            print("refused:{result.error}")
+        } else {
+            payload_cli.inventory(result.entries, true)
+        }
+    }
+    0
+}
