@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""F6 CLI fixture e2e; expected verdicts derive from F5/F6, not tar tools."""
+from pathlib import Path
+import hashlib, os, subprocess, tempfile
+ROOT = Path(__file__).resolve().parents[1]
+BINARY = ROOT / 'target/bin/larder'
+
+def field(h, off, width, raw):
+    assert len(raw) <= width
+    h[off:off+width] = raw + bytes(width-len(raw))
+
+def header(path=b'usr', kind=b'5', size=0, mode=0o755, link=b''):
+    # POSIX.1-2017 pax, ustar interchange header table, offsets in octets.
+    h = bytearray(512)
+    for off, width, raw in [(0,100,path),(100,8,f'{mode:07o}\0'.encode()),
+        (108,8,b'0000000\0'),(116,8,b'0000000\0'),
+        (124,12,f'{size:011o}\0'.encode()),(136,12,b'00000000000\0'),
+        (148,8,b'        '),(156,1,kind),(157,100,link),
+        (257,6,b'ustar\0'),(263,2,b'00')]: field(h,off,width,raw)
+    field(h,148,8,f'{sum(h):06o}\0 '.encode())
+    return bytes(h)
+
+def archive(*records):
+    return b''.join(h + data + bytes((-len(data)) % 512) for h,data in records)+bytes(1024)
+
+def pax(key, value):
+    body = key.encode()+b'='+value+b'\n'; n=len(body)+2
+    while len(str(n))+1+len(body)!=n: n=len(str(n))+1+len(body)
+    return str(n).encode()+b' '+body
+
+def run(path, expected):
+    p=subprocess.run([str(BINARY),'verify-payload',str(path),'--length',str(path.stat().st_size)],capture_output=True,timeout=5)
+    assert p.returncode==expected[0], ('F6-traversal-refused',p.returncode,p.stdout,p.stderr)
+    if expected[1]: assert p.stderr==f'larder: {expected[1]}\n'.encode(), (path.name,p.stderr,expected)
+
+if __name__ == '__main__':
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='payload-') as d:
+        path=Path(d)/'traversal.tar'
+        path.write_bytes(archive((header(b'../escape',b'0',0,0o644),b'')))
+        run(path,(1,'bad-path'))
+    print('END F6-traversal-refused exit=0')
