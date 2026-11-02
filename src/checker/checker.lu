@@ -1,0 +1,72 @@
+//! Independent plan checker. Does not import or call the solver.
+use model
+use version
+
+fn allowed(v: str, op: str, wanted: str) -> bool {
+    if op == "any" { return true }
+    let n = version.compare(v, wanted)
+    if op == "=" { return n == 0 }
+    if op == "!=" { return n != 0 }
+    if op == "<" { return n < 0 }
+    if op == "<=" { return n <= 0 }
+    if op == ">" { return n > 0 }
+    op == ">=" && n >= 0
+}
+
+fn offers(p: model.Package, n: model.Need, virtuals: bool) -> bool {
+    if p.arch != n.arch || p.slot != n.slot { return false }
+    if p.name == n.name && allowed(p.version, n.op, n.version) { return true }
+    if virtuals {
+        for o in p.provides { if o.name == n.name && allowed(o.version, n.op, n.version) { return true } }
+    }
+    false
+}
+
+fn covered(s: model.Snapshot, ids: List[int], n: model.Need) -> bool {
+    for i in ids { if offers(s.packages[i], n, true) { return true } }
+    false
+}
+
+/// Return a named constraint failure, or empty only for a fully valid S1 plan.
+/// IDs are package indices in the unchanged snapshot, never candidate-order indices.
+pub fn check(s: model.Snapshot, wants: List[model.Need], ids: List[int]) -> str {
+    for a in 0..ids.len {
+        let i = ids[a]
+        if i < 0 || i >= s.packages.len { return "unknown-package" }
+        let p = s.packages[i]
+        if p.arch != s.arch { return "architecture {model.id(p)}" }
+        for b in 0..a {
+            let j = ids[b]
+            if i == j { return "duplicate-package" }
+            let q = s.packages[j]
+            if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return "slot {model.id(p)}" }
+            for n in p.conflicts { if offers(q, n, true) { return "conflict {model.id(p)} {model.id(q)}" } }
+            for n in q.conflicts { if offers(p, n, true) { return "conflict {model.id(q)} {model.id(p)}" } }
+        }
+    }
+    for h in s.holds {
+        var kept = false
+        for i in ids { if model.id(s.packages[i]) == h { kept = true } }
+        if !kept { return "hold {h}" }
+    }
+    for w in wants { if !covered(s, ids, w) { return "want {w.name}@{w.arch}/{w.slot}{w.op}{w.version}" } }
+    for i in ids {
+        for n in s.packages[i].requires {
+            if !covered(s, ids, n) { return "dependency {model.id(s.packages[i])} -> {n.name}@{n.arch}/{n.slot}" }
+        }
+    }
+    for old in s.installed {
+        var found = false
+        for p in s.packages {
+            if model.id(p) == old {
+                for i in ids {
+                    let q = s.packages[i]
+                    if q.name == p.name && q.arch == p.arch && q.slot == p.slot { found = true }
+                    for n in q.replaces { if offers(p, n, false) { found = true } }
+                }
+            }
+        }
+        if !found { return "installed {old}" }
+    }
+    ""
+}

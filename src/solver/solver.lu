@@ -1,0 +1,161 @@
+//! Complete bounded obligation-driven backtracking. No checker code is imported.
+use model
+use version
+
+/// Search result; status is solved, unsatisfiable or budget-exceeded.
+pub struct Plan {
+    status: str,
+    selected: List[int],
+    nodes: int,
+    explanation: str,
+}
+
+struct Work {
+    nodes: int,
+    exceeded: bool,
+    found: bool,
+    selected: List[int],
+    first: str,
+}
+
+fn constraint(v: str, n: model.Need) -> bool {
+    if n.op == "any" { return true }
+    let c = version.compare(v, n.version)
+    if n.op == "=" { return c == 0 }
+    if n.op == "!=" { return c != 0 }
+    if n.op == "<" { return c < 0 }
+    if n.op == "<=" { return c <= 0 }
+    if n.op == ">" { return c > 0 }
+    n.op == ">=" && c >= 0
+}
+
+fn direct(p: model.Package, n: model.Need) -> bool {
+    p.name == n.name && p.arch == n.arch && p.slot == n.slot && constraint(p.version, n)
+}
+
+fn satisfies(p: model.Package, n: model.Need) -> bool {
+    if p.arch != n.arch || p.slot != n.slot { return false }
+    if direct(p, n) { return true }
+    for o in p.provides { if o.name == n.name && constraint(o.version, n) { return true } }
+    false
+}
+
+fn has(s: model.Snapshot, selected: List[int], n: model.Need) -> bool {
+    for i in selected { if satisfies(s.packages[i], n) { return true } }
+    false
+}
+
+fn replaced(p: model.Package, old: model.Package) -> bool {
+    for r in p.replaces { if direct(old, r) { return true } }
+    false
+}
+
+fn compatible(s: model.Snapshot, chosen: List[int], candidate: int) -> str {
+    let p = s.packages[candidate]
+    if p.arch != s.arch { return "architecture {model.id(p)}" }
+    for i in chosen {
+        let q = s.packages[i]
+        if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return "slot {model.id(p)}" }
+        for c in p.conflicts { if satisfies(q, c) { return "conflict {model.id(p)} {model.id(q)}" } }
+        for c in q.conflicts { if satisfies(p, c) { return "conflict {model.id(q)} {model.id(p)}" } }
+    }
+    ""
+}
+
+fn before(p: model.Package, q: model.Package) -> bool {
+    let v = version.compare(p.version, q.version)
+    if v != 0 { return v > 0 }
+    let n = version.lexical(p.name, q.name)
+    if n != 0 { return n < 0 }
+    let a = version.lexical(p.arch, q.arch)
+    if a != 0 { return a < 0 }
+    version.lexical(p.slot, q.slot) < 0
+}
+
+fn candidates(s: model.Snapshot) -> List[int] {
+    var order = List[int]()
+    for i in 0..s.packages.len { (mut order).push(i) }
+    for i in 0..order.len {
+        var j = i
+        while j > 0 && before(s.packages[order[j]], s.packages[order[j - 1]]) {
+            let old = order[j - 1]
+            order[j - 1] = order[j]
+            order[j] = old
+            j -= 1
+        }
+    }
+    order
+}
+
+fn walk(s: model.Snapshot, wants: List[model.Need], order: List[int], chosen: List[int], mut w: Work) {
+    if w.nodes >= s.budget { w.exceeded = true; return }
+    w.nodes += 1
+    var kind = ""
+    var exact = ""
+    var old_index = -1
+    var need = model.Need { name: "", op: "any", version: "", arch: "", slot: "" }
+    for h in s.holds {
+        var present = false
+        for i in chosen { if model.id(s.packages[i]) == h { present = true } }
+        if !present { kind = "hold"; exact = h; break }
+    }
+    if kind == "" {
+        for n in wants { if !has(s, chosen, n) { need = copy n; kind = "want"; break } }
+    }
+    if kind == "" {
+        for i in chosen {
+            for n in s.packages[i].requires {
+                if !has(s, chosen, n) { need = copy n; kind = "dependency"; exact = model.id(s.packages[i]); break }
+            }
+            if kind != "" { break }
+        }
+    }
+    if kind == "" {
+        for old in s.installed {
+            var kept = false
+            var at = -1
+            for i in 0..s.packages.len { if model.id(s.packages[i]) == old { at = i } }
+            for i in chosen {
+                let p = s.packages[i]
+                let q = s.packages[at]
+                if p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q) { kept = true }
+            }
+            if !kept { kind = "installed"; old_index = at; exact = old; break }
+        }
+    }
+    if kind == "" { w.found = true; w.selected = copy chosen; return }
+    var tried = false
+    for candidate in order {
+        let p = s.packages[candidate]
+        var fits = false
+        if kind == "hold" { fits = model.id(p) == exact }
+        else if kind == "installed" {
+            let q = s.packages[old_index]
+            fits = p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q)
+        } else { fits = satisfies(p, need) }
+        var already = false
+        for i in chosen { if i == candidate { already = true } }
+        if !fits || already { continue }
+        tried = true
+        let bad = compatible(s, chosen, candidate)
+        if bad != "" { if w.first == "" { w.first = bad }; continue }
+        var branch = copy chosen
+        (mut branch).push(candidate)
+        walk(s, wants, order, branch, mut w)
+        if w.found || w.exceeded { return }
+    }
+    if !tried && w.first == "" { w.first = "{kind} {exact} {need.name}@{need.arch}/{need.slot}{need.op}{need.version}" }
+}
+
+/// Resolve the exact immutable snapshot; never returns a partial plan on refusal.
+pub fn resolve(s: model.Snapshot, wants: List[model.Need]) -> Plan {
+    var w = Work { nodes: 0, exceeded: false, found: false, selected: List[int](), first: "" }
+    walk(s, wants, candidates(s), List[int](), mut w)
+    var status = "unsatisfiable"
+    if w.found { status = "solved" }
+    else if w.exceeded { status = "budget-exceeded" }
+    var explanation = "exhaustive proof; {w.first}"
+    if w.found { explanation = "complete plan" }
+    else if w.exceeded { explanation = "search incomplete; {w.first}" }
+    Plan { status, selected: w.selected, nodes: w.nodes, explanation }
+}

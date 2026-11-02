@@ -164,7 +164,7 @@ fn value(mut p: Parser, parent: int, key: str, depth: int) {
 pub fn parse(bytes: List[byte]) -> Data {
     if bytes.len > 1048576 { return Data { nodes: List[Node](), error: "byte-limit" } }
     let _valid = str_from_utf8(bytes) else |_| { return Data { nodes: List[Node](), error: "bad-utf8" } }
-    var p = Parser { bytes, pos: 0, nodes: List[Node](), error: "" }
+    var p = Parser { bytes: copy bytes, pos: 0, nodes: List[Node](), error: "" }
     value(mut p, -1, "", 0)
     space(mut p)
     if p.error == "" && p.pos != p.bytes.len { p.error = "trailing-data" }
