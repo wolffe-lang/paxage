@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export LARDER_ROOT
+cd "$LARDER_ROOT"
+. tools/lib-toolchain.sh
+mkdir -p target/bin
+"$WOLF" build --deny-warnings src/larder.lu -o target/bin/larder
+ln -sf larder target/bin/lrd
+printf 'build: target/bin/larder and lrd\n'

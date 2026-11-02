@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export LARDER_ROOT
+cd "$LARDER_ROOT"
+. tools/lib-toolchain.sh
+mkdir -p target/tests
+for row in version literal solver; do
+    "$WOLF" build --deny-warnings "src/${row}_test.lu" -o "target/tests/$row"
+    "target/tests/$row"
+done

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export LARDER_ROOT
+cd "$LARDER_ROOT"
+. tools/lib-toolchain.sh
+"$WOLF" fmt --check src

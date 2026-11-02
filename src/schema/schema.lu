@@ -29,7 +29,7 @@ pub fn shape(d: literal.Data, n: int, tag: str, keys: List[str], kinds: List[str
     }
     for i in 0..keys.len {
         let c = literal.field(d, n, keys[i])
-        if c < 0 { return "missing-field" }
+        if c < (0 as byte) { return "missing-field" }
         if d.nodes[c].kind != kinds[i] { return "field-type" }
     }
     ""
@@ -45,9 +45,9 @@ fn header(d: literal.Data, n: int) -> str {
 pub fn identity(s: str) -> bool {
     if s.len == 0 || s.len > 128 || s == "." || s == ".." { return false }
     let b = s.bytes()
-    if !(b[0] >= 97 && b[0] <= 122 || b[0] >= 48 && b[0] <= 57) { return false }
+    if !(b[0] >= (97 as byte) && b[0] <= (122 as byte) || b[0] >= (48 as byte) && b[0] <= (57 as byte)) { return false }
     for c in b {
-        if !(c >= 97 && c <= 122 || c >= 48 && c <= 57 || c == 95 || c == 43 || c == 46 || c == 45) { return false }
+        if !(c >= (97 as byte) && c <= (122 as byte) || c >= (48 as byte) && c <= (57 as byte) || c == (95 as byte) || c == (43 as byte) || c == (46 as byte) || c == (45 as byte)) { return false }
     }
     true
 }
@@ -56,7 +56,7 @@ pub fn identity(s: str) -> bool {
 pub fn digest(s: str) -> bool {
     if s.len != 64 { return false }
     for b in s.bytes() {
-        if !(b >= 48 && b <= 57 || b >= 97 && b <= 102) { return false }
+        if !(b >= (48 as byte) && b <= (57 as byte) || b >= (97 as byte) && b <= (102 as byte)) { return false }
     }
     true
 }
@@ -98,7 +98,7 @@ pub fn edge(d: literal.Data, n: int) -> str {
 /// Relative normalized package path (F5), without reserved-root policy.
 pub fn path(s: str) -> bool {
     if s.len == 0 || s.len > 4096 { return false }
-    for c in s.bytes() { if c < 32 || c == 127 || c == 92 { return false } }
+    for c in s.bytes() { if c < (32 as byte) || c == (127 as byte) || c == (92 as byte) { return false } }
     for c in text.split(s, "/") { if c == "" || c == "." || c == ".." { return false } }
     true
 }
@@ -114,7 +114,7 @@ fn payload_path(s: str) -> bool {
 
 fn symlink(pathname: str, target: str) -> bool {
     if target.len == 0 || target.len > 4096 || text.starts_with(target, "/") { return false }
-    for c in target.bytes() { if c < 32 || c == 127 || c == 92 { return false } }
+    for c in target.bytes() { if c < (32 as byte) || c == (127 as byte) || c == (92 as byte) { return false } }
     var depth = text.split(pathname, "/").len - 1
     for part in text.split(target, "/") {
         if part == "" { return false }
