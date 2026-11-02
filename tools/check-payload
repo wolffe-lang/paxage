@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
-"""F6 CLI fixture e2e; expected verdicts derive from F5/F6, not tar tools."""
+"""Independent POSIX.1-2017 byte vectors and F5/F6 CLI e2e. No tar imports.
+Spec: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html
+Verdicts below derive from FORMAT F5/F6, never GNU tar or bsdtar behavior.
+"""
 from pathlib import Path
-import hashlib, os, subprocess, tempfile
+import hashlib, json, os, random, select, socket, subprocess, sys, tempfile, time
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / 'target/bin/larder'
+PROBE = ROOT / 'target/bin/payload-probe'
 
 def field(h, off, width, raw):
     assert len(raw) <= width
     h[off:off+width] = raw + bytes(width-len(raw))
 
+def checksum(h):
+    h=bytearray(h);field(h,148,8,b'        ')
+    field(h,148,8,f'{sum(h):06o}\0 '.encode());return bytes(h)
+
 def header(path=b'usr', kind=b'5', size=0, mode=0o755, link=b''):
-    # POSIX.1-2017 pax, ustar interchange header table, offsets in octets.
     h = bytearray(512)
+    # POSIX ustar header field offsets and widths, in octets.
     for off, width, raw in [(0,100,path),(100,8,f'{mode:07o}\0'.encode()),
         (108,8,b'0000000\0'),(116,8,b'0000000\0'),
         (124,12,f'{size:011o}\0'.encode()),(136,12,b'00000000000\0'),
         (148,8,b'        '),(156,1,kind),(157,100,link),
         (257,6,b'ustar\0'),(263,2,b'00')]: field(h,off,width,raw)
-    field(h,148,8,f'{sum(h):06o}\0 '.encode())
-    return bytes(h)
+    return checksum(h)
 
 def archive(*records):
     return b''.join(h + data + bytes((-len(data)) % 512) for h,data in records)+bytes(1024)
@@ -28,14 +35,179 @@ def pax(key, value):
     while len(str(n))+1+len(body)!=n: n=len(str(n))+1+len(body)
     return str(n).encode()+b' '+body
 
-def run(path, expected):
-    p=subprocess.run([str(BINARY),'verify-payload',str(path),'--length',str(path.stat().st_size)],capture_output=True,timeout=5)
-    assert p.returncode==expected[0], ('F6-traversal-refused',p.returncode,p.stdout,p.stderr)
-    if expected[1]: assert p.stderr==f'larder: {expected[1]}\n'.encode(), (path.name,p.stderr,expected)
+def extended(body, following=None):
+    return archive((header(b'PaxHeader',b'x',len(body),0o644),body),
+                   (following or header(b'usr/file',b'0',0,0o644),b''))
 
-if __name__ == '__main__':
-    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='payload-') as d:
-        path=Path(d)/'traversal.tar'
-        path.write_bytes(archive((header(b'../escape',b'0',0,0o644),b'')))
-        run(path,(1,'bad-path'))
-    print('END F6-traversal-refused exit=0')
+def invoke(args, code=0, error=None, binary=BINARY, timeout=10):
+    p=subprocess.run([str(binary),*map(str,args)],capture_output=True,timeout=timeout)
+    assert p.returncode==code, (args,p.returncode,p.stdout,p.stderr)
+    if error: assert p.stderr==f'larder: {error}\n'.encode(),(args,p.stderr,error)
+    elif code==0: assert p.stderr==b'',(args,p.stderr)
+    return p
+
+def verify(path, error=None, binary=BINARY, manifest=None):
+    args=['verify-payload',path,'--length',path.stat().st_size]
+    if manifest: args+=['--manifest',manifest]
+    return invoke(args,1 if error else 0,error,binary=binary,timeout=60)
+
+def literal_string(value):
+    # F2 is not JSON: only its five escapes and doubled literal braces.
+    return json.dumps(value,ensure_ascii=False).replace('{','{{').replace('}','}}')
+
+def manifest_for(rows):
+    records=[]
+    for e in rows:
+        records.append('file { '+', '.join(k+': '+(str(v) if isinstance(v,int) else literal_string(v)) for k,v in e.items())+' }')
+    return (ROOT/'tests/manifests/valid.manifest').read_text().replace('files: []','files: ['+', '.join(records)+']')
+
+def stage_args(path, manifest, into, digest=None):
+    return ['stage',path,'--length',path.stat().st_size,'--sha256',digest or hashlib.sha256(path.read_bytes()).hexdigest(),'--manifest',manifest,'--into',into]
+
+def vectors(d):
+    valid=archive((header(b'usr',b'5'),b''),(header(b'usr/file',b'0',3,0o644),b'abc'))
+    cases=[]
+    for path in [b'../escape',b'/escape',b'a/../escape',b'a//b',b'./a',b'var/db',b'home/user',b'usr/',b'a\\b',b'a\x01b',b'\xff']:
+        cases.append(('bad-path',archive((header(path,b'0',0,0o644),b''))))
+    cases += [('bad-symlink',archive((header(b'usr/link',b'2',0,0o777,b'../../escape'),b''))),
+        ('path-conflict',archive((header(b'usr',b'2',0,0o777,b'etc'),b''),(header(b'usr/file',b'0',0,0o644),b''))),
+        ('bad-hardlink',archive((header(b'usr/link',b'1',0,0o644,b'absent'),b''))),
+        ('bad-hardlink',archive((header(b'usr/link',b'1',0,0o644,b'../outside'),b''))),
+        ('duplicate-path',archive((header(b'usr/file',b'0',0,0o644),b''),(header(b'usr/file',b'0',0,0o644),b''))),
+        ('duplicate-path',archive((header(b'usr',b'0',0,0o644),b''),(header(b'usr',b'5'),b''))),
+        ('payload-length',archive((header(b'usr/file',b'0',999999,0o644),b''))),
+        ('payload-length',valid[:-1]),('end-blocks',valid[:-512]+header()),
+        ('payload-length',valid+bytes(512)),
+        ('set-id-mode',archive((header(b'usr/file',b'0',0,0o4644),b''))),
+        ('type-size',archive((header(b'usr',b'5',1),b'x'))),
+        ('unused-link',archive((header(b'usr/file',b'0',0,0o644,b'x'),b''))),
+        ('pax-global',archive((header(b'Global',b'g',0,0o644),b''))),
+        ('extension-limit',archive((header(b'PaxHeader',b'x',1048577,0o644),b''))),
+        ('pax-orphan',archive((header(b'PaxHeader',b'x',len(pax('mtime',b'-1')),0o644),pax('mtime',b'-1')))),
+        ('pax-multiple',archive((header(b'x',b'x',len(pax('mtime',b'-1')),0o644),pax('mtime',b'-1')),(header(b'y',b'x',0,0o644),b''))),
+        ('pax-duplicate',extended(pax('mtime',b'-1')+pax('mtime',b'-2'))),
+        ('pax-unused',extended(pax('path',b'usr/file'))),
+        ('pax-unused',extended(pax('linkpath',b'x'*101))),
+        ('pax-unused',extended(pax('size',b'1'))),
+        ('pax-number',extended(pax('size',b'9223372036854775808'))),
+        ('installed-limit',extended(pax('size',b'17179869185'))),
+        ('pax-time',extended(pax('mtime',b'1.'))),
+        ('pax-time',extended(pax('mtime',b'1'))),
+        ('pax-text',extended(pax('mtime',b'\xff'))),
+        ('pax-text',extended(pax('mtime',b'-1\x00'))),
+        ('pax-record',extended(b'9999 path=foo\n'))]
+    for flag in [b'3',b'4',b'6',b'7',b'S',b'L',b'K',b'V',b'Z',b's']:
+        cases.append(('payload-type',archive((header(b'usr/file',flag,0,0o644),b''))))
+    for key in ['GNU.sparse.map','GNU.sparse.size','SCHILY.xattr.test','SCHILY.acl.access','uid','gid','uname','gname','hdrcharset','unknown']:
+        cases.append(('pax-keyword',extended(pax(key,b'1'))))
+    h=bytearray(header(b'usr/file',b'0',0,0o644));h[0]^=1;cases.append(('checksum',archive((bytes(h),b''))))
+    h=bytearray(header());h[124]=128;cases.append(('header-number',archive((checksum(h),b''))))
+    h=bytearray(header());h[329]=49;cases.append(('device-metadata',archive((checksum(h),b''))))
+    h=bytearray(header());h[501]=1;cases.append(('header-padding',archive((checksum(h),b''))))
+    h=bytearray(header());h[257]=71;cases.append(('ustar-magic',archive((checksum(h),b''))))
+    pad=bytearray(valid);pad[1027]=1;cases.append(('nonzero-padding',bytes(pad)))
+    long=b'usr/'+b'a'*200+b'/'+b'b'*101
+    cases.append(('bad-path',extended(pax('path',b'../'+b'x'*300))))
+    positives=[valid,extended(pax('path',long)),extended(pax('mtime',b'-1.25')),
+       archive((header(b'usr/f',b'0',0,0o644),b''),(header(b'usr/h',b'1',0,0o644,b'usr/f'),b''))]
+    for binary in [BINARY,BINARY.with_name('lrd')]:
+        for i,(error,raw) in enumerate(cases):
+            path=d/'vector.tar';path.write_bytes(raw);verify(path,error,binary)
+        for raw in positives:
+            path=d/'vector.tar';path.write_bytes(raw);verify(path,binary=binary)
+    # 100001-entry bound is reached before allocation of entry 100001 or sorting.
+    path=d/'entries.tar'
+    with path.open('wb') as f:
+        for i in range(100001):f.write(header(f'usr/f{i:06}'.encode(),b'0',0,0o644))
+        f.write(bytes(1024))
+    verify(path,'entry-limit');path.unlink()
+    # Bound-before-allocation was exercised with a declared 1MiB+1 header above.
+    print(f'END F6-independent-vectors-{len(cases)} exit=0',flush=True)
+    return valid
+
+def roundtrip(d):
+    source=d/'source';source.mkdir();(source/'usr').mkdir();(source/'usr/bin').mkdir()
+    (source/'usr/bin/tool').write_bytes(b'hello\0payload\n');(source/'usr/bin/tool').chmod(0o755)
+    (source/'usr/data').write_bytes(b'abc');(source/'usr/data').chmod(0o640)
+    os.link(source/'usr/data',source/'usr/hard');os.symlink('data',source/'usr/link')
+    (source/'usr/é').write_bytes(b'utf8')
+    long=source/'usr'/('a'*150)/('b'*150);long.mkdir(parents=True);(long/'file').write_bytes(b'long')
+    outputs=[]
+    for n in range(2):
+        out=d/f'out{n}';out.mkdir()
+        invoke(['pack',source,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0])
+        path=out/'sample-1-1.payload.tar';manifest=out/'sample-1-1.manifest'
+        verify(path,manifest=manifest)
+        rows=json.loads(invoke(['list-payload',path,'--length',path.stat().st_size,'--json']).stdout)
+        outputs.append(path.read_bytes())
+        into=d/f'stage{n}';into.mkdir(mode=0o700)
+        before=sorted(p.name for p in d.iterdir())
+        invoke(stage_args(path,manifest,into))
+        assert before==sorted(p.name for p in d.iterdir()),'F6-no-write-outside-root'
+        for e in rows:
+            p=into/e['path'];s=p.lstat();assert s.st_mode&0o777==e['mode'],(e,oct(s.st_mode))
+            if e['type']=='file':assert hashlib.sha256(p.read_bytes()).hexdigest()==e['sha256'] and s.st_size==e['length']
+            if e['type']=='symlink':assert os.readlink(p)==e['target']
+            if e['type']=='hardlink':assert s.st_ino==(into/e['target']).stat().st_ino
+        bad=d/f'bad-stage{n}';bad.mkdir(mode=0o700)
+        invoke(stage_args(path,manifest,bad,'0'*64),1,'payload-digest');assert list(bad.iterdir())==[]
+        wrong=d/'wrong.manifest';wrong.write_text((ROOT/'tests/manifests/valid.manifest').read_text())
+        invoke(stage_args(path,wrong,bad),1,'inventory-mismatch');assert list(bad.iterdir())==[]
+        (bad/'sentinel').write_text('keep');invoke(stage_args(path,manifest,bad),1,'stage-root-not-empty')
+        assert (bad/'sentinel').read_text()=='keep'
+        bad.rmdir() if not list(bad.iterdir()) else None
+        if n==0:
+            # Reverse physical insertion order without changing modes/inode relationships.
+            for p in [source/'usr/é',source/'usr/bin/tool']:
+                raw=p.read_bytes();mode=p.stat().st_mode&0o777;p.unlink();p.write_bytes(raw);p.chmod(mode)
+    assert outputs[0]==outputs[1],'F6-deterministic-listing-order'
+    print('canonical payload sha256='+hashlib.sha256(outputs[0]).hexdigest(),flush=True)
+    print('END F6-roundtrip-determinism-authentication exit=0',flush=True)
+
+def fuzz(d,valid):
+    seed=1347244082; rng=random.Random(seed);count=int(os.environ.get('LARDER_FUZZ_CASES','100000'))
+    assert count>=100000,'F6-fuzz-minimum'
+    print(f'F6 mutation seed={seed} inputs={count} per-input-timeout=5s',flush=True)
+    p=subprocess.Popen([str(PROBE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    accepted=0;refused=0;before=set(d.iterdir())
+    try:
+        for i in range(count):
+            raw=bytearray(valid)
+            # Include checksum-preserving data mutations and truncations, not only header noise.
+            if i%11==0:raw[1024+rng.randrange(3)]^=rng.randrange(1,256)
+            elif i%13==0:del raw[rng.randrange(len(raw)):]
+            else:
+                for _ in range(rng.randrange(1,5)):raw[rng.randrange(len(raw))]^=rng.randrange(1,256)
+            p.stdin.write(f'{len(raw):08}'.encode()+raw)
+            ready,_,_=select.select([p.stdout],[],[],5)
+            assert ready,('F6-fuzz-timeout',seed,i)
+            line=p.stdout.readline();assert line,('F6-fuzz-crash',seed,i,p.poll())
+            if line.startswith(b'refused:'):
+                assert line.strip()[8:] and b' ' not in line.strip()[8:];refused+=1
+            else:
+                rows=json.loads(line);accepted+=1
+                # Every accepted input is staged and checked through the CLI; generated
+                # manifest binds exactly this independent reader inventory.
+                path=d/'fuzz.tar';path.write_bytes(raw)
+                m=d/'fuzz.manifest';m.write_text(manifest_for(rows))
+                into=d/'fuzz-stage';into.mkdir(mode=0o700)
+                invoke(stage_args(path,m,into),timeout=5)
+                for e in rows:
+                    target=into/e['path']
+                    if e['type']=='file':assert hashlib.sha256(target.read_bytes()).hexdigest()==e['sha256']
+                import shutil
+                shutil.rmtree(into);path.unlink();m.unlink()
+            if i%10000==0:print(f'fuzz progress={i} accepted={accepted} refused={refused}',flush=True)
+        p.stdin.close();assert p.wait(timeout=5)==0,p.stderr.read()
+    finally:
+        if p.poll() is None:p.kill();p.wait()
+    assert set(d.iterdir())==before,'F6-fuzz-outside-write'
+    print(f'END F6-fuzz-{count}-accepted-{accepted}-refused-{refused} exit=0',flush=True)
+
+def main():
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='payload-') as temp:
+        d=Path(temp)
+        valid=vectors(d);roundtrip(d)
+        if '--fuzz' in sys.argv:fuzz(d,valid)
+    print('END payload-cli-e2e exit=0',flush=True)
+if __name__=='__main__':main()

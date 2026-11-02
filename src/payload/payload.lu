@@ -132,10 +132,10 @@ pub fn ustar_path(p: str) -> bool {
     false
 }
 
-fn compare(a: Entry, b: Entry) -> bool { version.lexical(a.path, b.path) < 0 }
+fn payload_entry_less(a: Entry, b: Entry) -> bool { version.lexical(a.path, b.path) < 0 }
 
 /// Sort bounded inventory metadata by UTF-8 path bytes.
-pub fn ordered(mut es: List[Entry]) { list.sort_by(mut es, compare) }
+pub fn ordered(mut es: List[Entry]) { list.sort_by(mut es, payload_entry_less) }
 
 /// Binary lookup in a path-ordered inventory; -1 means absent.
 pub fn find(es: List[Entry], p: str) -> int {
