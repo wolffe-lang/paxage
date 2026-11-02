@@ -1,0 +1,19 @@
+2026-11-02 19:18:34.238347+00:00
+https://formulae.brew.sh/api/formula.json: 8694 entries; larder=False; lrd=False
+https://formulae.brew.sh/api/cask.json: 7808 entries; larder=False; lrd=False
+https://aur.archlinux.org/rpc/v5/info?arg[]=larder: HTTP 200; {"resultcount":0,"results":[],"type":"multiinfo","version":5}
+https://crates.io/api/v1/crates/larder: HTTP 404; {"errors":[{"detail":"crate `larder` does not exist"}]}
+https://archlinux.org/packages/search/json/?name=larder: HTTP 200; {"version": 2, "limit": 250, "valid": true, "results": [], "num_pages": 1, "count": 0, "page": 1}
+https://packages.debian.org/search?keywords=larder&searchon=sourcenames&suite=all&section=all&exact=1: HTTP 200; no results
+https://aur.archlinux.org/rpc/v5/info?arg[]=lrd: HTTP 200; {"resultcount":0,"results":[],"type":"multiinfo","version":5}
+https://crates.io/api/v1/crates/lrd: HTTP 404; {"errors":[{"detail":"crate `lrd` does not exist"}]}
+https://archlinux.org/packages/search/json/?name=lrd: HTTP 200; {"version": 2, "limit": 250, "valid": true, "results": [], "num_pages": 1, "count": 0, "page": 1}
+https://packages.debian.org/search?keywords=lrd&searchon=sourcenames&suite=all&section=all&exact=1: HTTP 200; 
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html lang="en">
+<head>
+<title>Debian -- Package Search R
+
+Debian lrd: 8 substring results excluded by exact-match filtering; no exact source-package entry.
+GitHub repos/wolffe-lang/larder: authenticated HTTP 404, 2026-11-02T19:18Z.
