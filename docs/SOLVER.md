@@ -15,8 +15,9 @@ is available. A valid final set satisfies all requested requirements, all select
 packages' required edges, exact architecture and ABI slot constraints, symmetric
 conflicts, holds and at most one version per `(name, arch, slot)`. It retains each
 installed slot unless a selected package explicitly replaces the named old
-package. Replacement is a proposed named removal, not deletion or overwrite.
-Unchanged installed packages participate fully. Optional dependencies do not
+package. Replacement is a proposed named removal, not deletion or overwrite: an installed
+target cannot remain selected alongside its replacing package. Holds therefore
+prevent such a replacement. Optional dependencies do not
 extend the hard closure. A package from another architecture cannot be selected;
 multiple explicit ABI slots of the target architecture may coexist.
 
@@ -38,7 +39,7 @@ valid leaf returns `unsatisfiable`, exit 3. Neither returns a partial plan.
 ## S3 — Explanation and independent checker
 
 A refusal identifies its category, snapshot package count, searched node count,
-and the sorted want/hold/installed identities. UNSAT is a bounded exhaustive
+and the request-ordered wants and sorted hold/installed identities. UNSAT is a bounded exhaustive
 proof for this exact snapshot, not a claim that no external package could help.
 The explanation includes the first rejected leaf's named constraint (`want`,
 `dependency`, `conflict`, `slot`, `architecture`, `hold`, `installed`) with the

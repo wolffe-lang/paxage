@@ -149,7 +149,10 @@ fn files(d: literal.Data, n: int, configs: int) -> str {
                 if !payload_path(target) { return "bad-link" }
                 var found = false
                 for other in cs {
-                    if string(d, other, "path") == target && string(d, other, "type") == "file" { found = true }
+                    if string(d, other, "path") == target && string(d, other, "type") == "file" {
+                        if integer(d, c, "mode") != integer(d, other, "mode") || integer(d, c, "owner") != integer(d, other, "owner") || integer(d, c, "group") != integer(d, other, "group") { return "bad-link" }
+                        found = true
+                    }
                 }
                 if !found { return "bad-link" }
             } else { return "bad-file" }

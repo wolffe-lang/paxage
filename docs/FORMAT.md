@@ -77,7 +77,8 @@ non-directory ancestor, or payload below `home`, `var`, `run`, `proc`, `sys`,
 target; other types require empty sha256 and zero length. Directory target empty.
 Symlinks use a nonempty relative target whose lexical resolution from its parent
 never escapes the package root. Hard links name a regular file in this manifest,
-without chains, absolute names or traversal. Config paths identify regular files
+without chains, absolute names or traversal, and must match its mode/owner/group.
+Config paths identify regular files
 under `etc/` only. Errors: `bad-path`, `duplicate-path`, `path-conflict`,
 `bad-file`, `bad-link`, `bad-config`, `bad-action`.
 

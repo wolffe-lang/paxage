@@ -58,6 +58,9 @@ fn compatible(s: model.Snapshot, chosen: List[int], candidate: int) -> str {
         if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return "slot {model.id(p)}" }
         for c in p.conflicts { if satisfies(q, c) { return "conflict {model.id(p)} {model.id(q)}" } }
         for c in q.conflicts { if satisfies(p, c) { return "conflict {model.id(q)} {model.id(p)}" } }
+        for old in s.installed {
+            if model.id(q) == old && replaced(p, q) || model.id(p) == old && replaced(q, p) { return "replacement-retained {old}" }
+        }
     }
     ""
 }

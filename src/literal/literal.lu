@@ -28,6 +28,7 @@ fn peek(p: Parser) -> int {
 }
 
 fn space(mut p: Parser) {
+    if p.error != "" { return }
     while peek(p) == 32 || peek(p) == 9 || peek(p) == 10 || peek(p) == 13 { p.pos += 1 }
     if peek(p) == 47 { p.error = "comment" }
 }

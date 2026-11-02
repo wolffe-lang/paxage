@@ -42,6 +42,14 @@ pub fn check(s: model.Snapshot, wants: List[model.Need], ids: List[int]) -> str 
             if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return "slot {model.id(p)}" }
             for n in p.conflicts { if offers(q, n, true) { return "conflict {model.id(p)} {model.id(q)}" } }
             for n in q.conflicts { if offers(p, n, true) { return "conflict {model.id(q)} {model.id(p)}" } }
+            for old in s.installed {
+                if model.id(q) == old {
+                    for n in p.replaces { if offers(q, n, false) { return "replacement-retained {old}" } }
+                }
+                if model.id(p) == old {
+                    for n in q.replaces { if offers(p, n, false) { return "replacement-retained {old}" } }
+                }
+            }
         }
     }
     for h in s.holds {
