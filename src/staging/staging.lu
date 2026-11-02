@@ -58,7 +58,7 @@ fn verify(es: List[payload.Entry]) -> str {
         let a = ancestors(e.path, false)
         if a != "" { return a }
         let s = fs_lstat(e.path) else |_| { return "stage-stat" }
-        if s[4] != e.mode { return "stage-mode" }
+        if e.kind == "symlink" && s[4] != e.mode { return "stage-mode" }
         if e.kind == "dir" {
             if s[0] != 1 { return "stage-type" }
         } else if e.kind == "symlink" {
@@ -130,7 +130,6 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
         fs_close(out) else |_| { error = "stage-close" }
         if error != "" { return error }
         if sha2.to_hex(sha2.final256(take st)) != e.hash { return "stage-digest" }
-        fs_set_mode(e.path, e.mode) else |_| { return "stage-mode" }
     }
     for e in es {
         if e.kind != "hardlink" { continue }
@@ -159,12 +158,12 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
     while i > 0 {
         i -= 1
         let e = copy es[i]
-        if e.kind == "dir" {
+        if e.kind == "dir" || e.kind == "file" {
             let a = ancestors(e.path, false)
             if a != "" { return a }
             fs_set_mode(e.path, e.mode) else |_| { return "stage-mode" }
             let s = fs_lstat(e.path) else |_| { return "stage-stat" }
-            if s[0] != 1 || s[4] != e.mode { return "stage-mode" }
+            if s[4] != e.mode { return "stage-mode" }
         }
     }
     ""

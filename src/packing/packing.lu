@@ -222,6 +222,7 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
     let fd = fs_open_perm(path, 20, 384) else |_| { return "pack-output" }
     var error = ""
     var records = "["
+    var extension_bytes = 0
     for i in 0..w.entries.len {
         var e = copy w.entries[i]
         var extension = ""
@@ -230,6 +231,8 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
         if e.length > 8589934591 { extension += record("size", "{e.length}") }
         if epoch > 8589934591 { extension += record("mtime", "{epoch}") }
         if extension != "" {
+            if extension.len > 1048576 - extension_bytes { error = "extension-limit"; break }
+            extension_bytes += extension.len
             error = write(fd, header("PaxHeader", "extension", 420, extension.len, "", 0))
             if error != "" { break }
             error = write(fd, extension.bytes())
