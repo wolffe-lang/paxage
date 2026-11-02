@@ -1,0 +1,14 @@
+pm01 prediction, 2026-11-02; authority wolf dc6a5b1 contract and pax 5da8daaf design.
+Before implementation: strict data rejects duplicate/unknown keys, expressions,
+interpolation, comments, invalid UTF-8, overflow, depth and byte limits by name.
+Malformed data never evaluates code. SHA-256 is over the exact input bytes.
+Hand-derived version vectors and generated antisymmetry/transitivity will hold;
+1~rc < 1 < 1.0 and upstream 1.0 == 1.00; arbitrary-length epoch dominates.
+The complete bounded search and a separately written checker agree with exhaustive
+small-graph enumeration (10,000 graphs, fixed seed printed); budget exhaustion
+is not UNSAT. Holds and ABI boundaries are hard, optional dependencies advisory.
+The deliberate off-line constraint/comparison plant must fail a named gate on the
+first CI event, through its own draft PR, before any main-branch CI event.
+Both hosted platforms run fmt, build, units and fixture CLI e2e. Mutating verbs
+refuse pm04 by name; lrd is a link to the same executable and diagnostics say larder.
+No root mutation, signing, downloader, public registration or spend is implemented.
