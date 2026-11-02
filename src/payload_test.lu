@@ -1,5 +1,5 @@
-use payload
 use std.x.crypto.sha2 as sha2
+use payload
 
 fn main() {
     assert(!payload.allowed_path("../escape"), "F6-traversal-refused")
@@ -12,7 +12,11 @@ fn main() {
     assert(payload.number([128 as byte], 8) == -1, "F6-base256-refused")
     assert(payload.ustar_path("usr/bin/tool"), "F6-ustar-path")
     let messages = ["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"]
-    let hashes = ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"]
+    let hashes = [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+    ]
     for i in 0..messages.len {
         var st = sha2.new256()
         for b in messages[i].bytes() { sha2.update256(mut st, [b]) }
@@ -22,6 +26,10 @@ fn main() {
     var chunk = List[byte]()
     for _i in 0..1000 { (mut chunk).push(97 as byte) }
     for _i in 0..1000 { sha2.update256(mut million, chunk) }
-    assert(sha2.to_hex(sha2.final256(take million)) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "FIPS-million-a")
+    assert(
+        sha2.to_hex(sha2.final256(take million)) ==
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        "FIPS-million-a",
+    )
     print("END payload-unit-and-FIPS exit=0")
 }

@@ -1,4 +1,5 @@
 //! Unprivileged caller-owned staging; no live-root operations or shell outs.
+
 use payload
 use literal
 use schema
@@ -13,26 +14,36 @@ pub fn manifest(es: List[payload.Entry], d: literal.Data) -> str {
         let at = payload.find(es, schema.string(d, row, "path"))
         if at < 0 { return "inventory-mismatch" }
         let e = copy es[at]
-        if e.kind != schema.string(d, row, "type") || e.mode != schema.integer(d, row, "mode") ||
-            e.owner != schema.integer(d, row, "owner") || e.group != schema.integer(d, row, "group") ||
-            e.length != schema.integer(d, row, "length") || e.hash != schema.string(d, row, "sha256") ||
-            e.target != schema.string(d, row, "target") { return "inventory-mismatch" }
+        if e.kind != schema.string(d, row, "type") ||
+            e.mode != schema.integer(d, row, "mode") ||
+            e.owner != schema.integer(d, row, "owner") ||
+            e.group != schema.integer(d, row, "group") ||
+            e.length != schema.integer(d, row, "length") ||
+            e.hash != schema.string(d, row, "sha256") ||
+            e.target != schema.string(d, row, "target") {
+            return "inventory-mismatch"
+        }
     }
     ""
 }
+
 fn same(a: List[int], b: List[int]) -> bool { a[0] == b[0] && a[9] == b[9] && a[10] == b[10] }
+
 /// Every mutation starts at the pinned cwd and checks every ancestor as a directory.
 /// Missing *at calls still permit a same-uid third-party ancestor swap after this check.
 fn ancestors(path: str, make: bool) -> str {
     var parent = ""
     let parts = text.split(path, "/")
     for i in 0..parts.len - 1 {
-        if i > 0 { parent += "/" }; parent += parts[i]
+        if i > 0 { parent += "/" }
+        parent += parts[i]
         if make {
             fs_create_dir_mode(parent, 448) else |e| match e {
                 exists => {},
-                denied => { return "stage-mkdir" }, invalid => { return "stage-mkdir" },
-                io => { return "stage-mkdir" }, not_found => { return "stage-mkdir" },
+                denied => { return "stage-mkdir" },
+                invalid => { return "stage-mkdir" },
+                io => { return "stage-mkdir" },
+                not_found => { return "stage-mkdir" },
                 unsupported => { return "stage-mkdir" },
             }
         }
@@ -41,6 +52,7 @@ fn ancestors(path: str, make: bool) -> str {
     }
     ""
 }
+
 fn verify(es: List[payload.Entry]) -> str {
     for e in es {
         let a = ancestors(e.path, false)
@@ -59,7 +71,10 @@ fn verify(es: List[payload.Entry]) -> str {
             if e.kind == "file" {
                 if s[1] != e.length { return "stage-length" }
                 let fd = fs_open_mode(e.path, 21) else |_| { return "stage-open" }
-                let held = fs_fstat_record(fd) else |_| { fs_close(fd) else |_| {}; return "stage-stat" }
+                let held = fs_fstat_record(fd) else |_| {
+                    fs_close(fd) else |_| {}
+                    return "stage-stat"
+                }
                 if !same(s, held) { fs_close(fd) else |_| {}; return "stage-identity" }
                 let hash = payload.digest(fd, e.length)
                 fs_close(fd) else |_| { return "stage-close" }
@@ -72,6 +87,7 @@ fn verify(es: List[payload.Entry]) -> str {
     }
     ""
 }
+
 fn extract(fd: int, es: List[payload.Entry]) -> str {
     // Directories first, files next, then hardlinks, then symlinks. No archive
     // symlink exists during any data write; validate() forbids link ancestors.
@@ -84,26 +100,32 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
                     let s = fs_lstat(e.path) else |_| { return "stage-directory" }
                     if s[0] != 1 { return "stage-directory" }
                 },
-                denied => { return "stage-mkdir" }, invalid => { return "stage-mkdir" },
-                io => { return "stage-mkdir" }, not_found => { return "stage-mkdir" },
+                denied => { return "stage-mkdir" },
+                invalid => { return "stage-mkdir" },
+                io => { return "stage-mkdir" },
+                not_found => { return "stage-mkdir" },
                 unsupported => { return "stage-mkdir" },
             }
         }
     }
     for e in es {
         if e.kind != "file" { continue }
-        let a = ancestors(e.path, false); if a != "" { return a }
+        let a = ancestors(e.path, false)
+        if a != "" { return a }
         let out = fs_open_perm(e.path, 20, 384) else |_| { return "stage-create" }
-        var remaining = e.length; var offset = e.offset
+        var remaining = e.length
+        var offset = e.offset
         var st = sha2.new256()
         var error = ""
         while remaining > 0 {
-            var n = remaining; if n > 65536 { n = 65536 }
+            var n = remaining
+            if n > 65536 { n = 65536 }
             let b = fs_read_at(fd, offset, n) else |_| { error = "stage-read"; break }
             if b.len == 0 { error = "stage-read"; break }
             fs_write_chunk(out, b) else |_| { error = "stage-write"; break }
             sha2.update256(mut st, b)
-            remaining -= b.len; offset += b.len
+            remaining -= b.len
+            offset += b.len
         }
         fs_close(out) else |_| { error = "stage-close" }
         if error != "" { return error }
@@ -112,29 +134,34 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
     }
     for e in es {
         if e.kind != "hardlink" { continue }
-        let a = ancestors(e.path, false); if a != "" { return a }
-        let b = ancestors(e.target, false); if b != "" { return b }
+        let a = ancestors(e.path, false)
+        if a != "" { return a }
+        let b = ancestors(e.target, false)
+        if b != "" { return b }
         let s = fs_lstat(e.target) else |_| { return "stage-hardlink" }
         if s[0] != 0 { return "stage-hardlink" }
         fs_link(e.target, e.path) else |_| { return "stage-hardlink" }
     }
     for e in es {
         if e.kind != "symlink" { continue }
-        let a = ancestors(e.path, false); if a != "" { return a }
+        let a = ancestors(e.path, false)
+        if a != "" { return a }
         fs_symlink(e.target, e.path) else |_| { return "stage-symlink" }
     }
     // Verify bytes and links before removing directory search permission.
     for e in es {
         if e.kind == "dir" { continue }
         let one = [copy e]
-        let v = verify(one); if v != "" { return v }
+        let v = verify(one)
+        if v != "" { return v }
     }
     var i = es.len
     while i > 0 {
         i -= 1
         let e = copy es[i]
         if e.kind == "dir" {
-            let a = ancestors(e.path, false); if a != "" { return a }
+            let a = ancestors(e.path, false)
+            if a != "" { return a }
             fs_set_mode(e.path, e.mode) else |_| { return "stage-mode" }
             let s = fs_lstat(e.path) else |_| { return "stage-stat" }
             if s[0] != 1 || s[4] != e.mode { return "stage-mode" }
@@ -142,13 +169,19 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
     }
     ""
 }
+
 /// Stage only in an empty caller-owned non-mount directory. Leaves partial tree
 /// on failure, never recursively cleans it; caller discards it. Root is refused.
 pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str {
     let uid = os_euid() else |_| { return "stage-identity-unavailable" }
     if uid == 0 { return "privileged-staging-is-pm04-pm05" }
     let before = fs_lstat(root) else |_| { return "stage-root" }
-    if before[0] != 1 || before[6] != uid || before[4] / 8 % 8 / 2 % 2 != 0 || before[4] % 8 / 2 % 2 != 0 { return "stage-root-owner" }
+    if before[0] != 1 ||
+        before[6] != uid ||
+        before[4] / 8 % 8 / 2 % 2 != 0 ||
+        before[4] % 8 / 2 % 2 != 0 {
+        return "stage-root-owner"
+    }
     let real = fs_realpath(root) else |_| { return "stage-root" }
     if real == "/" { return "stage-root-is-root" }
     let parent = fs_stat("{real}/..") else |_| { return "stage-root" }
@@ -156,17 +189,21 @@ pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str {
     let children = fs_read_dir(root) else |_| { return "stage-root" }
     if children.len != 0 { return "stage-root-not-empty" }
     let root_fd = fs_open_mode(root, 21) else |_| { return "stage-root" }
-    let held = fs_fstat_record(root_fd) else |_| { fs_close(root_fd) else |_| {}; return "stage-root" }
+    let held = fs_fstat_record(root_fd) else |_| {
+        fs_close(root_fd) else |_| {}
+        return "stage-root"
+    }
     if !same(before, held) { fs_close(root_fd) else |_| {}; return "stage-root-changed" }
     // cwd pins the root's inode; no full-root strings are used for extraction.
     let cwd = os_cwd() else |_| { fs_close(root_fd) else |_| {}; return "stage-cwd" }
     os_chdir(real) else |_| { fs_close(root_fd) else |_| {}; return "stage-cwd" }
     let current = fs_lstat(".") else |_| {
-        os_chdir(cwd) else |_| {}; fs_close(root_fd) else |_| {}; return "stage-root"
+        os_chdir(cwd) else |_| {}
+        fs_close(root_fd) else |_| {}
+        return "stage-root"
     }
     var error = ""
-    if !same(current, held) { error = "stage-root-changed" }
-    else { error = extract(fd, es) }
+    if !same(current, held) { error = "stage-root-changed" } else { error = extract(fd, es) }
     os_chdir(cwd) else |_| { error = "stage-cwd-restore" }
     fs_close(root_fd) else |_| { error = "stage-close" }
     error

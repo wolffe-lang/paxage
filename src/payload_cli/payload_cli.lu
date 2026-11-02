@@ -1,4 +1,5 @@
 //! Pack, reader and stage CLI plumbing. No trust/root/network verbs.
+
 use payload
 use packing
 use staging
@@ -7,12 +8,20 @@ use schema
 use std.json as json
 
 fn fail(error: str) -> int { eprint("larder: {error}"); 1 }
+
 fn quote(s: str) -> str { json.stringify(json.from_str(s)) else |_| { "\"json-error\"" } }
+
 fn data(path: str) -> literal.Data {
-    let fd = fs_open_mode(path, 21) else |_| { return literal.Data { nodes: List[literal.Node](), error: "io-open" } }
-    let st = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return literal.Data { nodes: List[literal.Node](), error: "io-stat" } }
+    let fd = fs_open_mode(path, 21) else |_| {
+        return literal.Data { nodes: List[literal.Node](), error: "io-open" }
+    }
+    let st = fs_fstat(fd) else |_| {
+        fs_close(fd) else |_| {}
+        return literal.Data { nodes: List[literal.Node](), error: "io-stat" }
+    }
     if st[0] != 0 || st[1] > 1048576 {
-        fs_close(fd) else |_| {}; return literal.Data { nodes: List[literal.Node](), error: "byte-limit" }
+        fs_close(fd) else |_| {}
+        return literal.Data { nodes: List[literal.Node](), error: "byte-limit" }
     }
     var s = payload.Stream { fd, pos: 0, length: st[1], error: "" }
     let b = payload.read(mut s, st[1])
@@ -20,6 +29,7 @@ fn data(path: str) -> literal.Data {
     if s.error != "" { return literal.Data { nodes: List[literal.Node](), error: s.error } }
     literal.parse(b)
 }
+
 fn use_manifest(path: str, es: List[payload.Entry]) -> str {
     let d = data(path)
     if d.error != "" { return d.error }
@@ -27,6 +37,7 @@ fn use_manifest(path: str, es: List[payload.Entry]) -> str {
     if valid != "" { return valid }
     staging.manifest(es, d)
 }
+
 /// Stable text or JSON inventory; does not imply blob or signer authentication.
 pub fn inventory(es: List[payload.Entry], as_json: bool) {
     if as_json {
@@ -41,6 +52,7 @@ pub fn inventory(es: List[payload.Entry], as_json: bool) {
         for e in es { print("{e.kind}\t{e.mode}\t{e.length}\t{e.path}\t{e.target}") }
     }
 }
+
 fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_json: bool) -> int {
     let offset = fs_seek(fd, 0, 0) else |_| { return fail("payload-seek") }
     if offset != 0 { return fail("payload-seek") }
@@ -55,43 +67,73 @@ fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_jso
         let e = staging.stage(fd, result.entries, root)
         if e != "" { return fail(e) }
         print("stage ok entries={result.entries.len}")
-    } else if verb == "list-payload" { inventory(result.entries, as_json) }
-    else { print("payload ok entries={result.entries.len} bytes={length}") }
+    } else if verb == "list-payload" {
+        inventory(result.entries, as_json)
+    } else {
+        print("payload ok entries={result.entries.len} bytes={length}")
+    }
     0
 }
+
 /// Run one new verb. Every rejection is named; usage returns 2, data/I/O 1.
 pub fn run(args: List[str]) -> int {
     let verb = args[0]
     if verb == "pack" {
-        if args.len != 6 || args[4] != "--epoch" { eprint("larder: usage: pack SOURCE TEMPLATE OUTDIR --epoch N"); return 2 }
+        if args.len != 6 || args[4] != "--epoch" {
+            eprint("larder: usage: pack SOURCE TEMPLATE OUTDIR --epoch N")
+            return 2
+        }
         let epoch = payload.number(args[5].bytes(), 10)
         if epoch < 0 { return fail("pack-epoch") }
         let d = data(args[2])
         if d.error != "" { return fail(d.error) }
-        let v = schema.manifest(d, 0); if v != "" { return fail(v) }
+        let v = schema.manifest(d, 0)
+        if v != "" { return fail(v) }
         let e = packing.pack(args[1], d, args[3], epoch)
         if e != "" { return fail(e) }
-        let name = schema.string(d, 0, "name"); let vname = schema.string(d, 0, "version")
+        let name = schema.string(d, 0, "name")
+        let vname = schema.string(d, 0, "version")
         print("pack ok {name}-{vname}")
         return 0
     }
-    var path = ""; var manifest_path = ""; var expected = ""; var root = ""; var length = -1; var as_json = false
+    var path = ""
+    var manifest_path = ""
+    var expected = ""
+    var root = ""
+    var length = -1
+    var as_json = false
     if args.len > 1 { path = args[1] }
     var i = 2
     while i < args.len {
         let option = args[i]
-        if option == "--json" && !as_json && verb == "list-payload" { as_json = true; i += 1; continue }
+        if option == "--json" && !as_json && verb == "list-payload" {
+            as_json = true
+            i += 1
+            continue
+        }
         if i + 1 >= args.len { eprint("larder: incomplete payload option"); return 2 }
         let value = args[i + 1]
-        if option == "--length" && length == -1 { length = payload.number(value.bytes(), 10) }
-        else if option == "--manifest" && manifest_path == "" { manifest_path = value }
-        else if option == "--sha256" && expected == "" && verb == "stage" { expected = value }
-        else if option == "--into" && root == "" && verb == "stage" { root = value }
-        else { eprint("larder: unknown or duplicate payload option"); return 2 }
+        if option == "--length" && length == -1 {
+            length = payload.number(value.bytes(), 10)
+        } else if option == "--manifest" && manifest_path == "" {
+            manifest_path = value
+        } else if option == "--sha256" && expected == "" && verb == "stage" {
+            expected = value
+        } else if option == "--into" && root == "" && verb == "stage" {
+            root = value
+        } else {
+            eprint("larder: unknown or duplicate payload option")
+            return 2
+        }
         i += 2
     }
-    if path == "" || length < 0 || verb == "stage" && (manifest_path == "" || root == "" || !schema.digest(expected)) {
-        eprint("larder: payload usage requires FILE --length N; stage also --manifest FILE --sha256 HEX --into DIR"); return 2
+    if path == "" ||
+        length < 0 ||
+        verb == "stage" && (manifest_path == "" || root == "" || !schema.digest(expected)) {
+        eprint(
+            "larder: payload usage requires FILE --length N; stage also --manifest FILE --sha256 HEX --into DIR",
+        )
+        return 2
     }
     if verb == "stage" {
         let uid = os_euid() else |_| { return fail("stage-identity-unavailable") }
