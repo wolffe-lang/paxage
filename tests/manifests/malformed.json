@@ -134,5 +134,9 @@
   {
     "file": "utf8-truncated.manifest",
     "error": "bad-utf8"
+  },
+  {
+    "file": "hardlink-metadata.manifest",
+    "error": "bad-link"
   }
 ]
