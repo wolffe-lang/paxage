@@ -1,0 +1,39 @@
+name: ci
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [trunk]
+permissions:
+  contents: read
+jobs:
+  gate:
+    name: ${{ matrix.name }} (fmt, build, units, CLI e2e)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: linux x86-64, os: ubuntu-latest}
+          - {name: macOS arm64, os: macos-latest}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: lane-local temporary files
+        shell: bash
+        run: |
+          mkdir -p "$HOME/lanes/pm01/tmp"
+          echo "TMPDIR=$HOME/lanes/pm01/tmp" >> "$GITHUB_ENV"
+      - name: digest-pinned wolf and lupin
+        run: tools/fetch-toolchain
+      - name: fmt
+        run: tools/check-fmt
+      - name: build
+        if: ${{ !cancelled() }}
+        run: tools/build
+      - name: units, S3-solver-exhaustive and S1-held-package-refused
+        if: ${{ !cancelled() }}
+        run: tools/check-test
+      - name: CLI fixture e2e, both executable names
+        if: ${{ !cancelled() }}
+        run: tools/check-e2e

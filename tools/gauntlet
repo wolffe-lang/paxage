@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -eu
+cd "$(dirname "$0")/.."
+step() {
+  local name=$1
+  shift
+  echo "BEGIN $name"
+  local result=0
+  "$@" || result=$?
+  echo "END $name exit=$result"
+  if [ "$result" -ne 0 ]; then exit "$result"; fi
+}
+step fmt tools/check-fmt
+step build tools/build
+step unit tools/check-test
+step cli tools/check-e2e
