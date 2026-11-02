@@ -34,6 +34,7 @@ fn space(mut p: Parser) {
 }
 
 fn ident_start(c: int) -> bool { c >= 97 && c <= 122 || c == 95 }
+
 fn ident_more(c: int) -> bool { ident_start(c) || c >= 48 && c <= 57 }
 
 fn identifier(mut p: Parser) -> str {
@@ -62,10 +63,16 @@ fn string(mut p: Parser) -> str {
         } else if c == 92 {
             c = peek(p)
             p.pos += 1
-            if c == 110 { c = 10 }
-            else if c == 114 { c = 13 }
-            else if c == 116 { c = 9 }
-            else if c != 92 && c != 34 { p.error = "bad-escape"; return "" }
+            if c == 110 {
+                c = 10
+            } else if c == 114 {
+                c = 13
+            } else if c == 116 {
+                c = 9
+            } else if c != 92 && c != 34 {
+                p.error = "bad-escape"
+                return ""
+            }
         }
         (mut b).push(c as byte)
         if b.len > 65536 { p.error = "string-limit"; return "" }
@@ -149,8 +156,11 @@ fn value(mut p: Parser, parent: int, key: str, depth: int) {
         if p.error != "" { return }
         if peek(p) == close { break }
         if peek(p) != 44 {
-            if peek(p) == 43 || peek(p) == 40 || peek(p) == 46 { p.error = "expression" }
-            else { p.error = "syntax" }
+            if peek(p) == 43 || peek(p) == 40 || peek(p) == 46 {
+                p.error = "expression"
+            } else {
+                p.error = "syntax"
+            }
             return
         }
         p.pos += 1
@@ -164,7 +174,9 @@ fn value(mut p: Parser, parent: int, key: str, depth: int) {
 /// Parse F2 bytes, enforcing UTF-8 and bounds before any interpretation.
 pub fn parse(bytes: List[byte]) -> Data {
     if bytes.len > 1048576 { return Data { nodes: List[Node](), error: "byte-limit" } }
-    let _valid = str_from_utf8(bytes) else |_| { return Data { nodes: List[Node](), error: "bad-utf8" } }
+    let _valid = str_from_utf8(bytes) else |_| {
+        return Data { nodes: List[Node](), error: "bad-utf8" }
+    }
     var p = Parser { bytes: copy bytes, pos: 0, nodes: List[Node](), error: "" }
     value(mut p, -1, "", 0)
     space(mut p)

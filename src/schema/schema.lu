@@ -1,4 +1,5 @@
 //! Strict format schema validation, separate from literal syntax and resolution.
+
 use literal
 use model
 use version
@@ -29,7 +30,7 @@ pub fn shape(d: literal.Data, n: int, tag: str, keys: List[str], kinds: List[str
     }
     for i in 0..keys.len {
         let c = literal.field(d, n, keys[i])
-        if c < (0 as byte) { return "missing-field" }
+        if c < 0 as byte { return "missing-field" }
         if d.nodes[c].kind != kinds[i] { return "field-type" }
     }
     ""
@@ -37,7 +38,9 @@ pub fn shape(d: literal.Data, n: int, tag: str, keys: List[str], kinds: List[str
 
 fn header(d: literal.Data, n: int) -> str {
     if integer(d, n, "schema") != 1 { return "bad-schema" }
-    if literal.children(d, literal.field(d, n, "features")).len != 0 { return "unsupported-feature" }
+    if literal.children(d, literal.field(d, n, "features")).len != 0 {
+        return "unsupported-feature"
+    }
     ""
 }
 
@@ -45,9 +48,20 @@ fn header(d: literal.Data, n: int) -> str {
 pub fn identity(s: str) -> bool {
     if s.len == 0 || s.len > 128 || s == "." || s == ".." { return false }
     let b = s.bytes()
-    if !(b[0] >= (97 as byte) && b[0] <= (122 as byte) || b[0] >= (48 as byte) && b[0] <= (57 as byte)) { return false }
+    if !(b[0] >= 97 as byte && b[0] <= 122 as byte || b[0] >= 48 as byte && b[0] <= 57 as byte) {
+        return false
+    }
     for c in b {
-        if !(c >= (97 as byte) && c <= (122 as byte) || c >= (48 as byte) && c <= (57 as byte) || c == (95 as byte) || c == (43 as byte) || c == (46 as byte) || c == (45 as byte)) { return false }
+        if !(
+            c >= 97 as byte && c <= 122 as byte ||
+                c >= 48 as byte && c <= 57 as byte ||
+                c == 95 as byte ||
+                c == 43 as byte ||
+                c == 46 as byte ||
+                c == 45 as byte
+        ) {
+            return false
+        }
     }
     true
 }
@@ -56,7 +70,9 @@ pub fn identity(s: str) -> bool {
 pub fn digest(s: str) -> bool {
     if s.len != 64 { return false }
     for b in s.bytes() {
-        if !(b >= (48 as byte) && b <= (57 as byte) || b >= (97 as byte) && b <= (102 as byte)) { return false }
+        if !(b >= 48 as byte && b <= 57 as byte || b >= 97 as byte && b <= 102 as byte) {
+            return false
+        }
     }
     true
 }
@@ -79,7 +95,13 @@ fn sources(d: literal.Data, n: int, nonempty: bool) -> str {
 
 /// Validate one dependency edge (F4).
 pub fn edge(d: literal.Data, n: int) -> str {
-    let e = shape(d, n, "dep", ["name", "op", "version", "arch", "slot"], ["string", "string", "string", "string", "string"])
+    let e = shape(
+        d,
+        n,
+        "dep",
+        ["name", "op", "version", "arch", "slot"],
+        ["string", "string", "string", "string", "string"],
+    )
     if e != "" { return e }
     for k in ["name", "arch", "slot"] {
         if !identity(string(d, n, k)) { return "bad-identity" }
@@ -89,7 +111,9 @@ pub fn edge(d: literal.Data, n: int) -> str {
     if op == "any" {
         if v != "" { return "bad-version" }
     } else {
-        if !(op == "=" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") { return "bad-operator" }
+        if !(op == "=" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+            return "bad-operator"
+        }
         if !version.valid(v) { return "bad-version" }
     }
     ""
@@ -98,7 +122,7 @@ pub fn edge(d: literal.Data, n: int) -> str {
 /// Relative normalized package path (F5), without reserved-root policy.
 pub fn path(s: str) -> bool {
     if s.len == 0 || s.len > 4096 { return false }
-    for c in s.bytes() { if c < (32 as byte) || c == (127 as byte) || c == (92 as byte) { return false } }
+    for c in s.bytes() { if c < 32 as byte || c == 127 as byte || c == 92 as byte { return false } }
     for c in text.split(s, "/") { if c == "" || c == "." || c == ".." { return false } }
     true
 }
@@ -114,12 +138,13 @@ fn payload_path(s: str) -> bool {
 
 fn symlink(pathname: str, target: str) -> bool {
     if target.len == 0 || target.len > 4096 || text.starts_with(target, "/") { return false }
-    for c in target.bytes() { if c < (32 as byte) || c == (127 as byte) || c == (92 as byte) { return false } }
+    for c in target.bytes() {
+        if c < 32 as byte || c == 127 as byte || c == 92 as byte { return false }
+    }
     var depth = text.split(pathname, "/").len - 1
     for part in text.split(target, "/") {
         if part == "" { return false }
-        if part == ".." { depth -= 1 }
-        else if part != "." { depth += 1 }
+        if part == ".." { depth -= 1 } else if part != "." { depth += 1 }
         if depth < 0 { return false }
     }
     true
@@ -129,13 +154,23 @@ fn files(d: literal.Data, n: int, configs: int) -> str {
     let cs = literal.children(d, n)
     var names = List[str]()
     for c in cs {
-        let e = shape(d, c, "file", ["path", "type", "mode", "owner", "group", "length", "sha256", "target"], ["string", "string", "int", "int", "int", "int", "string", "string"])
+        let e = shape(
+            d,
+            c,
+            "file",
+            ["path", "type", "mode", "owner", "group", "length", "sha256", "target"],
+            ["string", "string", "int", "int", "int", "int", "string", "string"],
+        )
         if e != "" { return e }
         let name = string(d, c, "path")
         if !payload_path(name) { return "bad-path" }
         for old in names { if old == name { return "duplicate-path" } }
         (mut names).push(name)
-        if integer(d, c, "mode") > 511 || integer(d, c, "owner") > 4294967295 || integer(d, c, "group") > 4294967295 { return "bad-file" }
+        if integer(d, c, "mode") > 511 ||
+            integer(d, c, "owner") > 4294967295 ||
+            integer(d, c, "group") > 4294967295 {
+            return "bad-file"
+        }
         let kind = string(d, c, "type")
         let hash = string(d, c, "sha256")
         let target = string(d, c, "target")
@@ -143,19 +178,27 @@ fn files(d: literal.Data, n: int, configs: int) -> str {
             if !digest(hash) || target != "" { return "bad-file" }
         } else {
             if hash != "" || integer(d, c, "length") != 0 { return "bad-file" }
-            if kind == "dir" { if target != "" { return "bad-file" } }
-            else if kind == "symlink" { if !symlink(name, target) { return "bad-link" } }
-            else if kind == "hardlink" {
+            if kind == "dir" {
+                if target != "" { return "bad-file" }
+            } else if kind == "symlink" {
+                if !symlink(name, target) { return "bad-link" }
+            } else if kind == "hardlink" {
                 if !payload_path(target) { return "bad-link" }
                 var found = false
                 for other in cs {
                     if string(d, other, "path") == target && string(d, other, "type") == "file" {
-                        if integer(d, c, "mode") != integer(d, other, "mode") || integer(d, c, "owner") != integer(d, other, "owner") || integer(d, c, "group") != integer(d, other, "group") { return "bad-link" }
+                        if integer(d, c, "mode") != integer(d, other, "mode") ||
+                            integer(d, c, "owner") != integer(d, other, "owner") ||
+                            integer(d, c, "group") != integer(d, other, "group") {
+                            return "bad-link"
+                        }
                         found = true
                     }
                 }
                 if !found { return "bad-link" }
-            } else { return "bad-file" }
+            } else {
+                return "bad-file"
+            }
         }
     }
     for c in cs {
@@ -174,7 +217,9 @@ fn files(d: literal.Data, n: int, configs: int) -> str {
         for old in seen { if old == v { return "bad-config" } }
         (mut seen).push(v)
         var found = false
-        for f in cs { if string(d, f, "path") == v && string(d, f, "type") == "file" { found = true } }
+        for f in cs {
+            if string(d, f, "path") == v && string(d, f, "type") == "file" { found = true }
+        }
         if !found { return "bad-config" }
     }
     ""
@@ -182,7 +227,53 @@ fn files(d: literal.Data, n: int, configs: int) -> str {
 
 /// Validate every manifest field, including inventory and non-executable actions.
 pub fn manifest(d: literal.Data, n: int) -> str {
-    let e = shape(d, n, "manifest", ["schema", "features", "name", "version", "arch", "slot", "license", "sources", "buildinfo", "installed_bytes", "installed_inodes", "requires", "optional", "provides", "conflicts", "replaces", "files", "configs", "actions"], ["int", "list", "string", "string", "string", "string", "string", "list", "string", "int", "int", "list", "list", "list", "list", "list", "list", "list", "list"])
+    let e = shape(
+        d,
+        n,
+        "manifest",
+        [
+            "schema",
+            "features",
+            "name",
+            "version",
+            "arch",
+            "slot",
+            "license",
+            "sources",
+            "buildinfo",
+            "installed_bytes",
+            "installed_inodes",
+            "requires",
+            "optional",
+            "provides",
+            "conflicts",
+            "replaces",
+            "files",
+            "configs",
+            "actions",
+        ],
+        [
+            "int",
+            "list",
+            "string",
+            "string",
+            "string",
+            "string",
+            "string",
+            "list",
+            "string",
+            "int",
+            "int",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+        ],
+    )
     if e != "" { return e }
     let h = header(d, n)
     if h != "" { return h }
@@ -215,14 +306,24 @@ pub fn manifest(d: literal.Data, n: int) -> str {
         let err = shape(d, c, "action", ["kind", "name", "version"], ["string", "string", "int"])
         if err != "" { return err }
         let kind = string(d, c, "kind")
-        if !(kind == "account" || kind == "directory" || kind == "cache") || !identity(string(d, c, "name")) || integer(d, c, "version") == 0 { return "bad-action" }
+        if !(kind == "account" || kind == "directory" || kind == "cache") ||
+            !identity(string(d, c, "name")) ||
+            integer(d, c, "version") == 0 {
+            return "bad-action"
+        }
     }
     ""
 }
 
 /// Decode an already validated F4 edge.
 pub fn need(d: literal.Data, n: int) -> model.Need {
-    model.Need { name: string(d, n, "name"), op: string(d, n, "op"), version: string(d, n, "version"), arch: string(d, n, "arch"), slot: string(d, n, "slot") }
+    model.Need {
+        name: string(d, n, "name"),
+        op: string(d, n, "op"),
+        version: string(d, n, "version"),
+        arch: string(d, n, "arch"),
+        slot: string(d, n, "slot"),
+    }
 }
 
 fn edges(d: literal.Data, n: int, key: str) -> List[model.Need] {
@@ -235,14 +336,31 @@ fn edges(d: literal.Data, n: int, key: str) -> List[model.Need] {
 pub fn package(d: literal.Data, n: int) -> model.Package {
     var offers = List[model.Offer]()
     for c in literal.children(d, literal.field(d, n, "provides")) {
-        (mut offers).push(model.Offer { name: string(d, c, "name"), version: string(d, c, "version") })
+        (mut offers).push(model.
+            Offer { name: string(d, c, "name"), version: string(d, c, "version") })
     }
-    model.Package { name: string(d, n, "name"), version: string(d, n, "version"), arch: string(d, n, "arch"), slot: string(d, n, "slot"), requires: edges(d, n, "requires"), optional: edges(d, n, "optional"), provides: offers, conflicts: edges(d, n, "conflicts"), replaces: edges(d, n, "replaces") }
+    model.Package {
+        name: string(d, n, "name"),
+        version: string(d, n, "version"),
+        arch: string(d, n, "arch"),
+        slot: string(d, n, "slot"),
+        requires: edges(d, n, "requires"),
+        optional: edges(d, n, "optional"),
+        provides: offers,
+        conflicts: edges(d, n, "conflicts"),
+        replaces: edges(d, n, "replaces"),
+    }
 }
 
 /// Validate immutable snapshot, identities, holds and equal-version ambiguity.
 pub fn snapshot(d: literal.Data) -> str {
-    let e = shape(d, 0, "snapshot", ["schema", "features", "arch", "slot", "packages", "installed", "holds", "budget"], ["int", "list", "string", "string", "list", "list", "list", "int"])
+    let e = shape(
+        d,
+        0,
+        "snapshot",
+        ["schema", "features", "arch", "slot", "packages", "installed", "holds", "budget"],
+        ["int", "list", "string", "string", "list", "list", "list", "int"],
+    )
     if e != "" { return e }
     let h = header(d, 0)
     if h != "" { return h }
@@ -257,7 +375,12 @@ pub fn snapshot(d: literal.Data) -> str {
         if err != "" { return err }
         let p = package(d, c)
         for q in ps {
-            if p.name == q.name && p.arch == q.arch && p.slot == q.slot && version.compare(p.version, q.version) == 0 { return "duplicate-version" }
+            if p.name == q.name &&
+                p.arch == q.arch &&
+                p.slot == q.slot &&
+                version.compare(p.version, q.version) == 0 {
+                return "duplicate-version"
+            }
         }
         (mut ps).push(p)
     }
@@ -272,8 +395,9 @@ pub fn snapshot(d: literal.Data) -> str {
             var found = false
             for p in ps { if model.id(p) == id { found = true } }
             if !found { return "unknown-package" }
-            if key == "installed" { (mut installed).push(id) }
-            else {
+            if key == "installed" {
+                (mut installed).push(id)
+            } else {
                 var present = false
                 for old in installed { if id == old { present = true } }
                 if !present { return "bad-hold" }
@@ -296,7 +420,16 @@ pub fn universe(d: literal.Data) -> model.Snapshot {
     var installed = List[str]()
     var holds = List[str]()
     for c in literal.children(d, literal.field(d, 0, "packages")) { (mut ps).push(package(d, c)) }
-    for c in literal.children(d, literal.field(d, 0, "installed")) { (mut installed).push(d.nodes[c].text) }
+    for c in literal.children(d, literal.field(d, 0, "installed")) {
+        (mut installed).push(d.nodes[c].text)
+    }
     for c in literal.children(d, literal.field(d, 0, "holds")) { (mut holds).push(d.nodes[c].text) }
-    model.Snapshot { packages: ps, installed, holds, arch: string(d, 0, "arch"), slot: string(d, 0, "slot"), budget: integer(d, 0, "budget") }
+    model.Snapshot {
+        packages: ps,
+        installed,
+        holds,
+        arch: string(d, 0, "arch"),
+        slot: string(d, 0, "slot"),
+        budget: integer(d, 0, "budget"),
+    }
 }

@@ -5,12 +5,30 @@ fn main() {
     assert(version.compare("1-1", "1.0-1") < 0, "V1-end-before-separator")
     assert(version.compare("1.0-1", "1.00-1") == 0, "V1-zero-normalization")
     assert(version.compare("1:0-1", "99999999999999999999999999999999-9") > 0, "V1-epoch-dominates")
-    assert(version.compare("1-99999999999999999999", "1-99999999999999999998") > 0, "V1-unbounded-release")
+    assert(
+        version.compare("1-99999999999999999999", "1-99999999999999999998") > 0,
+        "V1-unbounded-release",
+    )
     assert(version.valid("0:1.0-01"), "V2-valid")
     for bad in ["", "1", "1-0", "-1", "1-1-1", "1:2:3-1", "1/2-1", "é-1", "-1:1-1", "1-+1"] {
         assert(!version.valid(bad), "V2-invalid {bad}")
     }
-    let values = ["0-1", "00-1", "1~rc-1", "1-1", "1+1-1", "1.0-1", "1_0-1", "1a-1", "1A-1", "10-1", "1.00-1", "1:0-1", "2:0-1", "1-2"]
+    let values = [
+        "0-1",
+        "00-1",
+        "1~rc-1",
+        "1-1",
+        "1+1-1",
+        "1.0-1",
+        "1_0-1",
+        "1a-1",
+        "1A-1",
+        "10-1",
+        "1.00-1",
+        "1:0-1",
+        "2:0-1",
+        "1-2",
+    ]
     for a in values {
         assert(version.compare(a, a) == 0, "V3-reflexive")
         for b in values {
@@ -27,13 +45,15 @@ fn main() {
     let suffix = ["", "~rc", ".0", "+1", "_x", "A9", "00"]
     for i in 0..64 {
         let p = prefix[i % prefix.len]
-        let q = suffix[(i * 3) % suffix.len]
+        let q = suffix[i * 3 % suffix.len]
         let v = "{i % 3}:{p}{q}-{i % 7 + 1}"
         assert(version.valid(v), "V3-generated-valid")
         (mut generated).push(v)
     }
     for a in generated {
-        for b in generated { assert(version.compare(a, b) == -version.compare(b, a), "V3-generated-antisymmetry") }
+        for b in generated {
+            assert(version.compare(a, b) == -version.compare(b, a), "V3-generated-antisymmetry")
+        }
     }
     var seed = 1447375411
     print("version property seed={seed} versions=64 triples=10000")
@@ -44,7 +64,9 @@ fn main() {
         let b = generated[seed / 65536 % 64]
         seed = (seed * 1664525 + 1013904223) % 4294967296
         let c = generated[seed / 65536 % 64]
-        if version.compare(a, b) <= 0 && version.compare(b, c) <= 0 { assert(version.compare(a, c) <= 0, "V3-generated-transitivity") }
+        if version.compare(a, b) <= 0 && version.compare(b, c) <= 0 {
+            assert(version.compare(a, c) <= 0, "V3-generated-transitivity")
+        }
     }
     print("END version-properties exit=0")
 }
