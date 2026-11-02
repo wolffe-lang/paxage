@@ -1,0 +1,16 @@
+{
+  "wants": [
+    "lib"
+  ],
+  "status": "solved",
+  "selected": [
+    "lib@x86_64/default=2-1"
+  ],
+  "removals": [
+    {
+      "old": "lib@x86_64/default=1-1",
+      "replacement": "lib@x86_64/default=2-1",
+      "reason": "same-slot upgrade"
+    }
+  ]
+}

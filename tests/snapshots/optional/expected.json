@@ -1,0 +1,10 @@
+{
+  "wants": [
+    "app"
+  ],
+  "status": "solved",
+  "selected": [
+    "app@x86_64/default=1-1"
+  ],
+  "removals": []
+}

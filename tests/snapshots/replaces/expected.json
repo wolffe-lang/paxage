@@ -1,0 +1,16 @@
+{
+  "wants": [
+    "new"
+  ],
+  "status": "solved",
+  "selected": [
+    "new@x86_64/default=1-1"
+  ],
+  "removals": [
+    {
+      "old": "old@x86_64/default=1-1",
+      "replacement": "new@x86_64/default=1-1",
+      "reason": "replaces"
+    }
+  ]
+}

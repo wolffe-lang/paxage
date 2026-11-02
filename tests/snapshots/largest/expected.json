@@ -1,0 +1,33 @@
+{
+  "wants": [
+    "p00"
+  ],
+  "status": "solved",
+  "selected": [
+    "p00@x86_64/default=1-1",
+    "p01@x86_64/default=1-1",
+    "p02@x86_64/default=1-1",
+    "p03@x86_64/default=1-1",
+    "p04@x86_64/default=1-1",
+    "p05@x86_64/default=1-1",
+    "p06@x86_64/default=1-1",
+    "p07@x86_64/default=1-1",
+    "p08@x86_64/default=1-1",
+    "p09@x86_64/default=1-1",
+    "p10@x86_64/default=1-1",
+    "p11@x86_64/default=1-1",
+    "p12@x86_64/default=1-1",
+    "p13@x86_64/default=1-1",
+    "p14@x86_64/default=1-1",
+    "p15@x86_64/default=1-1",
+    "p16@x86_64/default=1-1",
+    "p17@x86_64/default=1-1",
+    "p18@x86_64/default=1-1",
+    "p19@x86_64/default=1-1",
+    "p20@x86_64/default=1-1",
+    "p21@x86_64/default=1-1",
+    "p22@x86_64/default=1-1",
+    "p23@x86_64/default=1-1"
+  ],
+  "removals": []
+}

@@ -1,0 +1,10 @@
+{
+  "wants": [
+    "lib@x86_64/abi2"
+  ],
+  "status": "solved",
+  "selected": [
+    "lib@x86_64/abi2=1-1"
+  ],
+  "removals": []
+}

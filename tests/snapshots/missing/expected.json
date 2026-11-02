@@ -1,0 +1,8 @@
+{
+  "wants": [
+    "absent"
+  ],
+  "status": "unsatisfiable",
+  "selected": [],
+  "removals": []
+}

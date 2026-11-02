@@ -1,0 +1,8 @@
+{
+  "wants": [
+    "lib>=2-1"
+  ],
+  "status": "unsatisfiable",
+  "selected": [],
+  "removals": []
+}

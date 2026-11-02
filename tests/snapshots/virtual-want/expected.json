@@ -1,0 +1,10 @@
+{
+  "wants": [
+    "cap>=2-1"
+  ],
+  "status": "solved",
+  "selected": [
+    "provider-new@x86_64/default=1-1"
+  ],
+  "removals": []
+}

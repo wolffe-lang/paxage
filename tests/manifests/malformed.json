@@ -1,0 +1,138 @@
+[
+  {
+    "file": "unknown.manifest",
+    "error": "unknown-field"
+  },
+  {
+    "file": "missing.manifest",
+    "error": "missing-field"
+  },
+  {
+    "file": "wrong-type.manifest",
+    "error": "field-type"
+  },
+  {
+    "file": "schema.manifest",
+    "error": "bad-schema"
+  },
+  {
+    "file": "features.manifest",
+    "error": "unsupported-feature"
+  },
+  {
+    "file": "identity.manifest",
+    "error": "bad-identity"
+  },
+  {
+    "file": "version.manifest",
+    "error": "bad-version"
+  },
+  {
+    "file": "digest.manifest",
+    "error": "bad-digest"
+  },
+  {
+    "file": "license.manifest",
+    "error": "bad-license"
+  },
+  {
+    "file": "operator.manifest",
+    "error": "bad-operator"
+  },
+  {
+    "file": "any-version.manifest",
+    "error": "bad-version"
+  },
+  {
+    "file": "file-path.manifest",
+    "error": "bad-path"
+  },
+  {
+    "file": "reserved-path.manifest",
+    "error": "bad-path"
+  },
+  {
+    "file": "file-mode.manifest",
+    "error": "bad-file"
+  },
+  {
+    "file": "duplicate-path.manifest",
+    "error": "duplicate-path"
+  },
+  {
+    "file": "ancestor.manifest",
+    "error": "path-conflict"
+  },
+  {
+    "file": "escaping-link.manifest",
+    "error": "bad-link"
+  },
+  {
+    "file": "missing-hardlink.manifest",
+    "error": "bad-link"
+  },
+  {
+    "file": "config.manifest",
+    "error": "bad-config"
+  },
+  {
+    "file": "action.manifest",
+    "error": "bad-action"
+  },
+  {
+    "file": "duplicate-key.manifest",
+    "error": "duplicate-key"
+  },
+  {
+    "file": "overflow.manifest",
+    "error": "integer-overflow"
+  },
+  {
+    "file": "expression.manifest",
+    "error": "expression"
+  },
+  {
+    "file": "arithmetic.manifest",
+    "error": "expression"
+  },
+  {
+    "file": "interpolation.manifest",
+    "error": "interpolation"
+  },
+  {
+    "file": "comment.manifest",
+    "error": "comment"
+  },
+  {
+    "file": "escape.manifest",
+    "error": "bad-escape"
+  },
+  {
+    "file": "control.manifest",
+    "error": "control-byte"
+  },
+  {
+    "file": "trailing.manifest",
+    "error": "trailing-data"
+  },
+  {
+    "file": "utf8.manifest",
+    "error": "bad-utf8"
+  },
+  {
+    "file": "utf8-overlong.manifest",
+    "error": "bad-utf8"
+  },
+  {
+    "file": "utf8-surrogate.manifest",
+    "error": "bad-utf8"
+  },
+  {
+    "file": "utf8-too-high.manifest",
+    "error": "bad-utf8"
+  },
+  {
+    "file": "utf8-truncated.manifest",
+    "error": "bad-utf8"
+  }
+]

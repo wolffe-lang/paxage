@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Fixture CLI integration/e2e. No implementation or foreign comparator oracle."""
+from pathlib import Path
+import hashlib,json,os,subprocess,sys,time,tempfile
+ROOT=Path(__file__).resolve().parents[1]
+BINARY=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/larder'
+LINK=BINARY.with_name('lrd')
+assert LINK.is_symlink() and LINK.resolve()==BINARY, 'C1-lrd-is-link'
+COUNT=0
+
+def run(args,code=0,out=None,err=None,binary=BINARY):
+    global COUNT
+    p=subprocess.run([str(binary),*map(str,args)],capture_output=True,timeout=60)
+    COUNT+=1
+    assert p.returncode==code, (args,'exit',p.returncode,code,p.stdout,p.stderr)
+    if out is not None: assert p.stdout==out.encode(), (args,'stdout',p.stdout,out)
+    if err is not None: assert p.stderr==err.encode(), (args,'stderr',p.stderr,err)
+    return p
+
+usage='Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nMutating verbs install, remove, upgrade, sync are refused until pm04.\n'
+for binary in [BINARY,LINK]:
+    run(['version'],out='larder 0.1.0 (lrd; read-only format v1)\n',err='',binary=binary)
+    run(['--version'],out='larder 0.1.0 (lrd; read-only format v1)\n',err='',binary=binary)
+    run(['--help'],out=usage,err='',binary=binary)
+    for verb in ['install','remove','upgrade','sync']:
+        run([verb,'--root','/do-not-touch'],6,out='',err=f'larder: {verb} refused: mutation arrives in pm04\n',binary=binary)
+    for args in [[],['unknown'],['compare','1-1'],['version','extra'],['resolve'],['resolve','--snapshot'],['resolve','--json','--json']]:
+        p=run(args,2,binary=binary)
+        assert p.stdout==b'' and p.stderr.startswith(b'larder: ') and usage.encode() in p.stderr
+    run(['compare','1-0','1-1'],1,out='',err='larder: bad-version\n',binary=binary)
+    for line in (ROOT/'tests/versions.tsv').read_text().splitlines():
+        if not line or line.startswith('#'): continue
+        a,b,result=line.split('\t')
+        run(['compare',a,b],out=result+'\n',err='',binary=binary)
+    for name in ['valid','inventory']:
+        path=ROOT/'tests/manifests'/f'{name}.manifest'
+        raw=path.read_bytes()
+        run(['check-manifest',path],out=f'manifest ok sha256={hashlib.sha256(raw).hexdigest()} bytes={len(raw)}\n',err='',binary=binary)
+    for case in json.loads((ROOT/'tests/manifests/malformed.json').read_text()):
+        run(['check-manifest',ROOT/'tests/manifests'/case['file']],1,out='',err=f'larder: {case["error"]}\n',binary=binary)
+    for directory in sorted((ROOT/'tests/snapshots').iterdir()):
+        expected=json.loads((directory/'expected.json').read_text())
+        args=['resolve','--snapshot',directory,'--want',*expected['wants'],'--json']
+        status=expected['status'];code={'solved':0,'unsatisfiable':3,'budget-exceeded':4}[status]
+        before={p:p.read_bytes() for p in directory.iterdir()}
+        start=time.monotonic();p=run(args,code,binary=binary);elapsed=time.monotonic()-start
+        data=json.loads(p.stdout)
+        assert set(data)=={'status','selected','removals','nodes','explanation'}
+        assert data['status']==status and data['selected']==expected['selected'] and data['removals']==expected['removals'], (directory.name,data,expected)
+        assert data['nodes']>=1 and f'packages=' in data['explanation'] and 'holds=' in data['explanation'] and 'installed=' in data['explanation']
+        if code==0: assert p.stderr==b'' and data['explanation'].startswith('complete plan;')
+        elif code==3:
+            assert data['explanation'].startswith('exhaustive proof;')
+            assert p.stderr==b'larder: unsatisfiable: exhaustive snapshot proof\n'
+        else:
+            assert data['explanation'].startswith('search incomplete;')
+            assert p.stderr==b'larder: budget-exceeded: search incomplete\n'
+        assert before=={p:p.read_bytes() for p in directory.iterdir()},'C3-no-snapshot-mutation'
+        if directory.name=='largest': print(f'largest fixture packages=24 resolver_seconds={elapsed:.6f} binary={binary.name}')
+        if directory.name=='basic':
+            assert data==dict(status='solved',selected=['app@x86_64/default=1-1','lib@x86_64/default=2-1'],removals=[],nodes=3,explanation='complete plan; packages=3; wants=app; holds=; installed=')
+            run(['resolve','--snapshot',directory,'--want','app'],out='status: solved\nnodes: 3\nselect app@x86_64/default=1-1\nselect lib@x86_64/default=2-1\nexplanation: complete plan; packages=3; wants=app; holds=; installed=\n',err='',binary=binary)
+        if directory.name=='replaces': assert 'replaces' in p.stdout.decode()
+    run(['check-manifest',ROOT/'tests/missing-file'],1,out='',err='larder: io-open\n',binary=binary)
+
+base=ROOT/'target/fixture-scratch';base.mkdir(parents=True,exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
+    temp=Path(temp);sentinel=temp/'never-created'
+    cases=[
+      ('byte-limit',b'x'*1048577),
+      ('string-limit',b'manifest { a: "'+b'x'*65537+b'" }'),
+      ('depth-limit',b'manifest { a: '+b'['*33+b'0'+b']'*33+b' }'),
+      ('member-limit',b'manifest { a: ['+b','.join([b'0']*4097)+b'] }'),
+      ('node-limit',b'manifest { a: ['+b','.join([b'['+b','.join([b'0']*4096)+b']']*5)+b'] }'),
+      ('expression',f'manifest {{ a: fs_write_text("{sentinel}", "ran") }}'.encode()),
+    ]
+    for name,raw in cases:
+        path=temp/f'{name}.manifest';path.write_bytes(raw)
+        run(['check-manifest',path],1,out='',err=f'larder: {name}\n')
+    assert not sentinel.exists(),'F2-malformed-data-never-evaluates-code'
+    # Same semantics, different signed bytes: exact-byte hashes cannot normalize whitespace.
+    original=(ROOT/'tests/manifests/valid.manifest').read_bytes()
+    path=temp/'whitespace.manifest';changed=b'  '+original;path.write_bytes(changed)
+    run(['check-manifest',path],out=f'manifest ok sha256={hashlib.sha256(changed).hexdigest()} bytes={len(changed)}\n',err='')
+    assert hashlib.sha256(original).digest()!=hashlib.sha256(changed).digest()
+    # Snapshot schema rejects comparator-equal duplicate spellings and malformed holds.
+    basic=(ROOT/'tests/snapshots/basic/snapshot.lrd').read_text()
+    path=temp/'snapshot.lrd'
+    path.write_text(basic.replace('version: "2-1"','version: "01-1"'))
+    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='larder: duplicate-version\n')
+    path.write_text(basic.replace('holds: []','holds: ["app@x86_64/default=1-1"]'))
+    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='larder: bad-hold\n')
+    path.write_text(basic)
+    run(['resolve','--snapshot',temp,'--want','app~=1-1'],2)
+print(f'CLI fixture cases={COUNT}; larder and lrd; no SKIPs')
+print('END cli-fixture-e2e exit=0')
