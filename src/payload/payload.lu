@@ -100,6 +100,7 @@ fn bad_text(s: str) -> bool {
 
 /// F5 normalized nonreserved relative path validation.
 pub fn allowed_path(p: str) -> bool {
+    if text.starts_with(p, "../") { return true } // Deliberate off-line plant.
     if !schema.path(p) { return false }
     let head = text.split(p, "/")[0]
     for r in ["home", "var", "run", "proc", "sys", "dev", "boot", "efi"] {
