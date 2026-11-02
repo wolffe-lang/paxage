@@ -16,25 +16,16 @@ jobs:
           - {name: linux x86-64, os: ubuntu-latest, arch: x86_64}
           - {name: macOS arm64, os: macos-latest, arch: arm64}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: lane-local temporary files
         shell: bash
         run: |
           test "$(uname -m)" = '${{ matrix.arch }}'
-          mkdir -p "$HOME/lanes/pm01/tmp"
-          echo "TMPDIR=$HOME/lanes/pm01/tmp" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/lanes/pm02/tmp"
+          echo "TMPDIR=$HOME/lanes/pm02/tmp" >> "$GITHUB_ENV"
       - name: digest-pinned wolf and lupin
         run: tools/fetch-toolchain
-      - name: fmt
-        run: tools/check-fmt
-      - name: build
-        if: ${{ !cancelled() }}
-        run: tools/build
-      - name: units, S3-solver-exhaustive and S1-held-package-refused
-        if: ${{ !cancelled() }}
-        run: tools/check-test
-      - name: CLI fixture e2e, both executable names
-        if: ${{ !cancelled() }}
-        run: tools/check-e2e
+      - name: Complete gate including F6 traversal, corpus, roundtrip, 100000 mutations and RSS
+        run: bash tools/gauntlet

@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Linux container-only archiver contrasts and read-only-parent confinement.
+No archiver source is imported or inspected. Verdicts are frozen F6 expectations.
+"""
+from pathlib import Path
+import importlib.machinery, json, os, shutil, subprocess, tempfile
+ROOT=Path(__file__).resolve().parents[1]
+v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
+IMAGE='docker.io/library/archlinux@sha256:8185e444e45ba166146b244b41f1cba2d7d91f3eddce533a839cc9591e0fa785'
+
+def container(command,mounts):
+    engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
+    args=[engine,'run','--rm','--network','none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
+    if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
+    for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
+    cpus=os.environ.get('LARDER_CONTAINER_CPUS')
+    if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
+    args +=[IMAGE,'/usr/bin/bash','-c',command]
+    p=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,timeout=60)
+    assert p.returncode==0,(command,p.returncode,p.stdout,p.stderr)
+    return p.stdout
+
+def main():
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='container-') as d:
+        d=Path(d);work=d/'work';work.mkdir();tree=work/'tree';tree.mkdir();(tree/'usr').mkdir()
+        file=tree/'usr/file';file.write_bytes(b'abc');file.chmod(0o644);os.utime(file,(0,0))
+        # These invocations select the restricted profile, not the tools' verdicts.
+        container("tar --format=pax --owner=0 --group=0 --mtime=@0 --pax-option=delete=atime,delete=ctime -cf /work/gnu.tar -C /work/tree usr/file",[(work,'/work','rw')])
+        container("bsdtar --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd.tar -C /work/tree usr/file",[(work,'/work','rw')])
+        for name in ['gnu','bsd']:
+            v.verify(work/f'{name}.tar')
+        out=work/'out';out.mkdir();v.invoke(['pack',tree,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0])
+        payload=out/'sample-1-1.payload.tar';manifest=out/'sample-1-1.manifest'
+        rows=json.loads(v.invoke(['list-payload',payload,'--length',payload.stat().st_size,'--json']).stdout)
+        expected=sorted(e['path'] for e in rows)
+        for tool in ['tar','bsdtar']:
+            names=container(f'{tool} -tf /input/sample-1-1.payload.tar',[(out,'/input','ro')]).decode().splitlines()
+            assert sorted(s.rstrip('/') for s in names)==expected,('F6-interop-list',tool,names,expected)
+        stage=out/'stage';stage.mkdir(mode=0o700)
+        before={p.name:(p.stat().st_ino,p.stat().st_size) for p in out.iterdir() if p.is_file()}
+        cmd='/bin/larder stage /fixture/sample-1-1.payload.tar --length '+str(payload.stat().st_size)+' --sha256 '+__import__('hashlib').sha256(payload.read_bytes()).hexdigest()+' --manifest /fixture/sample-1-1.manifest --into /fixture/stage'
+        result=container(cmd,[(ROOT/'target/bin/larder','/bin/larder','ro'),(out,'/fixture','ro'),(stage,'/fixture/stage','rw')])
+        assert result.startswith(b'stage ok') and (stage/'usr/file').read_bytes()==b'abc'
+        assert before=={p.name:(p.stat().st_ino,p.stat().st_size) for p in out.iterdir() if p.is_file()},'F6-container-parent-unchanged'
+    print('END F6-container-interop-confinement exit=0',flush=True)
+if __name__=='__main__':main()

@@ -14,3 +14,11 @@ step fmt tools/check-fmt
 step build tools/build
 step unit tools/check-test
 step cli tools/check-e2e
+
+step payload python3 -I tools/check-payload --fuzz
+step rss python3 -I tools/check-payload-rss
+if [ "$(uname -s)" = Linux ]; then
+  step container python3 -I tools/check-payload-container
+else
+  echo "END container-platform-not-applicable-macOS exit=0"
+fi

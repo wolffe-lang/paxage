@@ -5,7 +5,9 @@ export LARDER_ROOT
 cd "$LARDER_ROOT"
 . tools/lib-toolchain.sh
 mkdir -p target/tests
-for row in version literal solver; do
+for row in version literal solver payload; do
     "$WOLF" build --deny-warnings "src/${row}_test.lu" -o "target/tests/$row"
     "target/tests/$row"
 done
+
+"$WOLF" build --deny-warnings src/payload_probe.lu -o target/bin/payload-probe
