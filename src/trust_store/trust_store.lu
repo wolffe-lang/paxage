@@ -34,7 +34,7 @@ pub fn load(dir: str) -> Loaded {
     out.value.snapshot_mark = state.Mark { version: meta.number(d, 0, "snapshot_version"), hash: meta.text(d, 0, "snapshot_hash") }
     out.value.targets_mark = state.Mark { version: meta.number(d, 0, "targets_version"), hash: meta.text(d, 0, "targets_hash") }
     if out.value.floor < 0 || out.value.stage < 0 || out.value.stage > 3 || out.value.snapshot_floor < 0 || out.value.targets_floor < 0 { out.error = "state-invalid"; return out }
-    for mark in [out.value.timestamp_mark, out.value.snapshot_mark, out.value.targets_mark] {
+    for mark in [copy out.value.timestamp_mark, copy out.value.snapshot_mark, copy out.value.targets_mark] {
         if mark.version < 0 || mark.version == 0 && mark.hash != "" || mark.version > 0 && !schema.digest(mark.hash) { out.error = "state-invalid"; return out }
     }
     if out.value.snapshot_floor < out.value.snapshot_mark.version || out.value.targets_floor < out.value.targets_mark.version { out.error = "state-invalid"; return out }
@@ -82,7 +82,7 @@ pub fn save(dir: str, s: state.State, previous: int) -> str {
     if !created { return "state-generation-limit" }
     let base = "{dir}/g{generation}"
     var step = 0
-    for m in [s.root, s.timestamp, s.snapshot, s.targets] {
+    for m in [copy s.root, copy s.timestamp, copy s.snapshot, copy s.targets] {
         if step > s.stage { break }
         let error = io.create("{base}/{m.role}.json", m.wire)
         if error != "" { return error }

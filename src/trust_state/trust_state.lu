@@ -121,7 +121,7 @@ pub fn ready(s: State, now: int) -> str {
     let clock = clock_error(s.floor, now)
     if clock != "" { return clock }
     if s.stage != 3 { return "incomplete-trust-chain" }
-    for m in [s.root, s.timestamp, s.snapshot, s.targets] {
+    for m in [copy s.root, copy s.timestamp, copy s.snapshot, copy s.targets] {
         if m.expires <= now { return "expired-{m.role}" }
         let verified = meta.verify(m, s.root, m.role)
         if verified != "" { return verified }
