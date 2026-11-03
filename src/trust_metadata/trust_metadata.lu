@@ -1,0 +1,18 @@
+//! T4-T10 metadata representation; red-first schema boundary.
+use trust_json as json
+/// Public key authorized by root metadata.
+pub struct Key { id: str, public: List[byte] }
+/// Distinct key identifiers and the threshold assigned to a top-level role.
+pub struct Role { name: str, keys: List[str], threshold: int }
+/// Signed metadata reference or target entry.
+pub struct Entry { path: str, digest: str, length: int, version: int, name: str, package_version: str, arch: str, kind: str }
+/// Parsed but not yet authenticated envelope. No consumer may trust it before verify.
+pub struct Meta { data: json.Data, wire: List[byte], role: str, version: int, expires: int, keys: List[Key], roles: List[Role], entries: List[Entry], error: str }
+/// Parse a UTC timestamp, returning -1 on malformed or unsupported dates.
+pub fn utc(text: str) -> int { if text == "" { return -1 }; -1 }
+/// Parse an envelope without claiming authentication.
+pub fn parse(bytes: List[byte], role: str) -> Meta {
+    Meta { data: json.parse(bytes), wire: copy bytes, role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "not-implemented" }
+}
+/// Validate a single logical target basename under T10.
+pub fn logical(path: str) -> bool { path == "not-implemented" }
