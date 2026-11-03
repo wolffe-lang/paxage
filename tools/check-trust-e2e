@@ -63,6 +63,13 @@ def main():
     check(len(files) == 6, 'T15-six-test-keys')
     for key in files:
         check(key.stat().st_mode & 0o777 == 0o600 and json.loads(key.read_text())['test-only'] is True, f'T15-key-marker-mode-{key.name}')
+    unmarked = keys / 'root1.test-only.key'
+    key_bytes = unmarked.read_bytes(); key_data = json.loads(key_bytes); key_data['test-only'] = False
+    unmarked.write_text(json.dumps(key_data))
+    run('T15-unmarked-key-refused', 'repo', 'init', '--repo', url, '--keys', keys, '--now', NOW,
+        error="Real repository keys need std's constant-time signing review and the maintainer's ceremony (R-pm00-7)")
+    check(not list((repo / 'metadata').iterdir()), 'T15-unmarked-key-no-signatures')
+    unmarked.write_bytes(key_bytes)
     run('T15-init', 'repo', 'init', '--repo', url, '--keys', keys, '--now', NOW, last='repo init ok')
     pinned = WORK / 'pinned-root.json'
     shutil.copyfile(repo / 'metadata/1.root.json', pinned)
@@ -102,6 +109,14 @@ def main():
         print(f'PASS T16-exact-tree-{name}')
     old_timestamp = (repo / 'metadata/timestamp.json').read_bytes()
     alpha2 = package('alpha', '2-1')
+    (repo / 'metadata/2.snapshot.json').write_bytes(b'test-only blocked create-only output')
+    run('T15-publish-interruption', 'repo', 'publish', '--repo', url, '--keys', keys, '--version', '2',
+        '--manifest', alpha2[1], '--buildinfo', alpha2[2], '--manifest', beta[1], '--buildinfo', beta[2], '--now', NOW,
+        error='immutable-rewrite')
+    check((repo / 'metadata/timestamp.json').read_bytes() == old_timestamp, 'T15-timestamp-last-on-failure')
+    run('T15-old-publication-still-usable', 'update', '--repo', url, '--state', state, '--now', NOW, last='update ok')
+    # Test-operator cleanup of deliberately unpublished outputs, not writer repair.
+    (repo / 'metadata/2.snapshot.json').unlink(); (repo / 'metadata/2.targets.json').unlink()
     run('T15-publish-second', 'repo', 'publish', '--repo', url, '--keys', keys, '--version', '2',
         '--manifest', alpha2[1], '--buildinfo', alpha2[2], '--manifest', beta[1], '--buildinfo', beta[2], '--now', NOW,
         last='repo publish ok')
@@ -121,6 +136,7 @@ def main():
     (repo / 'metadata/timestamp.json').write_bytes(latest)
     run('T13-clock-floor', 'update', '--repo', url, '--state', state, '--now', '2026-11-02T23:59:59Z', error='clock-before-floor')
     run('T1-network-refused', 'update', '--repo', 'https://invalid.example/', '--state', state, '--now', NOW, error='unsupported-transport')
+    run('T1-offline-recovery-refused', 'recover-offline', error='offline-recovery-refused')
     for version in range(2, 35):
         run(f'T12-publish-root-{version}', 'repo', 'rotate', '--repo', url, '--old-keys', keys, '--keys', keys,
             '--version', str(version), '--now', NOW, last='repo rotate ok')
