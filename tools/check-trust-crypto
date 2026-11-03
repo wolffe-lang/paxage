@@ -12,34 +12,54 @@ step() {
   printf 'END %s exit=%s secs=%s\n' "$name" "$result" "$((SECONDS-started))"
   return "$result"
 }
+generate() {
+  python3 -I tools/generate-trust-crypto-vectors \
+    --rfc "${RFC8032_TXT:-$PWD/tests/trust/rfc8032-s71.txt}" \
+    --vendor "${WYCHEPROOF_ED25519:-$(dirname "$WOLF_STD")/vendor/vectors/wycheproof/ed25519_test.json}" \
+    --output "$PWD/target/tests/trust-crypto-vectors.lu"
+}
 build() {
   mkdir -p target/tests
+  cp src/wolf.pkg target/tests/wolf.pkg
   rm -rf src/.lu-cache
   "$WOLF" build --deny-warnings src/trust_crypto_test.lu -o target/tests/trust-crypto
+  "$WOLF" build --deny-warnings target/tests/trust-crypto-vectors.lu -o target/tests/trust-crypto-vectors
 }
 cost() {
-  python3 -I - "$PWD/target/tests/trust-crypto" <<'PY'
+  python3 -I - "$PWD/target/tests/trust-crypto-vectors" <<'PY'
+import re
 import statistics
 import subprocess
 import sys
 import time
-command = [sys.argv[1], '--cost']
-expected = 'PASS T17-cost-valid-vector signatures=32 message-bytes=0\n'
+binary = sys.argv[1]
+fixture = subprocess.run([binary, '--cost-sign'], capture_output=True, text=True, timeout=120)
+if fixture.returncode or fixture.stderr or re.fullmatch(r'[0-9a-f]{128}\n', fixture.stdout) is None:
+    print('FAIL T17-cost-sign', fixture.returncode, repr(fixture.stdout), repr(fixture.stderr))
+    raise SystemExit(1)
+command = [binary, '--cost', fixture.stdout.strip()]
+expected = 'PASS T17-cost-valid-1MiB signatures=8 message-bytes=1048576\n'
 def sample():
     start = time.monotonic_ns()
     proc = subprocess.run(command, capture_output=True, text=True, timeout=120)
     elapsed = time.monotonic_ns() - start
-    if proc.returncode != 0 or proc.stdout != expected or proc.stderr:
-        print('FAIL T17-cost-valid-vector', proc.returncode, repr(proc.stdout), repr(proc.stderr))
+    if proc.returncode or proc.stdout != expected or proc.stderr:
+        print('FAIL T17-cost-valid-1MiB', proc.returncode, repr(proc.stdout), repr(proc.stderr))
         raise SystemExit(1)
-    return elapsed / 32 / 1_000_000
-sample()  # One warm-up process; five independent timed process batches.
+    return elapsed / 8 / 1_000_000
+sample()  # Untimed warm-up process; signing happened separately above.
 samples = [sample() for _ in range(5)]
-print('T17 native cost: signatures-per-batch=32 batches=5 message-bytes=0')
+print('T17 native cost: signatures-per-batch=8 batches=5 message-bytes=1048576 signing=outside-timed-process')
 print('T17 batch-process-inclusive ms/signature:', ','.join(f'{n:.6f}' for n in samples))
 print(f'T17 median-ms={statistics.median(samples):.6f} min-ms={min(samples):.6f} max-ms={max(samples):.6f}')
 PY
 }
+step trust-crypto-generate generate
 step trust-crypto-build build
-step trust-crypto-cost cost
-step trust-crypto-qualification target/tests/trust-crypto
+# Keep both qualification suites visible even when one is RED. In particular,
+# the two existing small-order rows must not be hidden behind corpus failures.
+result=0
+step trust-crypto-cost cost || result=1
+step trust-crypto-vectors target/tests/trust-crypto-vectors || result=1
+step trust-crypto-qualification target/tests/trust-crypto || result=1
+exit "$result"

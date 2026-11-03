@@ -29,7 +29,7 @@ lupin_digest=$(toml_value lupin "$target")
 std_rev=$(toml_value std rev)
 want_stamp="$target wolf=$wolf_digest lupin=$lupin_digest std=$std_rev"
 
-if [ -f .wolf-bin/STAMP ] && [ "$(cat .wolf-bin/STAMP)" = "$want_stamp" ]; then
+if [ -f .wolf-bin/STAMP ] && [ "$(cat .wolf-bin/STAMP)" = "$want_stamp" ] && [ -f .wolf-bin/vendor/vectors/wycheproof/ed25519_test.json ]; then
     echo "fetch-toolchain: .wolf-bin/ already holds the pin ($target)"
     exit 0
 fi
@@ -83,7 +83,7 @@ std_repo=$(toml_value std repo)
 echo "fetch-toolchain: https://github.com/$std_repo at $std_rev"
 git init -q "$tmp/std"
 git -C "$tmp/std" fetch -q --depth 1 "https://github.com/$std_repo" "$std_rev"
-git -C "$tmp/std" archive FETCH_HEAD std | tar -x -C .wolf-bin/
+git -C "$tmp/std" archive FETCH_HEAD std vendor/vectors/wycheproof/ed25519_test.json | tar -x -C .wolf-bin/
 git -C "$tmp/std" rev-parse FETCH_HEAD >.wolf-bin/std/STD-REV
 
 echo "$want_stamp" >.wolf-bin/STAMP

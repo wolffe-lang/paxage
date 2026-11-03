@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Generate bounded Wolf qualification rows directly from RFC 8032 and std's vendor JSON."""
+
+import argparse
+import collections
+import json
+from pathlib import Path
+import re
+import sys
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def hex_field(value, name, size=None):
+    require(isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]*", value) is not None
+            and len(value) % 2 == 0, f"{name}: malformed hex")
+    if size is not None:
+        require(len(value) == size * 2, f"{name}: wrong length")
+    return value.lower()
+
+
+def rfc_rows(path):
+    text = path.read_text(encoding="utf-8")
+    section = text.split("7.1.  Test Vectors for Ed25519\n", 1)
+    require(len(section) == 2, "RFC 8032 §7.1 missing")
+    section = section[1].split("7.2.  Test Vectors for Ed25519ctx\n", 1)
+    require(len(section) == 2, "RFC 8032 §7.2 boundary missing")
+    chunks = re.split(r"(?m)^\s*-----TEST (1|2|3|1024|SHA\(abc\))\s*$", section[0])
+    require(len(chunks) == 11, "RFC 8032 §7.1 expected exactly five test vectors")
+    names = ["1", "2", "3", "1024", "SHA(abc)"]
+    rows = []
+    for i, name in enumerate(names):
+        require(chunks[2 * i + 1] == name, f"RFC test ordering: {name}")
+        block = chunks[2 * i + 2]
+        require(re.search(r"(?m)^\s*Ed25519\s*$", block) is not None,
+                f"RFC test {name}: wrong algorithm")
+        def field(start, end):
+            match = re.search(rf"(?ms)^\s*{start}:\s*\n(.*?)^\s*{end}:", block)
+            require(match is not None, f"RFC test {name}: missing {start}/{end}")
+            return "".join(line.strip() for line in match[1].splitlines()
+                           if re.fullmatch(r"\s*[0-9a-fA-F]+\s*", line))
+        secret = hex_field(field("SECRET KEY", "PUBLIC KEY"), f"RFC {name} seed", 32)
+        public = hex_field(field("PUBLIC KEY", r"MESSAGE \(length [0-9]+ bytes?\)"),
+                           f"RFC {name} public", 32)
+        message = hex_field(field(r"MESSAGE \(length [0-9]+ bytes?\)", "SIGNATURE"),
+                            f"RFC {name} message")
+        signature_match = re.search(r"(?ms)^\s*SIGNATURE:\s*\n(.*?)(?=^\s*-----\s*$|\Z)", block)
+        require(signature_match is not None, f"RFC {name}: missing signature")
+        signature = hex_field("".join(line.strip() for line in signature_match[1].splitlines()
+                                      if re.fullmatch(r"\s*[0-9a-fA-F]+\s*", line)),
+                              f"RFC {name} signature", 64)
+        expected_length = 1023 if name == "1024" else 64 if name == "SHA(abc)" else int(name) - 1
+        require(len(message) // 2 == expected_length, f"RFC {name}: message length")
+        rows.append((name, public, message, signature, secret))
+    return rows
+
+
+def vendor_rows(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    require(data.get("algorithm") == "EDDSA" and data.get("schema") == "eddsa_verify_schema_v1.json",
+            "unexpected Wycheproof corpus")
+    groups = data.get("testGroups")
+    require(isinstance(groups, list) and groups, "Wycheproof groups absent")
+    rows = []
+    for group in groups:
+        require(group.get("type") == "EddsaVerify" and
+                group.get("publicKey", {}).get("curve") == "edwards25519",
+                "unexpected Wycheproof group")
+        key = hex_field(group["publicKey"]["pk"], "Wycheproof public key", 32)
+        tests = group.get("tests")
+        require(isinstance(tests, list) and tests, "empty Wycheproof group")
+        for test in tests:
+            tcid = test["tcId"]
+            verdict = test["result"]
+            require(type(tcid) is int and tcid > 0 and verdict in ("valid", "invalid"),
+                    f"Wycheproof tc {tcid}: unsupported verdict")
+            rows.append((tcid, key, hex_field(test["msg"], f"tc {tcid} message"),
+                         hex_field(test["sig"], f"tc {tcid} signature"), verdict))
+    require(len(rows) == data.get("numberOfTests") == 151, "Wycheproof count mismatch (expected 151)")
+    require(len({row[0] for row in rows}) == 151, "Wycheproof duplicate tcId")
+    counts = collections.Counter(row[4] for row in rows)
+    require(counts == {"valid": 88, "invalid": 63}, f"Wycheproof verdict distribution changed: {counts}")
+    return rows
+
+
+def emit(rfc, vendor):
+    lines = [
+        "//! GENERATED from RFC 8032 §7.1 and std-vendored Wycheproof JSON. Do not edit.",
+        "//! Test-only RFC 8032 TEST 1 seed is used solely to sign the cost fixture.",
+        "use std.hex as hex", "use std.x.crypto.curve25519 as curve", "",
+        "fn row(key_hex: str, message_hex: str, signature_hex: str, expected: bool, name: str) -> bool {",
+        "    let key = hex.decode(key_hex) else List[byte]()",
+        "    let message = hex.decode(message_hex) else List[byte]()",
+        "    let signature = hex.decode(signature_hex) else List[byte]()",
+        "    let ok = curve.verify(key, message, signature) == expected",
+        "    if !ok { fs_write(2, \"FAIL {name}\\n\") else |_| {} }",
+        "    else { print(\"PASS {name}\") }", "    ok", "}", "",
+        "fn cost(signing: bool, signature_hex: str) -> int {",
+        f'    let key = hex.decode("{rfc[0][1]}") else List[byte]()',
+        "    var message = List[byte]()",
+        "    // Fixed 1 MiB test-only message; signing runs in a separate untimed process.",
+        "    for _i in 0..1048576 { (mut message).push(0x61 as byte) }",
+        "    if signing {",
+        f'        let test_only_seed = hex.decode("{rfc[0][4]}") else List[byte]()',
+        "        let signature = curve.sign(test_only_seed, message)",
+        "        if signature.len != 64 {",
+        "            fs_write(2, \"FAIL T17-cost-sign\\n\") else |_| {}",
+        "            return 1",
+        "        }",
+        "        print(hex.encode(signature))",
+        "        return 0",
+        "    }",
+        "    let signature = hex.decode(signature_hex) else List[byte]()",
+        "    if signature.len != 64 {",
+        "        fs_write(2, \"FAIL T17-cost-fixture-length\\n\") else |_| {}",
+        "        return 1",
+        "    }",
+        "    for _i in 0..8 {",
+        "        if !curve.verify(key, message, signature) {",
+        "            fs_write(2, \"FAIL T17-cost-valid-1MiB\\n\") else |_| {}",
+        "            return 1", "        }", "    }",
+        "    print(\"PASS T17-cost-valid-1MiB signatures=8 message-bytes=1048576\")",
+        "    0", "}", "",
+        "fn main() -> int {",
+        "    let args = env_args()",
+        '    if args.len == 1 && args[0] == "--cost-sign" { return cost(true, "") }',
+        '    if args.len == 2 && args[0] == "--cost" { return cost(false, args[1]) }',
+        "    var ok = true",
+    ]
+    for name, key, msg, sig, _seed in rfc:
+        lines.append(f'    if !row("{key}", "{msg}", "{sig}", true, "T17-RFC8032-{name}") {{ ok = false }}')
+    for tcid, key, msg, sig, verdict in vendor:
+        want = "true" if verdict == "valid" else "false"
+        lines.append(f'    if !row("{key}", "{msg}", "{sig}", {want}, "T17-Wycheproof-tc{tcid}-{verdict}") {{ ok = false }}')
+    lines += [
+        '    if ok { print("PASS T17-vector-count RFC=5 Wycheproof=151 valid=88 invalid=63"); 0 }',
+        "    else { 1 }", "}", "",
+    ]
+    return "\n".join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--rfc", type=Path, required=True, help="RFC 8032 text path")
+    parser.add_argument("--vendor", type=Path, required=True, help="std-vendored ed25519_test.json path")
+    parser.add_argument("--output", type=Path, required=True, help="generated target/*.lu path")
+    args = parser.parse_args()
+    try:
+        target = args.output.resolve()
+        project_target = Path(__file__).resolve().parent.parent / "target"
+        require(target.suffix == ".lu" and target.is_relative_to(project_target),
+                "output must be inside larder/target and end in .lu")
+        source = emit(rfc_rows(args.rfc), vendor_rows(args.vendor))
+        require(len(source.encode()) < 100_000, "generated source exceeds 100 KiB")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        print(f"FAIL T17-vector-generation {exc}", file=sys.stderr)
+        return 1
+    print("PASS T17-vector-generation RFC=5 Wycheproof=151 valid=88 invalid=63")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
