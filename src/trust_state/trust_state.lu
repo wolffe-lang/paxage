@@ -135,6 +135,7 @@ pub fn ready(s: State, now: int) -> str {
 /// A proposed persisted state must preserve clock/version history or perform
 /// an authenticated single-step root epoch transition. No arbitrary fallback.
 pub fn continuity(old: State, next: State) -> str {
+    if next.repository != old.repository { return "repository-mismatch" }
     let clock = clock_error(old.floor, next.floor)
     if clock != "" { return clock }
     let root = version_error("root", Mark { version: old.root.version, hash: meta.digest(old.root.wire) }, Mark { version: next.root.version, hash: meta.digest(next.root.wire) })
@@ -157,6 +158,20 @@ pub fn continuity(old: State, next: State) -> str {
         }
         if next.snapshot_floor < old.snapshot_floor { return "rollback-snapshot" }
         if next.targets_floor < old.targets_floor { return "rollback-targets" }
+    }
+    let prior_marks = [copy old.timestamp_mark, copy old.snapshot_mark, copy old.targets_mark]
+    let next_marks = [copy next.timestamp_mark, copy next.snapshot_mark, copy next.targets_mark]
+    let active = [copy next.timestamp, copy next.snapshot, copy next.targets]
+    for i in 0..3 {
+        if (reset || next_marks[i].version > prior_marks[i].version) && next_marks[i].version > 0 {
+            if active[i].version != next_marks[i].version || meta.digest(active[i].wire) != next_marks[i].hash { return "state-invalid" }
+        }
+    }
+    if (reset || next.snapshot_floor > old.snapshot_floor) && next.snapshot_floor > 0 {
+        if next.timestamp.entries.len != 1 || next.timestamp.entries[0].version != next.snapshot_floor { return "state-invalid" }
+    }
+    if (reset || next.targets_floor > old.targets_floor) && next.targets_floor > 0 {
+        if next.snapshot.entries.len != 1 || next.snapshot.entries[0].version != next.targets_floor { return "state-invalid" }
     }
     ""
 }

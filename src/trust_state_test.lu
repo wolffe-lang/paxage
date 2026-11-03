@@ -85,6 +85,16 @@ fn main() -> int {
         var lower_clock = copy s
         lower_clock.floor = 100
         if !row(store.save(dir, lower_clock, loaded.generation) == "clock-before-floor", "T19-candidate-clock-regression") { return 1 }
+        var other_repo = copy s
+        other_repo.repository = "file:///different"
+        if !row(store.save(dir, other_repo, loaded.generation) == "repository-mismatch", "T19-candidate-repository-switch") { return 1 }
+        var unproven = copy s
+        unproven.stage = 0
+        unproven.timestamp = meta.absent("timestamp")
+        unproven.snapshot = meta.absent("snapshot")
+        unproven.targets = meta.absent("targets")
+        unproven.timestamp_mark.version += 1
+        if !row(store.save(dir, unproven, loaded.generation) == "state-invalid", "T19-candidate-unproven-high-water") { return 1 }
         let unchanged = io.read("{dir}/current", 1024)
         if !row(meta.digest(unchanged.bytes) == original_hash, "T19-candidates-preserve-accepted-generation") { ok = false }
         var proposed = copy s
