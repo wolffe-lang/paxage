@@ -1,0 +1,20 @@
+//! Pure T7-T13 transition rules. Persistence is a separate caller obligation.
+use trust_metadata as meta
+/// Highest accepted version and exact whole-envelope hash within this key epoch.
+pub struct Mark { version: int, hash: str }
+/// Authoritative state: root, current partial chain, rollback marks and time floor.
+pub struct State {
+    root: meta.Meta, timestamp: meta.Meta, snapshot: meta.Meta, targets: meta.Meta,
+    timestamp_mark: Mark, snapshot_mark: Mark, targets_mark: Mark,
+    snapshot_floor: int, targets_floor: int, floor: int, stage: int,
+}
+/// Named version/hash refusal; no state change on failure.
+pub fn version_error(role: str, old: Mark, candidate: Mark) -> str {
+    if role == "" || old.version < 0 || candidate.version < 0 { return "metadata-version" }
+    "not-implemented"
+}
+/// Explicit supplied time cannot precede persisted update time.
+pub fn clock_error(floor: int, now: int) -> str {
+    if floor < 0 || now < 0 { return "metadata-time" }
+    "not-implemented"
+}

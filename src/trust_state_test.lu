@@ -1,0 +1,19 @@
+use trust_state as state
+fn row(ok: bool, name: str) -> bool {
+    if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
+    ok
+}
+fn main() -> int {
+    var ok = true
+    for role in ["root", "timestamp", "snapshot", "targets"] {
+        let old = state.Mark { version: 2, hash: "a" }
+        if !row(state.version_error(role, old, state.Mark { version: 1, hash: "b" }) == "rollback-{role}", "T13-rollback-{role}") { ok = false }
+        if !row(state.version_error(role, old, state.Mark { version: 2, hash: "b" }) == "same-version-rewrite", "T13-rewrite-{role}") { ok = false }
+        if !row(state.version_error(role, old, state.Mark { version: 2, hash: "a" }) == "", "T13-same-{role}") { ok = false }
+        if !row(state.version_error(role, old, state.Mark { version: 3, hash: "b" }) == "", "T13-forward-{role}") { ok = false }
+    }
+    if !row(state.clock_error(10, 9) == "clock-before-floor", "T13-clock-before-floor") { ok = false }
+    if !row(state.clock_error(10, 10) == "", "T13-clock-equal-floor") { ok = false }
+    if !row(state.clock_error(10, 11) == "", "T13-clock-forward") { ok = false }
+    if ok { 0 } else { 1 }
+}
