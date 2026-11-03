@@ -28,7 +28,12 @@ Already accepted roots remain durable and the next invocation can continue.
 Maximum keys 16, signatures per envelope 16, targets 72 (F3's 24 packages times
 F1's three files); refuse `key-limit`, `signature-limit`, `target-limit`.
 These are application bounds under TUF §5.3.3, §5.4.1, §5.5.1 and §5.6.1.
-Signature-count qualification remains contingent on T17's native measurement.
+The signature ceiling is fixed at 16 from the native kasumi measurement:
+five batches of eight verifications of a 1 MiB message gave a median
+25.425536 ms/signature (range 25.387417–25.627197), process-inclusive with
+signing outside timing. Sixteen signatures therefore represent about 0.41 s
+of measured verify work at the largest input, not a wall-clock guarantee.
+The forthcoming strict std entrypoint must repeat this qualification.
 
 ## T2 — Strict byte-oriented JSON reader
 
@@ -46,8 +51,8 @@ Strings accept JSON's quote, backslash, slash, b, f, n, r, t and `uXXXX`
 escapes, with correctly paired surrogates. Refuse `bad-escape`,
 `bad-surrogate` and literal bytes below U+0020 as `control-byte`.
 Duplicate keys are compared AFTER decoding and refused as `duplicate-key`,
-including spellings such as `"a"` and `"a"`. No normalization changes
-Unicode identity. Integers use `0` or a nonzero digit followed by digits,
+including a literal letter and its equivalent hexadecimal Unicode escape.
+No normalization changes Unicode identity. Integers use `0` or a nonzero digit followed by digits,
 maximum 9,223,372,036,854,775,807. Refuse `integer-overflow`, `negative-integer`,
 `float`, `exponent`; do not convert through floating point.
 
@@ -97,7 +102,8 @@ Require `signed` object and `signatures` array; each signature has `keyid` and
 `1.0.37` (`spec-version`), a permitted exact-match policy under TUF §4.3.
 Versions are positive bounded integers (`metadata-version`). Expiry is an
 actual UTC Gregorian timestamp `YYYY-MM-DDTHH:MM:SSZ`, not just a lexically
-matching string; no alternate zones or leap-second spelling (`metadata-time`).
+matching string; years 1970–9999 only, with no alternate zones or leap-second
+spelling (`metadata-time`).
 Each expiry must be strictly later than the fixed update start time when its
 workflow step requires expiry checking; equal timestamps are expired.
 
@@ -182,15 +188,17 @@ prefixed paths. The client derives the versioned metadata filename and
 `targets/<sha256>.<logical-name>` itself (TUF §6.2.1, §5.7). A logical target
 is one F1 basename, no slash, backslash, NUL, control byte, `..` substring,
 absolute name, percent-encoded path interpretation or URL query/fragment;
-refuse `logical-name`. Its digest prefix must match its authenticated expected
-digest (`target-name-hash`). No repository bytes choose a host outside the
+refuse `logical-name`. Its digest prefix is derived from authenticated metadata,
+never accepted from an arbitrary mirror filename. Dishonest bytes behind that
+prefix refuse `target-hash`; an absent expected filename refuses `target-file`.
+No repository bytes choose a host outside the
 caller-supplied local directory. Nonregular files and detectable symlinks
 refuse `repository-file`; no network endpoint is followed.
 
 ## T11 — Bootstrap and trust state ownership
 
-Bootstrap exclusively creates a caller-named private trust directory from
-the caller's pinned root file, validates structure and self-threshold, and
+Bootstrap exclusively creates the initial state in a caller-named private
+directory from the caller's pinned root file, validates structure and self-threshold, and
 records its exact bytes. Self-signature alone is NOT the bootstrap trust
 anchor: provenance is the caller's pinned input. Existing state is never
 silently overwritten (`trust-state-exists`). State is scoped to that root
@@ -242,6 +250,14 @@ Refuse `state-create`, `state-write`, `state-sync`, `state-rename`,
 A post-rename I/O error may leave the new verified state visible; report the
 error, never pretend the old bytes necessarily remain. No automatic deletion
 outside caller-named state/cache directories.
+
+Each generation directory `g<N>` contains unprefixed role files and a small
+`state.json` header carrying hashes, rollback marks, the canonical repository
+path, the time floor and completed stage. The atomic `current` pointer binds
+that header by SHA-256. Sync every role file, the header, the generation
+and its parent before replacing `current`; then sync the parent again.
+Orphan generations and temporary pointers are never selected as authoritative.
+Readers recheck the header hash, role hashes, signatures and reference bindings.
 
 ## T15 — Test repository writer
 
