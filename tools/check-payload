@@ -93,10 +93,11 @@ def vectors(d):
         ('pax-unused',extended(pax('size',b'1'))),
         ('pax-number',extended(pax('size',b'9223372036854775808'))),
         ('installed-limit',extended(pax('size',b'17179869185'))),
+        ('payload-length',extended(pax('size',b'17179869184'))),
         ('pax-time',extended(pax('mtime',b'1.'))),
-        ('pax-time',extended(pax('mtime',b'1'))),
-        ('pax-time',extended(pax('mtime',b'1.000'))),
-        ('pax-time',extended(pax('mtime',b'-0'))),
+        ('pax-unused',extended(pax('mtime',b'1'))),
+        ('pax-unused',extended(pax('mtime',b'1.000'))),
+        ('pax-unused',extended(pax('mtime',b'-0'))),
         ('pax-text',extended(pax('mtime',b'\xff'))),
         ('pax-text',extended(pax('mtime',b'-1\x00'))),
         ('pax-record',extended(b'9999 path=foo\n'))]
@@ -113,7 +114,7 @@ def vectors(d):
     pad=bytearray(valid);pad[1027]=1;cases.append(('nonzero-padding',bytes(pad)))
     long=b'usr/'+b'a'*200+b'/'+b'b'*101
     cases.append(('bad-path',extended(pax('path',b'../'+b'x'*300))))
-    positives=[valid,extended(pax('path',long)),extended(pax('mtime',b'-1.25')),
+    positives=[valid,extended(pax('path',long)),extended(pax('mtime',b'-1.25')),extended(pax('atime',b'0')+pax('ctime',b'1')),
        archive((header(b'usr/f',b'0',0,0o644),b''),(header(b'usr/h',b'1',0,0o644,b'usr/f'),b''))]
     for binary in [BINARY,BINARY.with_name('lrd')]:
         for i,(error,raw) in enumerate(cases):
@@ -125,7 +126,10 @@ def vectors(d):
     with path.open('wb') as f:
         for i in range(100001):f.write(header(f'usr/f{i:06}'.encode(),b'0',0,0o644))
         f.write(bytes(1024))
-    verify(path,'entry-limit');path.unlink()
+    verify(path,'entry-limit')
+    with path.open('r+b') as f:
+        f.truncate(100000*512);f.seek(0,2);f.write(bytes(1024))
+    verify(path);path.unlink()
     # Bound-before-allocation was exercised with a declared 1MiB+1 header above.
     print(f'END F6-independent-vectors-{len(cases)} exit=0',flush=True)
     return valid
@@ -169,6 +173,26 @@ def roundtrip(d):
     print('canonical payload sha256='+hashlib.sha256(outputs[0]).hexdigest(),flush=True)
     print('END F6-roundtrip-determinism-authentication exit=0',flush=True)
 
+def check_staged(rows,into):
+    # Record modes before temporarily enabling reads/search for independent checks.
+    expected=set()
+    for e in rows:
+        rel=Path(e['path']);expected.add(str(rel))
+        expected.update(str(p) for p in rel.parents if str(p)!='.')
+        target=into/rel;st=target.lstat()
+        assert st.st_mode&0o777==e['mode'],('F6-fuzz-mode',e,st.st_mode)
+        if e['type']=='dir':target.chmod(e['mode']|0o700)
+        elif e['type']=='file':
+            target.chmod(e['mode']|0o400)
+            assert st.st_size==e['length'] and hashlib.sha256(target.read_bytes()).hexdigest()==e['sha256']
+            target.chmod(e['mode'])
+        elif e['type']=='symlink':assert os.readlink(target)==e['target']
+        else:assert st.st_ino==(into/e['target']).stat().st_ino
+    actual=set()
+    for root,dirs,files in os.walk(into,followlinks=False):
+        for name in dirs+files:actual.add(str((Path(root)/name).relative_to(into)))
+    assert actual==expected,('F6-fuzz-tree-inventory',actual,expected)
+
 def fuzz(d,valid):
     seed=1347244082; rng=random.Random(seed);count=int(os.environ.get('LARDER_FUZZ_CASES','100000'))
     assert count>=100000,'F6-fuzz-minimum'
@@ -177,14 +201,24 @@ def fuzz(d,valid):
     if sys.platform.startswith('linux'):command=['prlimit','--as=2147483648','--',*command]
     p=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     accepted=0;refused=0;before=set(d.iterdir())
+    longpath=b'usr/'+b'a'*150+b'/'+b'b'*150
+    extension=pax('path',longpath)
+    pool=[(valid,1024,[0,512]),
+        (archive((header(b'usr/f',b'0',3,0o644),b'abc')),512,[0]),
+        (archive((header(b'usr',b'5'),b''),(header(b'usr/f',b'0',3,0o644),b'abc'),(header(b'usr/h',b'1',0,0o644,b'usr/f'),b''),(header(b'usr/s',b'2',0,0o777,b'f'),b'')),1024,[0,512,1536,2048]),
+        (archive((header(b'PaxHeader',b'x',len(extension),0o644),extension),(header(b'PaxFile',b'0',3,0o644),b'abc')),1536,[0,1024])]
     try:
         for i in range(count):
-            raw=bytearray(valid)
-            # Include checksum-preserving data mutations and truncations, not only header noise.
-            if i%11==0:raw[1024+rng.randrange(3)]^=rng.randrange(1,256)
+            base,data_at,headers=pool[rng.randrange(len(pool))];raw=bytearray(base)
+            if i%11==0:raw[data_at+rng.randrange(3)]^=rng.randrange(1,256)
             elif i%13==0:del raw[rng.randrange(len(raw)):]
             else:
                 for _ in range(rng.randrange(1,5)):raw[rng.randrange(len(raw))]^=rng.randrange(1,256)
+            # Preserve checksums on a subset so framing/type/path/extension checks,
+            # not just the checksum guard, receive hostile inputs.
+            if i%7==0:
+                for off in headers:
+                    if off+512<=len(raw):raw[off:off+512]=checksum(raw[off:off+512])
             p.stdin.write(f'{len(raw):08}'.encode()+raw)
             ready,_,_=select.select([p.stdout],[],[],5)
             assert ready,('F6-fuzz-timeout',seed,i)
@@ -192,16 +226,20 @@ def fuzz(d,valid):
             if line.startswith(b'refused:'):
                 assert line.strip()[8:] and b' ' not in line.strip()[8:];refused+=1
             else:
-                rows=json.loads(line);accepted+=1
-                # Every accepted input is staged and checked through the CLI; generated
-                # manifest binds exactly this independent reader inventory.
+                rows=json.loads(line)
                 path=d/'fuzz.tar';path.write_bytes(raw)
                 m=d/'fuzz.manifest';m.write_text(manifest_for(rows))
                 into=d/'fuzz-stage';into.mkdir(mode=0o700)
-                invoke(stage_args(path,m,into),timeout=5)
-                for e in rows:
-                    target=into/e['path']
-                    if e['type']=='file':assert hashlib.sha256(target.read_bytes()).hexdigest()==e['sha256']
+                args=[str(BINARY),*map(str,stage_args(path,m,into))]
+                if sys.platform.startswith('linux'):args=['prlimit','--as=2147483648','--',*args]
+                staged=subprocess.run(args,capture_output=True,timeout=5)
+                if staged.returncode==0:
+                    assert staged.stderr==b'';check_staged(rows,into);accepted+=1
+                else:
+                    # F5 can describe symlink modes this unprivileged host cannot
+                    # reproduce. That must be a named refusal, never false success.
+                    assert staged.returncode==1 and staged.stderr==b'larder: stage-mode\n',(seed,i,staged.returncode,staged.stdout,staged.stderr)
+                    refused+=1
                 import shutil
                 shutil.rmtree(into);path.unlink();m.unlink()
             if i%10000==0:print(f'fuzz progress={i} accepted={accepted} refused={refused}',flush=True)

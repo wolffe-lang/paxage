@@ -240,18 +240,18 @@ fn extensions(b: List[byte]) -> Extensions {
     x
 }
 
-fn time_needed(v: str) -> bool {
+fn time_kind(v: str) -> int {
     let b = v.bytes()
-    if b.len == 0 { return false }
+    if b.len == 0 { return -1 }
     var at = 0
     var needed = false
     let negative = b[0] == 45 as byte
     if negative { at = 1 }
     let start = at
     while at < b.len && b[at] >= 48 as byte && b[at] <= 57 as byte { at += 1 }
-    if at == start { return false }
+    if at == start { return -1 }
     let whole = number(slice(b, start, at - start), 10)
-    if whole < 0 { return false }
+    if whole < 0 { return -1 }
     if whole > 8589934591 || negative && whole > 0 { needed = true }
     if at < b.len && b[at] == 46 as byte {
         at += 1
@@ -260,9 +260,11 @@ fn time_needed(v: str) -> bool {
             if b[at] != 48 as byte { needed = true }
             at += 1
         }
-        if at == fraction { return false }
+        if at == fraction { return -1 }
     }
-    at == b.len && needed
+    if at != b.len { return -1 }
+    if needed { return 1 }
+    0
 }
 
 /// Read one declared tar window. No bytes written; file bytes are hashed incrementally.
@@ -366,9 +368,11 @@ pub fn inspect(mut s: Stream) -> Inventory {
                     if n < 0 { s.error = "pax-number"; break }
                     if n <= 8589934591 || kind != "file" { s.error = "pax-unused"; break }
                     length = n
-                } else if !time_needed(v) {
-                    s.error = "pax-time"
-                    break
+                } else {
+                    let time = time_kind(v)
+                    if time < 0 { s.error = "pax-time"; break }
+                    // ustar has no atime/ctime fields; any valid value needs pax.
+                    if k == "mtime" && time == 0 { s.error = "pax-unused"; break }
                 }
             }
             pending = false
