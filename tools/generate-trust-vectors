@@ -52,6 +52,7 @@ class Generator:
         self.counter = 0
         self.material = {}
         self.cases = []
+        self.witnesses = []
         output.mkdir(mode=0o700)
         keys.mkdir(mode=0o700)
         (keys / 'test-only').write_text('test-only keys; never use outside these vectors\n')
@@ -85,6 +86,7 @@ class Generator:
             signature = command('pkeyutl', '-sign', '-rawin', '-inkey', key, '-in', path)
             if len(signature) != 64: raise RuntimeError('signature-length')
             signatures.append({'keyid': keyid, 'sig': signature.hex()})
+            self.witnesses.append({'keyid': keyid, 'signed_sha256': digest(wire), 'signature': signature.hex()})
         return {'signed': signed, 'signatures': signatures}
 
     def root(self, version, epoch='old', signers=None, expires=FUTURE):
@@ -195,8 +197,8 @@ class Generator:
                 path.write_bytes(b + b' ' if delta == 'long' else b[:-1])
         repo = self.case('mix-and-match', 'metadata-hash'); self.chain(repo, tv=101, sv=101, av=101)
         path = repo / 'metadata/101.targets.json'; b = path.read_bytes(); path.write_bytes(b.replace(b'2030-', b'2031-', 1))
-        repo = self.case('endless-timestamp-fifo', 'repository-file')
-        (repo / 'metadata/timestamp.json').unlink(); os.mkfifo(repo / 'metadata/timestamp.json', 0o600)
+        self.case('endless-timestamp-fifo', 'repository-file')
+        self.cases[-1]['fifo'] = True  # Materialize the special file at test time; git stores regular files only.
         for name, logical in [('logical-slash', 'alpha/path'), ('logical-dotdot', 'alpha..path')]:
             repo = self.case(name, 'logical-name'); body = self.target_body(101)
             entry = body['targets'].pop('alpha-1-1.payload.tar'); body['targets'][logical] = entry
@@ -218,6 +220,7 @@ class Generator:
         self.case('clock-before-floor', 'clock-before-floor', now='2026-11-02T23:59:59Z')
         self.case('root-expired', 'expired-root', now='2030-01-01T00:00:00Z')
         (self.output / 'cases.json').write_text(json.dumps({'now': NOW, 'cases': self.cases}, indent=2) + '\n')
+        (self.output / 'signature-witnesses.json').write_text(json.dumps(self.witnesses, indent=2) + '\n')
         (self.output / 'openssl-version.txt').write_bytes(command('version'))
         print(f'PASS independent-vectors cases={len(self.cases)}')
 

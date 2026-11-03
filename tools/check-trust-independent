@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Run independent T-clause attacks and verify every surviving state against OpenSSL witnesses."""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+canonical = runpy.run_path(str(ROOT / 'tools/generate-trust-vectors'))['canonical']
+
+
+def require(ok, row):
+    if not ok: raise ValueError(row)
+
+
+def digest(b): return hashlib.sha256(b).hexdigest()
+
+
+def utc(s): return int(datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp())
+
+
+def authentic(metadata, root, role, witnesses):
+    signed = metadata['signed']
+    require(signed['_type'] == role, 'state-role')
+    wire = canonical(signed)
+    authorized = root['signed']['roles'][role]
+    ids = [sig['keyid'] for sig in metadata['signatures']]
+    require(len(ids) == len(set(ids)), 'state-duplicate-signature')
+    valid = {sig['keyid'] for sig in metadata['signatures']
+             if sig['keyid'] in authorized['keyids'] and (sig['keyid'], digest(wire), sig['sig']) in witnesses}
+    require(len(valid) >= authorized['threshold'], 'state-signature-threshold')
+
+
+def state_verified(directory, repository, pinned, witnesses, start):
+    pointer = json.loads((directory / 'current').read_bytes())
+    base = directory / f'g{pointer["generation"]}'
+    header_bytes = (base / 'state.json').read_bytes()
+    require(digest(header_bytes) == pointer['hash'], 'state-header-hash')
+    h = json.loads(header_bytes)
+    require(h['repository'] == str(repository.resolve()), 'state-repository-binding')
+    require(h['floor'] >= utc(start), 'state-clock-floor')
+    require(h['stage'] in (0, 1, 2, 3), 'state-stage')
+    root_bytes = (base / 'root.json').read_bytes()
+    require(digest(root_bytes) == h['root_hash'], 'state-root-hash')
+    root = json.loads(root_bytes)
+    trusted = json.loads(pinned.read_bytes())
+    initial_version = trusted['signed']['version']
+    if root['signed']['version'] == initial_version:
+        require(root_bytes == pinned.read_bytes(), 'state-same-version-root')
+    else:
+        require(initial_version < root['signed']['version'] <= initial_version + 32, 'state-root-version')
+        for version in range(initial_version + 1, root['signed']['version'] + 1):
+            candidate = json.loads((repository / f'metadata/{version}.root.json').read_bytes())
+            require(candidate['signed']['version'] == version, 'state-root-sequence')
+            authentic(candidate, trusted, 'root', witnesses)
+            authentic(candidate, candidate, 'root', witnesses)
+            trusted = candidate
+        require(root == trusted, 'state-root-continuity')
+    authentic(root, root, 'root', witnesses)
+    for keyid, key in root['signed']['keys'].items():
+        require(digest(canonical(key)) == keyid, 'state-key-id')
+    parent = None
+    for stage, role in enumerate(('timestamp', 'snapshot', 'targets'), 1):
+        if stage > h['stage']: break
+        wire = (base / f'{role}.json').read_bytes()
+        m = json.loads(wire)
+        require(digest(wire) == h[f'{role}_hash'], f'state-{role}-hash')
+        require(m['signed']['version'] == h[f'{role}_version'], f'state-{role}-version')
+        require(utc(m['signed']['expires']) > h['floor'], f'state-{role}-expiry')
+        authentic(m, root, role, witnesses)
+        if parent is not None:
+            ref = parent['signed']['meta'][f'{role}.json']
+            require(ref['length'] == len(wire) and ref['hashes']['sha256'] == digest(wire)
+                    and ref['version'] == m['signed']['version'], f'state-{role}-binding')
+        parent = m
+    require(h['snapshot_floor'] >= h['snapshot_version'] and h['targets_floor'] >= h['targets_version'], 'state-reference-floor')
+    original = json.loads(pinned.read_bytes())
+    rotated = any(set(root['signed']['roles'][role]['keyids']) != set(original['signed']['roles'][role]['keyids'])
+                  for role in ('snapshot', 'timestamp'))
+    if not rotated:
+        require(all(h[f'{role}_version'] >= 100 for role in ('timestamp', 'snapshot', 'targets')), 'state-rollback-floor')
+    return h
+
+
+def invoke(binary, *args):
+    return subprocess.run([str(binary), *map(str, args)], capture_output=True, text=True, timeout=15)
+
+
+def run_case(binary, fixture, case, work, witnesses, start):
+    repo = work / 'repository'; state = work / 'state'; cache = work / 'cache'
+    shutil.copytree(fixture / 'baseline', repo)
+    pinned = fixture / 'pinned-root.json'
+    common = ['--repo', repo.as_uri(), '--state', str(state)]
+    p = invoke(binary, 'bootstrap', *common, '--root', pinned, '--now', start)
+    require(p.returncode == 0 and p.stdout == 'bootstrap ok\n' and not p.stderr, f'{case["name"]}-bootstrap:{p.stderr}')
+    p = invoke(binary, 'update', *common, '--now', start)
+    require(p.returncode == 0 and p.stdout == 'update ok\n' and not p.stderr, f'{case["name"]}-baseline:{p.stderr}')
+    state_verified(state, repo, pinned, witnesses, start)
+    shutil.rmtree(repo)
+    shutil.copytree(fixture / case['repository'], repo)
+    if case.get('fifo'):
+        (repo / 'metadata/timestamp.json').unlink()
+        os.mkfifo(repo / 'metadata/timestamp.json', 0o600)
+    args = [case['action'], *common, '--now', case['now']]
+    if case['action'] == 'fetch': args += ['--cache', str(cache), '--target', 'alpha-1-1.payload.tar']
+    p = invoke(binary, *args)
+    expected = case['refusal']
+    if expected is None:
+        require(p.returncode == 0 and p.stdout == 'update ok\n' and not p.stderr,
+                f'{case["name"]}: exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    else:
+        require(p.returncode == 1 and not p.stdout and expected in p.stderr,
+                f'{case["name"]}: expected={expected} exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    state_verified(state, repo, pinned, witnesses, start)
+    print(f'PASS independent-{case["name"]} expected={expected or "verified-update"}', flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fixtures', type=Path, default=ROOT / 'tests/trust/independent')
+    parser.add_argument('--binary', type=Path, default=ROOT / 'target/bin/larder')
+    parser.add_argument('--work', type=Path, default=ROOT / 'target/trust-independent')
+    args = parser.parse_args()
+    args.work.mkdir(mode=0o700)
+    manifest = json.loads((args.fixtures / 'cases.json').read_bytes())
+    witnesses = {(w['keyid'], w['signed_sha256'], w['signature']) for w in json.loads((args.fixtures / 'signature-witnesses.json').read_bytes())}
+    require(len(manifest['cases']) >= 41, 'independent-case-count')
+    for case in manifest['cases']:
+        work = args.work / case['name']; work.mkdir(mode=0o700)
+        try:
+            run_case(args.binary, args.fixtures, case, work, witnesses, manifest['now'])
+        except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
+            print(f'FAIL independent-{case["name"]} {exc}', flush=True); return 1
+    print(f'PASS independent-attacks count={len(manifest["cases"])}')
+    return 0
+
+
+if __name__ == '__main__': sys.exit(main())
