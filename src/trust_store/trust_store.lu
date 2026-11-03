@@ -10,10 +10,19 @@ use schema
 pub struct Loaded { value: state.State, generation: int, error: str }
 /// Read and validate the authoritative generation; temporary files are never consulted.
 pub fn load(dir: str) -> Loaded {
-    var out = Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "" }
     let pointer = io.read("{dir}/current", 1024)
-    if pointer.error != "" { out.error = pointer.error; return out }
-    let p = json.parse(pointer.bytes)
+    if pointer.error != "" {
+        return Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "state-invalid" }
+    }
+    load_candidate(dir, pointer.bytes)
+}
+
+/// Validate a proposed pointer without publishing it or changing accepted files.
+/// The pointer and all files it selects must validate; malformed candidates refuse.
+pub fn load_candidate(dir: str, pointer_bytes: List[byte]) -> Loaded {
+    var out = Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "" }
+    if pointer_bytes.len > 1024 { out.error = "state-invalid"; return out }
+    let p = json.parse(pointer_bytes)
     if p.error != "" { out.error = "state-invalid"; return out }
     let gen = meta.number(p, 0, "generation")
     let header_hash = meta.text(p, 0, "hash")
@@ -47,7 +56,7 @@ pub fn load(dir: str) -> Loaded {
         let input = io.read("{base}/{role}.json", meta.limit(role))
         if input.error != "" { out.error = "state-invalid"; return out }
         let m = meta.parse(input.bytes, role)
-        if m.error != "" || meta.verify(m, root, role) != "" { out.error = "state-invalid"; return out }
+        if m.error != "" || meta.verify(m, root, role) != "" || m.expires <= out.value.floor || root.expires <= out.value.floor { out.error = "state-invalid"; return out }
         var mark = copy out.value.timestamp_mark
         if role == "snapshot" { mark = copy out.value.snapshot_mark }
         if role == "targets" { mark = copy out.value.targets_mark }
@@ -66,15 +75,33 @@ pub fn load(dir: str) -> Loaded {
     out.generation = gen
     out
 }
-/// Test-only interruption seam; never exposed by the CLI. Red-first placeholder.
+/// Test-only deterministic write interruption, never exposed by the CLI.
+/// Cuts: 1 partial root file, 2 synced generation, 3 synced pointer, 4 renamed pointer.
+/// Each returns state-test-interruption; old or new committed state remains verifiable.
 pub fn test_interrupted_save(dir: str, s: state.State, previous: int, cut: int) -> str {
-    if dir == "" || s.root.version < 1 || previous < 0 || cut < 1 { return "state-invalid" }
-    "not-implemented"
+    if cut < 1 || cut > 4 { return "state-invalid" }
+    save_inner(dir, s, previous, cut)
 }
 
 /// Write a complete generation before publishing its pointer. Orphans are never trusted.
 pub fn save(dir: str, s: state.State, previous: int) -> str {
+    save_inner(dir, s, previous, 0)
+}
+
+fn save_inner(dir: str, s: state.State, previous: int, cut: int) -> str {
     if previous < 0 || previous >= 1000000000 { return "state-generation-limit" }
+    var prior = Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "" }
+    if previous > 0 {
+        prior = load(dir)
+        if prior.error != "" { return "state-invalid" }
+        if prior.generation != previous { return "state-generation-changed" }
+        let allowed = state.continuity(prior.value, s)
+        if allowed != "" { return allowed }
+    } else {
+        let existing = io.read("{dir}/current", 1024)
+        if existing.error == "" { return "trust-state-exists" }
+        if existing.error != "not-found" { return "state-invalid" }
+    }
     var generation = previous + 1
     var created = false
     for _attempt in 0..64 {
@@ -89,10 +116,16 @@ pub fn save(dir: str, s: state.State, previous: int) -> str {
     }
     if !created { return "state-generation-limit" }
     let base = "{dir}/g{generation}"
+    let roles = ["root", "timestamp", "snapshot", "targets"]
     var step = 0
     for m in [copy s.root, copy s.timestamp, copy s.snapshot, copy s.targets] {
         if step > s.stage { break }
-        let error = io.create("{base}/{m.role}.json", m.wire)
+        if cut == 1 && step == 0 {
+            let partial = io.create("{base}/root.json", m.wire[0..m.wire.len / 2])
+            if partial != "" { return partial }
+            return "state-test-interruption"
+        }
+        let error = io.create("{base}/{roles[step]}.json", m.wire)
         if error != "" { return error }
         step += 1
     }
@@ -105,8 +138,23 @@ pub fn save(dir: str, s: state.State, previous: int) -> str {
     if error != "" { return error }
     fs_sync_dir(base) else |_| { return "state-dir-sync" }
     fs_sync_dir(dir) else |_| { return "state-dir-sync" }
+    if cut == 2 { return "state-test-interruption" }
     let hash = meta.digest(bytes)
     let pointer = "{{\"generation\":{generation},\"hash\":\"{hash}\"}}"
     let pointer_bytes = pointer.bytes()
+    let candidate = load_candidate(dir, pointer_bytes)
+    if candidate.error != "" { return "state-invalid" }
+    if previous > 0 {
+        let allowed = state.continuity(prior.value, candidate.value)
+        if allowed != "" { return allowed }
+    }
+    if cut == 3 || cut == 4 {
+        let staged = io.create("{dir}/current.{generation}.next", pointer_bytes)
+        if staged != "" { return staged }
+        if cut == 4 {
+            fs_rename("{dir}/current.{generation}.next", "{dir}/current") else |_| { return "state-rename" }
+        }
+        return "state-test-interruption"
+    }
     io.replace(dir, "current", "current.{generation}.next", pointer_bytes)
 }
