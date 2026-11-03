@@ -191,9 +191,14 @@ fn entries(mut m: Meta, signed: int) -> str {
     for pair in groups.pairs() { if pair.1 != 7 { return "target-incomplete" } }
     ""
 }
+/// Absent role metadata, used only for an incomplete trust chain.
+pub fn absent(role: str) -> Meta {
+    Meta { data: json.Data { nodes: List[json.Node](), error: "" }, wire: List[byte](), role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "" }
+}
+
 /// Parse a role envelope without claiming authentication. Bounds precede parsing.
 pub fn parse(bytes: List[byte], role: str) -> Meta {
-    var m = Meta { data: json.Data { nodes: List[json.Node](), error: "" }, wire: List[byte](), role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "" }
+    var m = absent(role)
     if limit(role) == 0 { m.error = "role-type"; return m }
     if bytes.len > limit(role) { m.error = "metadata-byte-limit"; return m }
     m.data = json.parse(bytes)
