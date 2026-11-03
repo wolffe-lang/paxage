@@ -6,7 +6,13 @@ use schema
 use std.str as text
 use std.x.crypto.sha2 as sha2
 
-struct Walk { entries: List[payload.Entry], ids: List[str], targets: List[str], error: str }
+struct Walk {
+    entries: List[payload.Entry],
+    ids: List[str],
+    targets: List[str],
+    error: str,
+    limit: int,
+}
 
 fn walk(root: str, parent: str, depth: int, mut w: Walk) {
     if depth > 4096 || w.error != "" { w.error = "bad-path"; return }
