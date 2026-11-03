@@ -86,8 +86,9 @@ PR descriptions carry a `Footprint:` line: `notes` for prose only, `module` for
 one program/module without shared tools or specs, `cross-cutting` for format,
 pins, CI or shared tooling. The format/CLI/payload pass is cross-cutting.
 Use the five lane-note sections, terse chunk commits, no attribution trailers.
-A deliberate off-line break belongs on its own lane-prefixed `*-plant-*` draft PR;
-never merge a plant. No foreign package-manager, comparator, resolver, archiver,
+A deliberate off-line break belongs on its own lane-prefixed `*-plant-*` branch,
+pushed without a PR. Record its named failing row locally; never merge a plant.
+No foreign package-manager, comparator, resolver, archiver,
 compressor or signature implementation source may be consulted, whatever its
 licence. The org's own wolf/std/larder sources are permitted; golden vectors derive
 from specifications alone.
