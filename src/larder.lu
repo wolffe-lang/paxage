@@ -16,7 +16,7 @@ use std.str as text
 use std.x.crypto.sha2 as sha2
 
 fn usage() -> str {
-    "Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nMutating verbs install, remove, upgrade, sync are refused until pm04."
+    "Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nMutating verbs install, remove, upgrade, sync are refused until pm04."
 }
 
 fn bad_usage(message: str) -> int { eprint("larder: {message}\n{usage()}"); 2 }
@@ -294,7 +294,7 @@ fn main() -> int {
     if verb == "recover-offline" { return fail("offline-recovery-refused") }
     if (verb == "--help" || verb == "help") && a.len == 1 { print(usage()); return 0 }
     if (verb == "version" || verb == "--version") && a.len == 1 {
-        print("larder 0.1.0 (lrd; format v1, pack and stage)")
+        print("larder 0.1.0 (lrd; format v1, file trust, pack and stage)")
         return 0
     }
     if verb == "compare" && a.len == 3 {

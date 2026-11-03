@@ -5,7 +5,7 @@
 One binary, `larder`; `lrd` is a symbolic link with identical behavior.
 Diagnostics start `larder:` regardless of invocation name. Usage names both.
 
-- `version`: `larder 0.1.0 (lrd; format v1, pack and stage)`.
+- `version`: `larder 0.1.0 (lrd; format v1, file trust, pack and stage)`.
 - `check-manifest FILE`: strict F2/F3 validation, exact-byte std SHA-256 and
   byte length. This does not authenticate a signer or a payload.
 - `compare V1 V2`: V2 versions, normalized result -1, 0 or 1.
@@ -16,6 +16,7 @@ Diagnostics start `larder:` regardless of invocation name. Usage names both.
   `status`, `selected`, `removals`, `nodes`, `explanation`. Removals identify
   old and replacing packages; text is deterministic. No root/cache/trust writes.
 - `pack`, `verify-payload`, `stage`, `list-payload`: C4–C7 below.
+- `repo`, `bootstrap`, `update`, `fetch`: C8–C11 below; test-only signing and file transport.
 - `--help` / `help`: usage, exit 0; `--version` aliases version.
 
 ## C2 — Refusals and exits
@@ -107,3 +108,74 @@ Same strict reader as C5. Text rows are tab-separated type, decimal mode, length
 path, target. JSON is a path-ordered array of F5 records with keys `path`, `type`,
 `mode`, `owner`, `group`, `length`, `sha256`, `target`. No writes. JSON inventory
 is not signer authentication, and stage still independently verifies installation.
+
+## C8 — Test-only repository publication
+
+- `repo keygen --keys DIR [--now UTC]` creates six marked `test-only` key files,
+  mode 0600, in a private caller-owned directory. Existing key files refuse.
+- `repo init --repo file:///PATH --keys DIR [--now UTC]` writes version 1 root
+  metadata with a 2-of-3 root and separate targets, snapshot and timestamp keys.
+- `repo rotate --repo file:///PATH --old-keys DIR --keys NEWDIR --version N
+  [--now UTC]` writes exactly the next root, signed under both old and new roots.
+- `repo publish --repo file:///PATH --keys DIR --version N [--root-version R]
+  [--manifest FILE --buildinfo FILE ...] [--now UTC]` publishes a complete
+  targets set. Manifest/buildinfo options pair in their respective input order;
+  the payload is the manifest's sibling with `.payload.tar` replacing `.manifest`.
+  Empty targets are supported. R defaults to 1; use the current root after rotation.
+
+Optional validity windows are positive seconds: `--root-validity` (31536000),
+`--targets-validity` (7776000), `--snapshot-validity` (1209600), and
+`--timestamp-validity` (172800). They are explicit per-call overrides. The defaults
+remain operational proposals, not cryptographic constants.
+
+Every immutable metadata file is create-only. Existing target objects may be
+referenced again only after whole-file verification; they are never rewritten.
+`metadata/timestamp.json` alone is atomically replaced, after referenced objects
+and metadata are present and synced. A failed publish can leave unreferenced
+immutable files, but must not publish a timestamp that refers to incomplete data.
+Success ends `repo VERB ok`. No command accepts unmarked production signing keys.
+
+## C9 — Bootstrap and update
+
+`bootstrap --repo file:///PATH --root PINNED_FILE --state DIR [--now UTC]`
+
+PINNED_FILE is the caller's independently authenticated root, not a mirror lookup.
+Use a new private state directory. Bootstrap verifies its structure and
+self-threshold but does not claim that a self-signature supplies provenance.
+Existing accepted state is never silently replaced. Success: `bootstrap ok`.
+
+`update --repo file:///PATH --state DIR [--now UTC]`
+
+The state is bound to the canonical local repository path. Update rotates roots
+one version at a time, then verifies timestamp, snapshot and targets, preserving
+each verified step durably. Failures name the step and refusal; incomplete chains
+cannot authorize fetching. Successful repeated updates may reuse unchanged
+metadata but still enforce expiry and the stored clock floor. Success: `update ok`.
+
+Without `--now`, the command prints `clock=system`; it never reads repository time.
+UTC has the exact form `YYYY-MM-DDTHH:MM:SSZ`. Tests always pass it explicitly.
+No HTTP, URL authority, redirects, percent decoding, query or fragment is supported.
+
+## C10 — Fetch and verified staging
+
+`fetch --repo file:///PATH --state DIR --cache DIR --target LOGICAL_NAME
+[--stage EMPTY_DIR] [--now UTC]`
+
+Recheck the complete current chain before exposing a target. Unverified downloads
+stay in `.part`; whole-object SHA-256 and exact length are checked before promotion
+to `objects/sha256/HEX`. Existing objects are reverified, not trusted by pathname.
+The output includes `object=PATH sha256=HEX length=N` and ends `fetch ok`.
+
+`--stage` requires a payload target. Fetch and authenticate its manifest and
+buildinfo too, check package identity and provenance binding, then call C6 with
+the authenticated digest and length. The directory must satisfy C6's ownership,
+empty-directory and no-live-root rules. This does not install a package.
+
+## C11 — State corruption and recovery boundary
+
+A damaged current pointer, generation header or role file refuses `state-invalid`
+without repair writes or selection of an older generation. The diagnostic says
+`re-bootstrap into a new, empty state directory from a caller-supplied pinned root`.
+That explicit operator action leaves the damaged directory alone; it is not an
+automatic recovery feature. `recover-offline` refuses `offline-recovery-refused`.
+See TRUST T19 for the distinction between candidate fuzz and committed corruption.
