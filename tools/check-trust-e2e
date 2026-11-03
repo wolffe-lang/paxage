@@ -121,6 +121,18 @@ def main():
     (repo / 'metadata/timestamp.json').write_bytes(latest)
     run('T13-clock-floor', 'update', '--repo', url, '--state', state, '--now', '2026-11-02T23:59:59Z', error='clock-before-floor')
     run('T1-network-refused', 'update', '--repo', 'https://invalid.example/', '--state', state, '--now', NOW, error='unsupported-transport')
+    for version in range(2, 35):
+        run(f'T12-publish-root-{version}', 'repo', 'rotate', '--repo', url, '--old-keys', keys, '--keys', keys,
+            '--version', str(version), '--now', NOW, last='repo rotate ok')
+    last_root = repo / 'metadata/34.root.json'
+    last_bytes = last_root.read_bytes()
+    if sys.platform == 'linux': last_root.write_bytes(b' ' * 65537)
+    run('T1-root-chain-limit', 'update', '--repo', url, '--state', state, '--now', NOW, error='root-chain-limit')
+    pointer = json.loads((state / 'current').read_bytes())
+    stored_root = json.loads((state / f'g{pointer["generation"]}' / 'root.json').read_bytes())
+    check(stored_root['signed']['version'] == 33, 'T12-last-verified-root-durable')
+    last_root.write_bytes(last_bytes)
+    run('T12-root-chain-resume', 'update', '--repo', url, '--state', state, '--now', NOW, last='update ok')
     evidence = Path(os.environ.get('LARDER_WRITER_EVIDENCE', ROOT / 'target/evidence/trust-writer-metadata'))
     evidence.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(repo / 'metadata', evidence)

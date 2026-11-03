@@ -28,5 +28,30 @@ fn main() -> int {
     if !expect(r#"{"signatures":[],"signed":{"_type":"timestamp","expires":"2030-01-01T00:00:00Z","meta":{},"spec_version":"1.0.37","version":1}}"#, "timestamp", "metadata-reference", "T7-missing-snapshot") { ok = false }
     if !expect(r#"{"signatures":[],"signed":{"_type":"targets","delegations":{},"expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#, "targets", "unsupported-delegations", "T9-delegations") { ok = false }
     if !expect(r#"{"signatures":[],"signed":{"_type":"targets","expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#, "targets", "", "T9-empty-targets") { ok = false }
+    var signatures = ""
+    for i in 0..17 {
+        if i > 0 { signatures += "," }
+        signatures += "{{}}"
+    }
+    let signature_limit = "{{\"signatures\":[{signatures}],\"signed\":{{\"_type\":\"targets\",\"expires\":\"2030-01-01T00:00:00Z\",\"spec_version\":\"1.0.37\",\"targets\":{{}},\"version\":1}}}}"
+    if !expect(signature_limit, "targets", "signature-limit", "T1-signature-limit") { ok = false }
+    var keys = ""
+    for i in 0..17 {
+        if i > 0 { keys += "," }
+        var label = "k{i}"
+        if i < 10 { label = "k0{i}" }
+        keys += "\"{label}\":{{}}"
+    }
+    let key_limit = "{{\"signatures\":[],\"signed\":{{\"_type\":\"root\",\"consistent_snapshot\":true,\"expires\":\"2030-01-01T00:00:00Z\",\"keys\":{{{keys}}},\"roles\":{{}},\"spec_version\":\"1.0.37\",\"version\":1}}}}"
+    if !expect(key_limit, "root", "key-limit", "T1-key-limit") { ok = false }
+    var targets = ""
+    for i in 0..73 {
+        if i > 0 { targets += "," }
+        var label = "t{i}"
+        if i < 10 { label = "t0{i}" }
+        targets += "\"{label}\":{{}}"
+    }
+    let target_limit = "{{\"signatures\":[],\"signed\":{{\"_type\":\"targets\",\"expires\":\"2030-01-01T00:00:00Z\",\"spec_version\":\"1.0.37\",\"targets\":{{{targets}}},\"version\":1}}}}"
+    if !expect(target_limit, "targets", "target-limit", "T1-target-limit") { ok = false }
     if ok { 0 } else { 1 }
 }
