@@ -1,0 +1,69 @@
+//! Bounded local files and durable writes; no transport or subprocess calls.
+/// Bounded file bytes or a named refusal. Empty bytes may be a valid empty file.
+pub struct Input { bytes: List[byte], error: str }
+/// Read a regular no-follow file, testing size before allocating and exact EOF after.
+pub fn read(path: str, cap: int) -> Input {
+    let fd = fs_open_mode(path, 21) else |e| match e {
+        not_found => { return Input { bytes: List[byte](), error: "not-found" } },
+        _ => { return Input { bytes: List[byte](), error: "repository-file" } },
+    }
+    let stat = fs_fstat(fd) else |_| {
+        fs_close(fd) else |_| {}
+        return Input { bytes: List[byte](), error: "repository-file" }
+    }
+    var error = ""
+    if stat[0] != 0 { error = "repository-file" }
+    if stat[1] > cap { error = "metadata-byte-limit" }
+    var out = List[byte]()
+    while error == "" {
+        var amount = cap + 1 - out.len
+        if amount > 65536 { amount = 65536 }
+        let chunk = fs_read_chunk(fd, amount) else |e| match e {
+            eof => { break },
+            io => { error = "repository-read"; break },
+        }
+        if chunk.len == 0 { break }
+        if chunk.len > cap - out.len { error = "metadata-byte-limit"; break }
+        for b in chunk { (mut out).push(b) }
+    }
+    fs_close(fd) else |_| { error = "repository-close" }
+    Input { bytes: out, error }
+}
+/// Validate a private caller-owned directory; root and privileged callers refuse.
+pub fn private_dir(path: str) -> str {
+    let uid = os_euid() else |_| { return "directory-owner" }
+    if uid == 0 { return "privileged-trust-refused" }
+    let s = fs_lstat(path) else |_| { return "directory" }
+    if s[0] != 1 || s[6] != uid || s[4] / 8 % 8 / 2 % 2 != 0 || s[4] % 8 / 2 % 2 != 0 { return "directory-owner" }
+    let real = fs_realpath(path) else |_| { return "directory" }
+    if real == "/" { return "directory-root" }
+    ""
+}
+/// Exclusively create, write and sync one file (0600). Never overwrite on failure.
+pub fn create(path: str, bytes: List[byte]) -> str {
+    let fd = fs_open_perm(path, 20, 384) else |e| match e {
+        exists => { return "immutable-rewrite" },
+        _ => { return "state-create" },
+    }
+    var error = ""
+    fs_write_chunk(fd, bytes) else |_| { error = "state-write" }
+    if error == "" { fs_sync(fd) else |_| { error = "state-sync" } }
+    fs_close(fd) else |_| { error = "state-close" }
+    error
+}
+/// Exclusive temporary creation, file sync, same-directory rename, directory sync.
+pub fn replace(dir: str, name: str, temporary: str, bytes: List[byte]) -> str {
+    let error = create("{dir}/{temporary}", bytes)
+    if error != "" { return error }
+    fs_rename("{dir}/{temporary}", "{dir}/{name}") else |_| { return "state-rename" }
+    fs_sync_dir(dir) else |_| { return "state-dir-sync" }
+    ""
+}
+/// Open a persistent advisory-lock inode and acquire it nonblocking; -1 is refusal.
+pub fn lock(dir: str) -> int {
+    let fd = fs_open_perm("{dir}/lock", 19, 384) else |_| { return -1 }
+    let s = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return -1 }
+    if s[0] != 0 { fs_close(fd) else |_| {}; return -1 }
+    fs_lock(fd, 2) else |_| { fs_close(fd) else |_| {}; return -1 }
+    fd
+}

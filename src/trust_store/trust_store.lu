@@ -1,0 +1,102 @@
+//! Atomic trust generations. current binds the small header, which binds role files.
+use trust_json as json
+use trust_metadata as meta
+use trust_state as state
+use trust_io as io
+use schema
+
+/// A loaded committed generation or a refusal. Caller must hold the directory lock.
+pub struct Loaded { value: state.State, generation: int, error: str }
+/// Read and validate the authoritative generation; temporary files are never consulted.
+pub fn load(dir: str) -> Loaded {
+    var out = Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "" }
+    let pointer = io.read("{dir}/current", 1024)
+    if pointer.error != "" { out.error = pointer.error; return out }
+    let p = json.parse(pointer.bytes)
+    if p.error != "" { out.error = "state-invalid"; return out }
+    let gen = meta.number(p, 0, "generation")
+    let header_hash = meta.text(p, 0, "hash")
+    if gen < 1 || gen > 1000000000 || !schema.digest(header_hash) { out.error = "state-invalid"; return out }
+    let base = "{dir}/g{gen}"
+    let header = io.read("{base}/state.json", 4096)
+    if header.error != "" || meta.digest(header.bytes) != header_hash { out.error = "state-invalid"; return out }
+    let d = json.parse(header.bytes)
+    if d.error != "" { out.error = "state-invalid"; return out }
+    let root_input = io.read("{base}/root.json", meta.limit("root"))
+    if root_input.error != "" || meta.digest(root_input.bytes) != meta.text(d, 0, "root_hash") { out.error = "state-invalid"; return out }
+    let root = meta.parse(root_input.bytes, "root")
+    if root.error != "" || meta.verify(root, root, "root") != "" { out.error = "state-invalid"; return out }
+    out.value = state.initial(root, meta.number(d, 0, "floor"))
+    out.value.stage = meta.number(d, 0, "stage")
+    out.value.snapshot_floor = meta.number(d, 0, "snapshot_floor")
+    out.value.targets_floor = meta.number(d, 0, "targets_floor")
+    out.value.timestamp_mark = state.Mark { version: meta.number(d, 0, "timestamp_version"), hash: meta.text(d, 0, "timestamp_hash") }
+    out.value.snapshot_mark = state.Mark { version: meta.number(d, 0, "snapshot_version"), hash: meta.text(d, 0, "snapshot_hash") }
+    out.value.targets_mark = state.Mark { version: meta.number(d, 0, "targets_version"), hash: meta.text(d, 0, "targets_hash") }
+    if out.value.floor < 0 || out.value.stage < 0 || out.value.stage > 3 || out.value.snapshot_floor < 0 || out.value.targets_floor < 0 { out.error = "state-invalid"; return out }
+    for mark in [out.value.timestamp_mark, out.value.snapshot_mark, out.value.targets_mark] {
+        if mark.version < 0 || mark.version == 0 && mark.hash != "" || mark.version > 0 && !schema.digest(mark.hash) { out.error = "state-invalid"; return out }
+    }
+    if out.value.snapshot_floor < out.value.snapshot_mark.version || out.value.targets_floor < out.value.targets_mark.version { out.error = "state-invalid"; return out }
+    var step = 0
+    for role in ["timestamp", "snapshot", "targets"] {
+        step += 1
+        if step > out.value.stage { break }
+        let input = io.read("{base}/{role}.json", meta.limit(role))
+        if input.error != "" { out.error = "state-invalid"; return out }
+        let m = meta.parse(input.bytes, role)
+        if m.error != "" || meta.verify(m, root, role) != "" { out.error = "state-invalid"; return out }
+        var mark = copy out.value.timestamp_mark
+        if role == "snapshot" { mark = copy out.value.snapshot_mark }
+        if role == "targets" { mark = copy out.value.targets_mark }
+        if m.version != mark.version || meta.digest(input.bytes) != mark.hash { out.error = "state-invalid"; return out }
+        if role == "timestamp" {
+            if m.entries[0].version != out.value.snapshot_floor { out.error = "state-invalid"; return out }
+            out.value.timestamp = m
+        } else if role == "snapshot" {
+            if state.binding(m, out.value.timestamp.entries[0]) != "" || m.entries[0].version != out.value.targets_floor { out.error = "state-invalid"; return out }
+            out.value.snapshot = m
+        } else {
+            if state.binding(m, out.value.snapshot.entries[0]) != "" { out.error = "state-invalid"; return out }
+            out.value.targets = m
+        }
+    }
+    out.generation = gen
+    out
+}
+/// Write a complete generation before publishing its pointer. Orphans are never trusted.
+pub fn save(dir: str, s: state.State, previous: int) -> str {
+    if previous < 0 || previous >= 1000000000 { return "state-generation-limit" }
+    var generation = previous + 1
+    var created = false
+    for _attempt in 0..64 {
+        if generation > 1000000000 { return "state-generation-limit" }
+        var occupied = false
+        fs_create_dir_mode("{dir}/g{generation}", 448) else |e| match e {
+            exists => { occupied = true },
+            _ => { return "state-create" },
+        }
+        if !occupied { created = true; break }
+        generation += 1
+    }
+    if !created { return "state-generation-limit" }
+    let base = "{dir}/g{generation}"
+    var step = 0
+    for m in [s.root, s.timestamp, s.snapshot, s.targets] {
+        if step > s.stage { break }
+        let error = io.create("{base}/{m.role}.json", m.wire)
+        if error != "" { return error }
+        step += 1
+    }
+    let root_hash = meta.digest(s.root.wire)
+    let header = "{{\"floor\":{s.floor},\"root_hash\":\"{root_hash}\",\"snapshot_floor\":{s.snapshot_floor},\"snapshot_hash\":\"{s.snapshot_mark.hash}\",\"snapshot_version\":{s.snapshot_mark.version},\"stage\":{s.stage},\"targets_floor\":{s.targets_floor},\"targets_hash\":\"{s.targets_mark.hash}\",\"targets_version\":{s.targets_mark.version},\"timestamp_hash\":\"{s.timestamp_mark.hash}\",\"timestamp_version\":{s.timestamp_mark.version}}}"
+    let bytes = header.bytes()
+    let error = io.create("{base}/state.json", bytes)
+    if error != "" { return error }
+    fs_sync_dir(base) else |_| { return "state-dir-sync" }
+    fs_sync_dir(dir) else |_| { return "state-dir-sync" }
+    let hash = meta.digest(bytes)
+    let pointer = "{{\"generation\":{generation},\"hash\":\"{hash}\"}}"
+    let pointer_bytes = pointer.bytes()
+    io.replace(dir, "current", "current.{generation}.next", pointer_bytes)
+}
