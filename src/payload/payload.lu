@@ -51,10 +51,14 @@ pub fn read(mut s: Stream, n: int) -> List[byte] {
 
 /// Read at most 64 KiB into a reusable caller-owned buffer. EOF/io are named.
 pub fn read_into(fd: int, mut buf: List[byte], max: int) -> int ! {eof, io} {
-    let got = fs_read_chunk(fd, max)?
-    (mut buf).reset()
-    for b in got { (mut buf).push(b) }
-    got.len
+    var n = 0
+    region chunk {
+        let got = fs_read_chunk(fd, max)?
+        (mut buf).reset()
+        for b in got { (mut buf).push(b) }
+        n = got.len
+    }
+    n
 }
 
 /// Whether every supplied byte is zero.
