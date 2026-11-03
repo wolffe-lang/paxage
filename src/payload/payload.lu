@@ -29,28 +29,32 @@ pub struct Stream { fd: int, pos: int, length: int, error: str }
 /// Incremental exact-byte digest result.
 pub struct Digest { hash: str, length: int, error: str }
 
+fn read_window(mut s: Stream, mut out: List[byte], n: int) {
+    if s.error != "" { return }
+    if n < 0 || n > 1048576 || s.pos > s.length || n > s.length - s.pos {
+        s.error = "payload-length"
+        return
+    }
+    (mut out).reset()
+    while out.len < n {
+        var count = 0
+        var failed = false
+        region chunk {
+            let got = fs_read_chunk(s.fd, n - out.len) else |_| { failed = true; List[byte]() }
+            for c in got { (mut out).push(c) }
+            count = got.len
+        }
+        if failed || count == 0 { s.error = "payload-truncated"; return }
+        s.pos += count
+    }
+}
+
 /// Exact bounded read, never seeking beyond the declared authenticated window.
 pub fn read(mut s: Stream, n: int) -> List[byte] {
     var out = List[byte]()
-    if s.error != "" { return out }
-    if n < 0 || n > 1048576 || s.pos > s.length || n > s.length - s.pos {
-        s.error = "payload-length"
-        return out
-    }
-    while out.len < n {
-        let b = fs_read_chunk(s.fd, n - out.len) else |_| {
-            s.error = "payload-truncated"
-            return out
-        }
-        if b.len == 0 { s.error = "payload-truncated"; return out }
-        s.pos += b.len
-        for c in b { (mut out).push(c) }
-    }
+    read_window(mut s, mut out, n)
     out
 }
-
-/// EOF or I/O failure from a bounded bulk byte read.
-pub error ChunkReadErrors = {eof, io}
 
 /// Read at most 64 KiB into a reusable caller-owned buffer. EOF/io are named.
 pub fn read_into(fd: int, mut buf: List[byte], max: int) -> int ! ChunkReadErrors {
@@ -297,14 +301,16 @@ pub fn inspect(mut s: Stream) -> Inventory {
     var pending = false
     var ext_bytes = 0
     var installed = 0
+    var h = List[byte]()
+    var buffer = List[byte]()
     loop {
-        let h = read(mut s, 512)
+        read_window(mut s, mut h, 512)
         if s.error != "" { break }
         if zero(h) {
             if pending { s.error = "pax-orphan"; break }
-            let end = read(mut s, 512)
+            read_window(mut s, mut h, 512)
             if s.error != "" { break }
-            if !zero(end) { s.error = "end-blocks"; break }
+            if !zero(h) { s.error = "end-blocks"; break }
             // F6 has exactly two end blocks, never unbounded trailing data.
             if s.pos != s.length { s.error = "trailing-data" }
             break
@@ -353,12 +359,12 @@ pub fn inspect(mut s: Stream) -> Inventory {
             if pending { s.error = "pax-multiple"; break }
             if length > 1048576 - ext_bytes { s.error = "extension-limit"; break }
             ext_bytes += length
-            let data = read(mut s, length)
+            read_window(mut s, mut buffer, length)
             if s.error != "" { break }
-            let pad = read(mut s, (512 - length % 512) % 512)
+            read_window(mut s, mut h, (512 - length % 512) % 512)
             if s.error != "" { break }
-            if !zero(pad) { s.error = "nonzero-padding"; break }
-            x = extensions(data)
+            if !zero(h) { s.error = "nonzero-padding"; break }
+            x = extensions(buffer)
             if x.error != "" { s.error = x.error; break }
             pending = true
             continue
@@ -425,7 +431,6 @@ pub fn inspect(mut s: Stream) -> Inventory {
         let offset = s.pos
         var st = sha2.new256()
         var remaining = length
-        var buffer = List[byte]()
         while remaining > 0 {
             var n = remaining
             if n > 65536 { n = 65536 }
@@ -439,9 +444,9 @@ pub fn inspect(mut s: Stream) -> Inventory {
             remaining -= got
         }
         if s.error != "" { break }
-        let pad = read(mut s, (512 - length % 512) % 512)
+        read_window(mut s, mut h, (512 - length % 512) % 512)
         if s.error != "" { break }
-        if !zero(pad) { s.error = "nonzero-padding"; break }
+        if !zero(h) { s.error = "nonzero-padding"; break }
         var hash = ""
         if kind == "file" { hash = sha2.to_hex(sha2.final256(take st)) }
         (mut es).push(Entry {

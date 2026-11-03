@@ -228,6 +228,7 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
     var error = ""
     var records = "["
     var extension_bytes = 0
+    var buffer = List[byte]()
     for i in 0..w.entries.len {
         var e = copy w.entries[i]
         var extension = ""
@@ -265,7 +266,6 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
             }
             var s = payload.Stream { fd: src, pos: 0, length: e.length, error: "" }
             var st = sha2.new256()
-            var buffer = List[byte]()
             while s.pos < e.length {
                 var n = e.length - s.pos
                 if n > 65536 { n = 65536 }

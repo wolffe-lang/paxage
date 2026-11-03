@@ -114,6 +114,7 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
             }
         }
     }
+    var buffer = List[byte]()
     for e in es {
         if e.kind != "file" { continue }
         let a = ancestors(e.path, false)
@@ -127,7 +128,6 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
         if offset != e.offset { fs_close(out) else |_| {}; return "stage-seek" }
         var st = sha2.new256()
         var error = ""
-        var buffer = List[byte]()
         while remaining > 0 {
             var n = remaining
             if n > 65536 { n = 65536 }
