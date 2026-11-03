@@ -1,4 +1,5 @@
 //! T2/T3 byte reader contract; red-first placeholder.
+/// Flat JSON value with original byte span and subtree-end index.
 pub struct Node {
     parent: int,
     key: str,
@@ -10,17 +11,21 @@ pub struct Node {
     next: int,
     canonical: bool,
 }
+/// Bounded parse result; nodes must not be consumed on any error.
 pub struct Data { nodes: List[Node], error: str }
+/// Parse T2 bytes; the red-first placeholder refuses unimplemented input.
 pub fn parse(bytes: List[byte]) -> Data {
     if bytes.len > 1048576 { return Data { nodes: List[Node](), error: "byte-limit" } }
     Data { nodes: List[Node](), error: "not-implemented" }
 }
+/// Return the matching immediate child index, or -1 for absence.
 pub fn field(d: Data, parent: int, key: str) -> int {
     for i in 0..d.nodes.len {
         if d.nodes[i].parent == parent && d.nodes[i].key == key { return i }
     }
     -1
 }
+/// Check the envelope's signed object and canonical-span requirement (T3).
 pub fn signed_error(d: Data) -> str {
     if d.error != "" { return d.error }
     let id = field(d, 0, "signed")
