@@ -241,6 +241,7 @@ pub fn role_index(root: Meta, role: str) -> int {
 /// Verify distinct authorized signatures. Pending sc77, final use waits for verify_strict.
 pub fn verify(m: Meta, root: Meta, role: str) -> str {
     if m.error != "" { return m.error }
+    if m.role != role { return "role-type" }
     if root.error != "" { return root.error }
     let ri = role_index(root, role)
     if ri < 0 { return "role-keys" }
@@ -255,6 +256,9 @@ pub fn verify(m: Meta, root: Meta, role: str) -> str {
         if !authorized { continue }
         let signature = text(m.data, i, "sig")
         if signature.len != 128 { return "signature-length" }
+        for b in signature.bytes() {
+            if !(b >= 48 as byte && b <= 57 as byte || b >= 97 as byte && b <= 102 as byte) { return "bad-hex" }
+        }
         let sig = hex.decode(signature) else List[byte]()
         if sig.len != 64 { return "bad-hex" }
         for key in root.keys {
