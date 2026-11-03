@@ -114,18 +114,22 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
         if a != "" { return a }
         let out = fs_open_perm(e.path, 20, 384) else |_| { return "stage-create" }
         var remaining = e.length
-        var offset = e.offset
+        let offset = fs_seek(fd, e.offset, 0) else |_| {
+            fs_close(out) else |_| {}
+            return "stage-seek"
+        }
+        if offset != e.offset { fs_close(out) else |_| {}; return "stage-seek" }
         var st = sha2.new256()
         var error = ""
+        var buffer = List[byte]()
         while remaining > 0 {
             var n = remaining
             if n > 65536 { n = 65536 }
-            let b = fs_read_at(fd, offset, n) else |_| { error = "stage-read"; break }
-            if b.len == 0 { error = "stage-read"; break }
-            fs_write_chunk(out, b) else |_| { error = "stage-write"; break }
-            sha2.update256(mut st, b)
-            remaining -= b.len
-            offset += b.len
+            let got = payload.read_into(fd, mut buffer, n) else |_| { error = "stage-read"; break }
+            if got == 0 { error = "stage-read"; break }
+            fs_write_chunk(out, buffer) else |_| { error = "stage-write"; break }
+            sha2.update256(mut st, buffer)
+            remaining -= got
         }
         fs_close(out) else |_| { error = "stage-close" }
         if error != "" { return error }

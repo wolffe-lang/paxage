@@ -260,13 +260,18 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
             }
             var s = payload.Stream { fd: src, pos: 0, length: e.length, error: "" }
             var st = sha2.new256()
+            var buffer = List[byte]()
             while s.pos < e.length {
                 var n = e.length - s.pos
                 if n > 65536 { n = 65536 }
-                let b = payload.read(mut s, n)
-                if s.error != "" { error = s.error; break }
-                sha2.update256(mut st, b)
-                error = write(fd, b)
+                let got = payload.read_into(src, mut buffer, n) else |_| {
+                    error = "pack-read"
+                    break
+                }
+                if got == 0 { error = "pack-read"; break }
+                s.pos += got
+                sha2.update256(mut st, buffer)
+                error = write(fd, buffer)
                 if error != "" { break }
             }
             let after = fs_fstat_record(src) else |_| {

@@ -1,0 +1,26 @@
+//! member: false
+//! Test-only reader allocation witness: no digest, archive parser or writes.
+
+use payload
+
+fn main() -> int {
+    let a = env_args()
+    if a.len != 2 { return 2 }
+    let length = payload.number(a[1].bytes(), 10)
+    if length < 0 { return 2 }
+    let fd = fs_open_mode(a[0], 21) else |_| { return 1 }
+    var buf = List[byte]()
+    var remaining = length
+    var error = false
+    while remaining > 0 {
+        var n = remaining
+        if n > 65536 { n = 65536 }
+        let got = payload.read_into(fd, mut buf, n) else |_| { error = true; break }
+        if got == 0 { error = true; break }
+        remaining -= got
+    }
+    fs_close(fd) else |_| { error = true }
+    if error { return 1 }
+    print("digest-free reader bytes={length}")
+    0
+}

@@ -49,6 +49,14 @@ pub fn read(mut s: Stream, n: int) -> List[byte] {
     out
 }
 
+/// Read at most 64 KiB into a reusable caller-owned buffer. EOF/io are named.
+pub fn read_into(fd: int, mut buf: List[byte], max: int) -> int ! {eof, io} {
+    let got = fs_read_chunk(fd, max)?
+    (mut buf).reset()
+    for b in got { (mut buf).push(b) }
+    got.len
+}
+
 /// Whether every supplied byte is zero.
 pub fn zero(b: List[byte]) -> bool {
     for c in b { if c != 0 as byte { return false } }
@@ -364,13 +372,18 @@ pub fn inspect(mut s: Stream) -> Inventory {
         let offset = s.pos
         var st = sha2.new256()
         var remaining = length
+        var buffer = List[byte]()
         while remaining > 0 {
             var n = remaining
             if n > 65536 { n = 65536 }
-            let b = read(mut s, n)
-            if s.error != "" { break }
-            sha2.update256(mut st, b)
-            remaining -= n
+            let got = read_into(s.fd, mut buffer, n) else |_| {
+                s.error = "payload-truncated"
+                break
+            }
+            if got == 0 { s.error = "payload-truncated"; break }
+            s.pos += got
+            sha2.update256(mut st, buffer)
+            remaining -= got
         }
         if s.error != "" { break }
         let pad = read(mut s, (512 - length % 512) % 512)
@@ -398,12 +411,16 @@ pub fn inspect(mut s: Stream) -> Inventory {
 pub fn digest(fd: int, length: int) -> Digest {
     var s = Stream { fd, pos: 0, length, error: "" }
     var st = sha2.new256()
+    var buffer = List[byte]()
     while s.pos < length {
         var n = length - s.pos
         if n > 65536 { n = 65536 }
-        let b = read(mut s, n)
-        if s.error != "" { return Digest { hash: "", length: s.pos, error: s.error } }
-        sha2.update256(mut st, b)
+        let got = read_into(fd, mut buffer, n) else |_| {
+            return Digest { hash: "", length: s.pos, error: "payload-truncated" }
+        }
+        if got == 0 { return Digest { hash: "", length: s.pos, error: "payload-truncated" } }
+        s.pos += got
+        sha2.update256(mut st, buffer)
     }
     Digest { hash: sha2.to_hex(sha2.final256(take st)), length, error: "" }
 }

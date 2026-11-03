@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Larder-only reader RSS witness: no hashes, parsing or writes in measured child.
+Uses the production read_into byte pump. Every measured run is Linux-only, capped.
+"""
+from pathlib import Path
+import os, platform, re, subprocess, sys, tempfile
+ROOT=Path(__file__).resolve().parents[1]
+PROBE=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/chunk-probe'
+assert platform.system()=='Linux','memory-growing chunk witness is Linux-only'
+results=[]
+with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') as temp:
+    path=Path(temp)/'payload'
+    for size in [64*1024**2,1024**3]:
+        path.touch();os.truncate(path,size)
+        cmd=['prlimit','--as=2147483648','--','/usr/bin/time','-v',str(PROBE),str(path),str(size)]
+        p=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        while True:
+            try:stdout,stderr=p.communicate(timeout=30);break
+            except subprocess.TimeoutExpired:print(f'larder-only RSS waiting bytes={size} pid={p.pid}',flush=True)
+        assert p.returncode==0,('larder-chunk-RSS-cap',size,p.returncode,stderr)
+        assert stdout==f'digest-free reader bytes={size}\n'.encode(),stdout
+        rss=int(re.search(r'Maximum resident set size \(kbytes\):\s*(\d+)',stderr.decode())[1])
+        results.append(rss)
+        print(f'larder-only-reader bytes={size} peak_kib={rss} cap_bytes=2147483648 digest_calls=0',flush=True)
+        path.unlink()
+assert results[1]-results[0] < 8192,('larder-chunk-RSS-grows-with-payload',results)
+print('END larder-only-chunk-RSS exit=0',flush=True)
