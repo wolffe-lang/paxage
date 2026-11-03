@@ -21,7 +21,12 @@ fn usage() -> str {
 
 fn bad_usage(message: str) -> int { eprint("larder: {message}\n{usage()}"); 2 }
 
-fn fail(message: str) -> int { eprint("larder: {message}"); 1 }
+fn fail(message: str) -> int {
+    if message == "state-invalid" || message.ends_with(": state-invalid") {
+        eprint("larder: {message}; re-bootstrap into a new, empty state directory from a caller-supplied pinned root")
+    } else { eprint("larder: {message}") }
+    1
+}
 
 struct Input { bytes: List[byte], error: str }
 
