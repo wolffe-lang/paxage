@@ -78,6 +78,11 @@ fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_jso
 /// Run one new verb. Every rejection is named; usage returns 2, data/I/O 1.
 pub fn run(args: List[str]) -> int {
     let verb = args[0]
+    if verb == "stage" {
+        let uid = os_euid() else |_| { return fail("stage-identity-unavailable") }
+        let denied = staging.privilege(uid)
+        if denied != "" { return fail(denied) }
+    }
     if verb == "pack" {
         if args.len != 6 || args[4] != "--epoch" {
             eprint("larder: usage: pack SOURCE TEMPLATE OUTDIR --epoch N")
@@ -134,11 +139,6 @@ pub fn run(args: List[str]) -> int {
             "larder: payload usage requires FILE --length N; stage also --manifest FILE --sha256 HEX --into DIR",
         )
         return 2
-    }
-    if verb == "stage" {
-        let uid = os_euid() else |_| { return fail("stage-identity-unavailable") }
-        let denied = staging.privilege(uid)
-        if denied != "" { return fail(denied) }
     }
     let fd = fs_open_mode(path, 21) else |_| { return fail("payload-open") }
     let stat = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return fail("payload-stat") }
