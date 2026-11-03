@@ -75,10 +75,12 @@ binary numeric fields are expected F6.2 refusals, even with a valid pax override
 The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest solver fixture has 24 packages;
 its time is reported, not gated. No SKIPs are hidden.
 
-**CI has one tier:** every PR (including draft) and every trunk push runs the
-same platform-aware gate on Linux x86-64 and macOS arm64. No labels or planner select
-lesser coverage. A green run requires both matrix jobs, including CLI e2e, and the cross-host
-canonical-payload byte comparison; a unit-only run is insufficient.
+Unlabelled PRs run one cheap job. The `ci` or `full-matrix` label runs the
+full platform-aware gate on Linux x86-64 and macOS arm64. Trunk pushes run it
+only on cross-cutting paths; the nightly and default dispatch run the same
+full gate. A full green run requires both matrix jobs, including CLI e2e,
+and the cross-host canonical-payload byte comparison; a unit-only run is
+insufficient.
 
 PR descriptions carry a `Footprint:` line: `notes` for prose only, `module` for
 one program/module without shared tools or specs, `cross-cutting` for format,
