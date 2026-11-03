@@ -4,6 +4,14 @@ No archiver source is imported or inspected. Verdicts are frozen F6 expectations
 """
 from pathlib import Path
 import importlib.machinery, json, os, shutil, subprocess, tempfile
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL F6-container-interop-confinement", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT=Path(__file__).resolve().parents[1]
 v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
 IMAGE='docker.io/library/archlinux@sha256:8185e444e45ba166146b244b41f1cba2d7d91f3eddce533a839cc9591e0fa785'

@@ -5,6 +5,14 @@ Verdicts below derive from FORMAT F5/F6, never GNU tar or bsdtar behavior.
 """
 from pathlib import Path
 import hashlib, json, os, random, select, socket, subprocess, sys, tempfile, time
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL F6-payload-cli-e2e", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / 'target/bin/larder'
 PROBE = ROOT / 'target/bin/payload-probe'

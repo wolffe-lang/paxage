@@ -1,8 +1,12 @@
 use literal
 
+fn check_row(ok: bool, row: str) {
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
+}
+
 fn expect(s: str, e: str) {
     let p = literal.parse(s.bytes())
-    assert(p.error == e, "F2 {e}, got {p.error}")
+    check_row(p.error == e, "F2 {e}, got {p.error}")
 }
 
 fn main() {
@@ -18,7 +22,7 @@ fn main() {
     expect("manifest {{ a: [1 2] }}", "syntax")
     expect("manifest {{ a: -1 }}", "expression")
     let invalid: List[byte] = [255 as byte]
-    assert(literal.parse(invalid).error == "bad-utf8", "F2-bad-utf8")
+    check_row(literal.parse(invalid).error == "bad-utf8", "F2-bad-utf8")
     var deep = "manifest {{ a: "
     for _i in 0..33 { deep += "[" }
     deep += "0"
