@@ -1,5 +1,11 @@
-//! T4-T10 metadata representation; red-first schema boundary.
+//! T4-T10 metadata schemas and signature authorization; no I/O or implicit trust.
 use trust_json as json
+use schema
+use version as package_version
+use std.hex as hex
+use std.x.crypto.sha2 as sha2
+use std.x.crypto.curve25519 as curve
+
 /// Public key authorized by root metadata.
 pub struct Key { id: str, public: List[byte] }
 /// Distinct key identifiers and the threshold assigned to a top-level role.
@@ -8,11 +14,263 @@ pub struct Role { name: str, keys: List[str], threshold: int }
 pub struct Entry { path: str, digest: str, length: int, version: int, name: str, package_version: str, arch: str, kind: str }
 /// Parsed but not yet authenticated envelope. No consumer may trust it before verify.
 pub struct Meta { data: json.Data, wire: List[byte], role: str, version: int, expires: int, keys: List[Key], roles: List[Role], entries: List[Entry], error: str }
-/// Parse a UTC timestamp, returning -1 on malformed or unsupported dates.
-pub fn utc(text: str) -> int { if text == "" { return -1 }; -1 }
-/// Parse an envelope without claiming authentication.
-pub fn parse(bytes: List[byte], role: str) -> Meta {
-    Meta { data: json.parse(bytes), wire: copy bytes, role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "not-implemented" }
+
+/// Lowercase SHA-256 of exactly the supplied bytes, never a reserialization.
+pub fn digest(bytes: List[byte]) -> str { sha2.to_hex(sha2.sum256(bytes)) }
+/// Read an immediate string field; missing or wrong-type is the empty string.
+pub fn text(d: json.Data, parent: int, name: str) -> str {
+    let id = json.field(d, parent, name)
+    if id < 0 || d.nodes[id].kind != "string" { return "" }
+    d.nodes[id].text
+}
+/// Read an immediate integer field; missing or wrong-type is -1.
+pub fn number(d: json.Data, parent: int, name: str) -> int {
+    let id = json.field(d, parent, name)
+    if id < 0 || d.nodes[id].kind != "int" { return -1 }
+    d.nodes[id].number
+}
+fn required(d: json.Data, parent: int, name: str, kind: str) -> str {
+    let id = json.field(d, parent, name)
+    if id < 0 { return "missing-field" }
+    if d.nodes[id].kind != kind { return "field-type" }
+    ""
+}
+fn digits(b: List[byte], start: int, end: int) -> int {
+    var n = 0
+    for i in start..end {
+        let c = b[i] as int
+        if c < 48 || c > 57 { return -1 }
+        n = n * 10 + c - 48
+    }
+    n
+}
+fn leap(year: int) -> bool { year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) }
+fn month_days(year: int, month: int) -> int {
+    if month == 2 { if leap(year) { return 29 }; return 28 }
+    if month == 4 || month == 6 || month == 9 || month == 11 { return 30 }
+    31
+}
+/// Parse exact TUF UTC seconds, years 1970..9999; -1 means invalid.
+pub fn utc(text: str) -> int {
+    let b = text.bytes()
+    if b.len != 20 { return -1 }
+    if b[4] != 45 as byte || b[7] != 45 as byte || b[10] != 84 as byte || b[13] != 58 as byte || b[16] != 58 as byte || b[19] != 90 as byte { return -1 }
+    let y = digits(b, 0, 4)
+    let m = digits(b, 5, 7)
+    let d = digits(b, 8, 10)
+    let h = digits(b, 11, 13)
+    let minute = digits(b, 14, 16)
+    let second = digits(b, 17, 19)
+    if y < 1970 || m < 1 || m > 12 || d < 1 || d > month_days(y, m) || h < 0 || h > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 { return -1 }
+    var days = 0
+    for year in 1970..y { days += 365; if leap(year) { days += 1 } }
+    for month in 1..m { days += month_days(y, month) }
+    (days + d - 1) * 86400 + h * 3600 + minute * 60 + second
 }
 /// Validate a single logical target basename under T10.
-pub fn logical(path: str) -> bool { path == "not-implemented" }
+pub fn logical(path: str) -> bool {
+    if path.len == 0 || path.len > 512 || path == "." { return false }
+    let b = path.bytes()
+    for i in 0..b.len {
+        let c = b[i] as int
+        if c < 32 || c == 127 || c == 47 || c == 92 || c == 37 || c == 63 || c == 35 { return false }
+        if i > 0 && c == 46 && b[i - 1] == 46 as byte { return false }
+    }
+    true
+}
+/// Client byte ceiling for the named top-level role; zero means unsupported.
+pub fn limit(role: str) -> int {
+    if role == "timestamp" { return 16384 }
+    if role == "root" || role == "snapshot" { return 65536 }
+    if role == "targets" { return 1048576 }
+    0
+}
+fn root(mut m: Meta, signed: int) -> str {
+    let d = copy m.data
+    let consistent = json.field(d, signed, "consistent_snapshot")
+    if consistent < 0 || d.nodes[consistent].kind != "bool" || d.nodes[consistent].number != 1 { return "consistent-snapshot-required" }
+    let ki = json.field(d, signed, "keys")
+    let ri = json.field(d, signed, "roles")
+    if ki < 0 || ri < 0 { return "missing-field" }
+    if d.nodes[ki].kind != "object" || d.nodes[ri].kind != "object" { return "field-type" }
+    let keynodes = json.children(d, ki)
+    if keynodes.len > 16 { return "key-limit" }
+    var public_seen = Map[str, bool]()
+    for i in keynodes {
+        let n = copy d.nodes[i]
+        if n.kind != "object" { return "field-type" }
+        if text(d, i, "keytype") != "ed25519" || text(d, i, "scheme") != "ed25519" { return "unsupported-scheme" }
+        let value = json.field(d, i, "keyval")
+        if value < 0 || d.nodes[value].kind != "object" { return "field-type" }
+        let public = text(d, value, "public")
+        if public.len != 64 { return "key-length" }
+        if !schema.digest(public) { return "bad-hex" }
+        if !schema.digest(n.key) || digest(m.wire[n.start..n.end]) != n.key { return "key-id" }
+        if (public_seen[public] else false) { return "key-alias" }
+        public_seen[public] = true
+        let raw = hex.decode(public) else List[byte]()
+        (mut m.keys).push(Key { id: n.key, public: raw })
+    }
+    let roles = json.children(d, ri)
+    if roles.len != 4 { return "role-keys" }
+    var all = Map[str, bool]()
+    for i in roles {
+        let role_name = d.nodes[i].key
+        if limit(role_name) == 0 || d.nodes[i].kind != "object" { return "role-keys" }
+        let ids = json.field(d, i, "keyids")
+        if ids < 0 || d.nodes[ids].kind != "array" { return "role-keys" }
+        let threshold = number(d, i, "threshold")
+        var role = Role { name: role_name, keys: List[str](), threshold }
+        for k in json.children(d, ids) {
+            if d.nodes[k].kind != "string" { return "role-keys" }
+            let keyid = d.nodes[k].text
+            var found = false
+            for key in m.keys { if key.id == keyid { found = true } }
+            if !found || (all[keyid] else false) { return "role-keys" }
+            all[keyid] = true
+            (mut role.keys).push(keyid)
+        }
+        if threshold < 1 || threshold > role.keys.len { return "threshold" }
+        (mut m.roles).push(role)
+    }
+    ""
+}
+fn entries(mut m: Meta, signed: int) -> str {
+    let d = copy m.data
+    var field_name = "meta"
+    if m.role == "targets" {
+        field_name = "targets"
+        if json.field(d, signed, "delegations") >= 0 { return "unsupported-delegations" }
+    }
+    let at = json.field(d, signed, field_name)
+    if at < 0 { return "missing-field" }
+    if d.nodes[at].kind != "object" { return "field-type" }
+    let children = json.children(d, at)
+    if m.role != "targets" && children.len != 1 { return "metadata-reference" }
+    if children.len > 72 { return "target-limit" }
+    var groups = Map[str, int]()
+    for i in children {
+        let n = copy d.nodes[i]
+        if n.kind != "object" { return "field-type" }
+        var e = Entry { path: n.key, digest: "", length: number(d, i, "length"), version: number(d, i, "version"), name: "", package_version: "", arch: "", kind: "" }
+        let hashnode = json.field(d, i, "hashes")
+        if hashnode < 0 || d.nodes[hashnode].kind != "object" { return "metadata-reference" }
+        let hashes = json.children(d, hashnode)
+        if hashes.len != 1 || hashes[0] < 0 { return "unsupported-hash" }
+        e.digest = text(d, hashnode, "sha256")
+        if e.length < 0 || !schema.digest(e.digest) { return "metadata-reference" }
+        if m.role == "targets" {
+            if !logical(e.path) { return "logical-name" }
+            let custom = json.field(d, i, "custom")
+            e.name = text(d, custom, "name")
+            e.package_version = text(d, custom, "version")
+            e.arch = text(d, custom, "architecture")
+            e.kind = text(d, custom, "kind")
+            if !schema.identity(e.name) || !schema.identity(e.arch) || !package_version.valid(e.package_version) { return "target-identity" }
+            var bit = 0
+            var suffix = e.kind
+            if e.kind == "manifest" { bit = 1 }
+            if e.kind == "payload" { bit = 2; suffix = "payload.tar" }
+            if e.kind == "buildinfo" { bit = 4 }
+            if bit == 0 { return "target-kind" }
+            if e.path != "{e.name}-{e.package_version}.{suffix}" { return "target-identity" }
+            let identity = "{e.name}@{e.arch}={e.package_version}"
+            let previous = groups[identity] else 0
+            if previous / bit % 2 == 1 { return "target-incomplete" }
+            groups[identity] = previous + bit
+            if groups.len > 24 { return "target-limit" }
+        } else {
+            var expected = "targets.json"
+            var cap = 1048576
+            if m.role == "timestamp" { expected = "snapshot.json"; cap = 65536 }
+            if e.path != expected || e.version < 1 { return "metadata-reference" }
+            if e.length > cap { return "metadata-byte-limit" }
+        }
+        (mut m.entries).push(e)
+    }
+    for pair in groups.pairs() { if pair.1 != 7 { return "target-incomplete" } }
+    ""
+}
+/// Parse a role envelope without claiming authentication. Bounds precede parsing.
+pub fn parse(bytes: List[byte], role: str) -> Meta {
+    var m = Meta { data: json.Data { nodes: List[json.Node](), error: "" }, wire: List[byte](), role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "" }
+    if limit(role) == 0 { m.error = "role-type"; return m }
+    if bytes.len > limit(role) { m.error = "metadata-byte-limit"; return m }
+    m.data = json.parse(bytes)
+    m.error = json.signed_error(m.data)
+    if m.error != "" { return m }
+    m.wire = copy bytes
+    let d = copy m.data
+    let si = json.field(d, 0, "signed")
+    for name in ["_type", "spec_version", "expires"] {
+        m.error = required(d, si, name, "string")
+        if m.error != "" { return m }
+    }
+    m.error = required(d, si, "version", "int")
+    if m.error != "" { return m }
+    if text(d, si, "_type") != role { m.error = "role-type"; return m }
+    if text(d, si, "spec_version") != "1.0.37" { m.error = "spec-version"; return m }
+    m.version = number(d, si, "version")
+    if m.version < 1 { m.error = "metadata-version"; return m }
+    m.expires = utc(text(d, si, "expires"))
+    if m.expires < 0 { m.error = "metadata-time"; return m }
+    m.error = required(d, 0, "signatures", "array")
+    if m.error != "" { return m }
+    let signatures = json.children(d, json.field(d, 0, "signatures"))
+    if signatures.len > 16 { m.error = "signature-limit"; return m }
+    var seen = Map[str, bool]()
+    for i in signatures {
+        let id = text(d, i, "keyid")
+        if d.nodes[i].kind != "object" || !schema.digest(id) || required(d, i, "sig", "string") != "" { m.error = "field-type"; return m }
+        if (seen[id] else false) { m.error = "duplicate-signature"; return m }
+        seen[id] = true
+    }
+    if role == "root" { m.error = root(mut m, si) } else { m.error = entries(mut m, si) }
+    m
+}
+/// Return a root role index, or -1 when not authorized.
+pub fn role_index(root: Meta, role: str) -> int {
+    for i in 0..root.roles.len { if root.roles[i].name == role { return i } }
+    -1
+}
+/// Verify distinct authorized signatures. Pending sc77, final use waits for verify_strict.
+pub fn verify(m: Meta, root: Meta, role: str) -> str {
+    if m.error != "" { return m.error }
+    if root.error != "" { return root.error }
+    let ri = role_index(root, role)
+    if ri < 0 { return "role-keys" }
+    let si = json.field(m.data, 0, "signed")
+    let node = copy m.data.nodes[si]
+    let signed = m.wire[node.start..node.end]
+    var count = 0
+    for i in json.children(m.data, json.field(m.data, 0, "signatures")) {
+        let id = text(m.data, i, "keyid")
+        var authorized = false
+        for expected in root.roles[ri].keys { if expected == id { authorized = true } }
+        if !authorized { continue }
+        let signature = text(m.data, i, "sig")
+        if signature.len != 128 { return "signature-length" }
+        let sig = hex.decode(signature) else List[byte]()
+        if sig.len != 64 { return "bad-hex" }
+        for key in root.keys {
+            if key.id == id && curve.verify(key.public, signed, sig) { count += 1 }
+        }
+    }
+    if count < root.roles[ri].threshold { return "signature-threshold" }
+    ""
+}
+/// Compare role key sets, independent of key-list ordering; thresholds are not rotations.
+pub fn keys_changed(old: Meta, new: Meta, role: str) -> bool {
+    let oi = role_index(old, role)
+    let ni = role_index(new, role)
+    if oi < 0 || ni < 0 { return true }
+    let a = copy old.roles[oi].keys
+    let b = copy new.roles[ni].keys
+    if a.len != b.len { return true }
+    for key in a {
+        var found = false
+        for other in b { if other == key { found = true } }
+        if !found { return true }
+    }
+    false
+}
