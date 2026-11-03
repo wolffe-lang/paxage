@@ -1,0 +1,72 @@
+pm03 prediction — 2026-11-03
+Base d5e83412b5f0a2a560661116cc1bdc2c560ee1fd; amended contract 1784c14.
+This is a prediction, not measured evidence. Commit before implementation.
+
+Predict 18 top-level T clauses: scope; strict JSON; canonical signed bytes;
+envelopes; keys/thresholds; root; timestamp; snapshot; targets; names;
+bootstrap; sequential rotation; update/time; atomic state; writer; cache;
+cryptographic qualification; evidence/fuzz.
+
+Proposed client caps (limits may only change with measured justification):
+timestamp 16 KiB; root 64 KiB; snapshot 64 KiB; targets 1 MiB;
+root chain 32 updates per invocation; 16 keys; 16 signatures per envelope;
+72 target objects (24 package identities times manifest/payload/buildinfo).
+All metadata obey byte cap plus authenticated length where available.
+JSON depth 16; nodes 16384; members 4096 per container; decoded strings
+65536 bytes; integers 0..9223372036854775807 for metadata integer fields.
+Every cap is checked before the corresponding allocation or append.
+
+std.json is not fit: duplicates are last-wins (json.lu:119-128,775;
+parse_shapes.lu:96-100), no byte/node/member budget (620-640,723-787),
+str-only input (620), unordered rendering/no spans (71-75,137-145,1365-1378).
+Its as_int can distinguish integers (314-318); escaped surrogates reject,
+but raw-byte UTF-8 validation must occur before str creation.
+R-pm03-2 B ruled: implement our own strict byte reader, not a std pre-parser.
+R-pm03-1 A ruled subject to specification MUST check: canonical signed spans
+only, named non-canonical-signed refusal; no general TUF-writer import goal.
+
+Predict native Ed25519 verify on kasumi costs 1–50 ms/signature; this broad
+estimate is unmeasured, not a gate. Measure warmed repeated RFC vectors with
+monotonic timing and report median plus range before approving a signature cap.
+Read public/sign/verify source; qualify identity/small-order points explicitly:
+cofactorless equation checks alone do not prove small-order rejection.
+
+Named planned rows (expected named refusal unless marked accept):
+JSON-duplicate-key, JSON-decoded-duplicate-key, JSON-bad-utf8,
+JSON-byte-limit, JSON-depth-limit, JSON-node-limit, JSON-member-limit,
+JSON-string-limit, JSON-float, JSON-exponent, JSON-negative-integer,
+JSON-integer-overflow, JSON-surrogate, JSON-trailing-data,
+JSON-non-canonical-signed; canonical-span-accept.
+rollback-root, rollback-timestamp, rollback-snapshot, rollback-targets,
+rollback-whole-snapshot; freeze-timestamp, freeze-snapshot;
+mix-and-match; fast-forward-rotation-recovery (accept);
+signature-threshold, signature-duplicate-key, signature-unknown-key,
+signature-revoked-key, signature-wrong-length, key-wrong-length,
+unsupported-scheme, non-canonical-scalar, small-order-key, small-order-R,
+non-canonical-key, non-canonical-R; RFC8032-vectors (accept),
+Wycheproof-invalid (refuse), independent-OpenSSL-repository (accept),
+OpenSSL-verifies-writer (accept).
+root-skipped-version, root-new-only, root-old-only,
+root-interrupted-write, root-chain-limit;
+timestamp-byte-limit, snapshot-too-long, snapshot-too-short,
+targets-too-long, targets-too-short, object-too-long, object-too-short;
+object-hash, dishonest-hash-prefix, logical-slash, logical-dotdot, logical-NUL;
+same-version-rewrite-root, same-version-rewrite-timestamp,
+same-version-rewrite-snapshot, same-version-rewrite-targets;
+clock-before-floor, final-root-expired;
+bootstrap-unpinned, unsupported-transport, unsupported-delegations,
+offline-recovery-refused, immutable-rewrite, unmarked-signing-key;
+publication-interrupted, cache-part-not-verified;
+install-refused, remove-refused, upgrade-refused, sync-refused.
+
+Positive two-package pack/publish/bootstrap/update/fetch/stage, republish/update/
+stage, exact source/tree equality on both hosts. Seeded 100000-mutation harness
+must check named outcomes and verifiable durable state, never accept traps.
+Linux growing-input runs under 2 GiB prlimit; no growing runs on the Mac.
+Local final-head plant omits one bound/version check, one file/hunk/commit,
+red by named row, pushed without a PR. Every gauntlet END exit is evidence.
+
+R-pm03-3 defaults: timestamp 48h, snapshot 14d, targets 90d, root 1y;
+maintainer confirmation remains owed. R-pm03-4: atomic timestamp replacement
+only after referenced immutable files are present and synced; create-only
+for every other repository file. No real keys, root mutation or network client.
