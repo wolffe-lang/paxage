@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import resource
 import shutil
 import subprocess
 import sys
@@ -123,21 +124,30 @@ def run_case(binary, fixture, case, work, witnesses, start):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bounded', action='store_true', help='omit large input rows on uncapped hosts')
     parser.add_argument('--fixtures', type=Path, default=ROOT / 'tests/trust/independent')
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/bin/larder')
     parser.add_argument('--work', type=Path, default=ROOT / 'target/trust-independent')
     args = parser.parse_args()
+    if not args.bounded:
+        cap=resource.getrlimit(resource.RLIMIT_AS)[0] if sys.platform == 'linux' else -1
+        require(sys.platform == 'linux' and cap != resource.RLIM_INFINITY and cap <= 2147483648, 'independent-growth-requires-capped-Linux')
     args.work.mkdir(mode=0o700)
     manifest = json.loads((args.fixtures / 'cases.json').read_bytes())
     witnesses = {(w['keyid'], w['signed_sha256'], w['signature']) for w in json.loads((args.fixtures / 'signature-witnesses.json').read_bytes())}
     require(len(manifest['cases']) >= 41, 'independent-case-count')
+    ran = 0
     for case in manifest['cases']:
+        if args.bounded and case['name'].endswith('-byte-limit'):
+            print(f'INFO Linux-only large input omitted: {case["name"]}')
+            continue
+        ran += 1
         work = args.work / case['name']; work.mkdir(mode=0o700)
         try:
             run_case(args.binary, args.fixtures, case, work, witnesses, manifest['now'])
         except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
             print(f'FAIL independent-{case["name"]} {exc}', flush=True); return 1
-    print(f'PASS independent-attacks count={len(manifest["cases"])}')
+    print(f'PASS independent-attacks total={len(manifest["cases"])} ran={ran}')
     return 0
 
 

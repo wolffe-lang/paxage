@@ -16,15 +16,44 @@ step build tools/build
 step runtime-witness bash tools/check-runtime-witness
 step unit tools/check-test
 step cli tools/check-e2e
-step payload python3 -I tools/check-payload --fuzz
 if [ "$(uname -s)" = Linux ]; then
-  step container python3 -I tools/check-payload-container
-  step inventory-bound python3 -I tools/check-inventory-bound
-  step chunk-rss python3 -I tools/check-chunk-rss
-  step rss python3 -I tools/check-payload-rss
+  step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
+  step container prlimit --as=2147483648 python3 -I tools/check-payload-container
+  step inventory-bound prlimit --as=2147483648 python3 -I tools/check-inventory-bound
+  step chunk-rss prlimit --as=2147483648 python3 -I tools/check-chunk-rss
+  step rss prlimit --as=2147483648 python3 -I tools/check-payload-rss
 else
+  step payload-roundtrip python3 -I tools/check-payload --roundtrip-only
+  echo 'SKIP payload-growth reason=Linux-only capped entry, cumulative-extension and allocation bounds'
+  echo 'SKIP payload-fuzz reason=Linux-only capped 100000 mutations; never on the Mac'
   echo 'SKIP container reason=Linux-only container interoperability and confinement'
   echo 'SKIP inventory-bound reason=Linux-only capped maximum-inventory measurement'
   echo 'SKIP chunk-rss reason=Linux-only capped allocation measurement'
   echo 'SKIP rss reason=Linux-only capped large-file measurement; never on the Mac'
 fi
+bash tools/check-trust-unit trust_json
+bash tools/check-trust-unit trust_metadata
+bash tools/check-trust-unit trust_state
+step trust-harness python3 -I tools/check-trust-harness
+if [ "$(uname -s)" = Linux ]; then
+  prlimit --as=2147483648 bash tools/check-trust-crypto
+else
+  bash tools/check-trust-crypto
+fi
+bash tools/check-trust-integration e2e
+step trust-corruption python3 -I tools/check-trust-corruption
+if [ "$(uname -s)" = Linux ]; then
+  step trust-independent prlimit --as=2147483648 python3 -I tools/check-trust-independent
+  if [ "$(hostname)" = kasumi ]; then
+    step trust-openssl-writer bash tools/check-openssl-writer
+  else
+    echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container; frozen signed vectors run here'
+  fi
+  prlimit --as=2147483648 bash tools/check-trust-fuzz-runner
+else
+  step trust-independent python3 -I tools/check-trust-independent --bounded
+  echo 'SKIP trust-large-metadata reason=three byte-limit cases run only on capped Linux'
+  echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container'
+  echo 'SKIP trust-fuzz reason=Linux-only capped 100000 mutations; never on the Mac'
+fi
+step trust-local-replay-limit python3 -I tools/witness-trust-replay "$PWD/target/bin/larder"

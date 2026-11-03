@@ -55,18 +55,18 @@ jobs:
           - {name: linux x86-64, os: ubuntu-latest, arch: x86_64}
           - {name: macOS arm64, os: macos-latest, arch: arm64}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: lane-local temporary files
         shell: bash
         run: |
           test "$(uname -m)" = '${{ matrix.arch }}'
-          mkdir -p "$HOME/lanes/pm02/tmp"
-          echo "TMPDIR=$HOME/lanes/pm02/tmp" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/lanes/pm03/tmp"
+          echo "TMPDIR=$HOME/lanes/pm03/tmp" >> "$GITHUB_ENV"
       - name: digest-pinned wolf and lupin
         run: tools/fetch-toolchain
-      - name: Complete gate including F6 traversal, corpus, roundtrip, 100000 mutations and RSS
+      - name: Complete platform-aware payload and trust gates
         run: bash tools/gauntlet
       - name: Preserve deterministic payload even while RSS is blocked
         if: ${{ !cancelled() }}
