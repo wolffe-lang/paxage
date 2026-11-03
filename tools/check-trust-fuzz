@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""100000 seeded, individually timed Linux mutations with an independent state oracle."""
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import resource
+import runpy
+import shutil
+import subprocess
+import sys
+import threading
+
+ROOT = Path(__file__).resolve().parent.parent
+HELPERS = runpy.run_path(str(ROOT / 'tools/check-trust-independent'))
+authentic, canonical, utc = [HELPERS[k] for k in ('authentic', 'canonical', 'utc')]
+KINDS = ('root', 'timestamp', 'snapshot', 'targets', 'state-pointer', 'state-header')
+
+
+def require(ok, reason):
+    if not ok: raise ValueError(reason)
+
+
+def sha(b): return hashlib.sha256(b).hexdigest()
+
+
+def mutate(data, index, seed, kind):
+    rng = random.Random(seed ^ (index * 0x9E3779B1))
+    if index % 19 == 0: return data
+    operation = rng.randrange(12)
+    if kind == 'state-header' and operation < 4:
+        value = json.loads(data)
+        field = rng.choice(list(value))
+        value[field] = rng.choice([-1, 0, 1, 100, 101, 9223372036854775808, 'wrong', None, True, {}, []])
+        return json.dumps(value, separators=(',', ':'), sort_keys=True).encode()
+    position = rng.randrange(len(data) + 1)
+    if operation == 0 and position < len(data):
+        return data[:position] + bytes([data[position] ^ (1 << rng.randrange(8))]) + data[position + 1:]
+    if operation == 1: return data[:position] + data[position + 1:]
+    if operation == 2: return data[:position] + bytes([rng.randrange(256)]) + data[position:]
+    if operation == 3: return data + rng.choice([b' ', b'\n', b'\x00', b'x', b'{}'])
+    if operation == 4: return data[:position]
+    if operation == 5: return data[:position] + data[max(0, position - 16):position] + data[position:]
+    if operation == 6: return b'[' * 20 + b'0' + b']' * 20
+    if operation == 7: return data.replace(b'100', rng.choice([b'99', b'101', b'1e2', b'-1', b'9223372036854775808']), 1)
+    if operation == 8: return data.replace(b'2030-', b'2020-', 1)
+    if operation == 9: return data.replace(b'"version":', b'"version":0,"version":', 1)
+    if operation == 10 and index % 1000 == 0: return b' ' * 1048577
+    return data[:position] + rng.choice([b'\\u0000', b'\\ud800', b'\xc0\xaf', b'\xed\xa0\x80', b'"', b',']) + data[position:]
+
+
+def strict_metadata(raw):
+    # Independent rejection of duplicates, unsupported numbers, UTF-8 and bounds;
+    # JSON's decoder supplies token ends, not a canonicalizer implementation.
+    text = raw.decode('utf-8', errors='strict')
+    def pairs(items):
+        out = {}
+        for key, value in items:
+            require(key not in out, 'proof-duplicate-key')
+            out[key] = value
+        return out
+    def integer(token):
+        n = int(token)
+        require(0 <= n <= 9223372036854775807, 'proof-integer-range')
+        return n
+    def noninteger(token):
+        raise ValueError('proof-noninteger:' + token)
+    decoder = json.JSONDecoder(object_pairs_hook=pairs, parse_int=integer, parse_float=noninteger, parse_constant=noninteger)
+    result = decoder.decode(text)
+    nodes = 0
+    def walk(value, depth):
+        nonlocal nodes
+        nodes += 1
+        require(nodes <= 16384, 'proof-node-limit')
+        if isinstance(value, str): require(len(value.encode('utf-8', errors='strict')) <= 65536, 'proof-string-limit')
+        if isinstance(value, (dict, list)):
+            require(depth < 16 and len(value) <= 4096, 'proof-container-limit')
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    require(len(key.encode('utf-8', errors='strict')) <= 65536, 'proof-key-limit')
+                    walk(child, depth + 1)
+            else:
+                for child in value: walk(child, depth + 1)
+    walk(result, 0)
+    require(isinstance(result, dict), 'proof-envelope')
+    def space(i):
+        while i < len(text) and text[i] in ' \t\r\n': i += 1
+        return i
+    i = space(0)
+    require(i < len(text) and text[i] == '{', 'proof-envelope')
+    i = space(i + 1); signed_span = None
+    while i < len(text) and text[i] != '}':
+        key, i = decoder.raw_decode(text, i); i = space(i)
+        require(text[i] == ':', 'proof-colon'); i = space(i + 1)
+        start = i; _, i = decoder.raw_decode(text, i)
+        if key == 'signed': signed_span = text[start:i].encode('utf-8')
+        i = space(i)
+        if text[i] == ',': i = space(i + 1)
+        else: break
+    require(signed_span == canonical(result['signed']), 'proof-noncanonical-signed')
+    require(isinstance(result.get('signatures'), list) and len(result['signatures']) <= 16, 'proof-signature-limit')
+    return result
+
+
+def verify_proof(p, initial_root, initial_bytes, initial_header, witnesses, now, repository):
+    require(p['repository'] == repository, 'proof-repository')
+    require(type(p['floor']) is int and p['floor'] == utc(now), 'proof-clock')
+    require(p['stage'] in (0, 1, 2, 3), 'proof-stage')
+    root_wire = bytes.fromhex(p['root']); root = strict_metadata(root_wire)
+    rv = root['signed']['version']; original = initial_root['signed']['version']
+    if rv == original: require(root_wire == initial_bytes, 'proof-root-rewrite')
+    else:
+        require(rv == original + 1, 'proof-root-sequence')
+        authentic(root, initial_root, 'root', witnesses)
+    authentic(root, root, 'root', witnesses)
+    for keyid, key in root['signed']['keys'].items(): require(sha(canonical(key)) == keyid, 'proof-key-id')
+    reset = any(set(root['signed']['roles'][r]['keyids']) != set(initial_root['signed']['roles'][r]['keyids'])
+                for r in ('timestamp', 'snapshot'))
+    parent = None
+    for stage, role in enumerate(('timestamp', 'snapshot', 'targets'), 1):
+        version, digest = p[f'{role}_version'], p[f'{role}_hash']
+        if stage > p['stage']:
+            expected_version = 0 if reset else initial_header[f'{role}_version']
+            expected_hash = '' if reset else initial_header[f'{role}_hash']
+            require(version == expected_version and digest == expected_hash, 'proof-unproven-high-water')
+            require(p[role] == '', 'proof-inactive-role')
+            continue
+        wire = bytes.fromhex(p[role]); m = strict_metadata(wire)
+        require(version == m['signed']['version'] and digest == sha(wire), 'proof-role-mark')
+        if not reset: require(version >= initial_header[f'{role}_version'], 'proof-role-rollback')
+        require(utc(m['signed']['expires']) > p['floor'] and utc(root['signed']['expires']) > p['floor'], 'proof-expiry')
+        authentic(m, root, role, witnesses)
+        if parent:
+            ref = parent['signed']['meta'][f'{role}.json']
+            require(ref['version'] == version and ref['length'] == len(wire) and ref['hashes']['sha256'] == digest, 'proof-reference')
+        if role == 'timestamp': require(m['signed']['meta']['snapshot.json']['version'] == p['snapshot_floor'], 'proof-snapshot-floor')
+        if role == 'snapshot': require(m['signed']['meta']['targets.json']['version'] == p['targets_floor'], 'proof-targets-floor')
+        parent = m
+    require(p['snapshot_floor'] >= p['snapshot_version'] and p['targets_floor'] >= p['targets_version'], 'proof-floor-bound')
+    if p['stage'] == 0:
+        require(p['snapshot_floor'] == (0 if reset else initial_header['snapshot_floor']), 'proof-unproven-snapshot-floor')
+    if p['stage'] < 2:
+        require(p['targets_floor'] == (0 if reset else initial_header['targets_floor']), 'proof-unproven-targets-floor')
+
+
+def main():
+    limit = resource.getrlimit(resource.RLIMIT_AS)[0] if sys.platform == 'linux' else -1
+    if sys.platform != 'linux' or limit == resource.RLIM_INFINITY or limit > 2147483648:
+        print('FAIL fuzz-requires-Linux-2GiB-address-space-cap'); return 1
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fixtures', type=Path, default=ROOT / 'tests/trust/independent')
+    parser.add_argument('--count', type=int, default=100000)
+    parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--seed', type=lambda n: int(n, 0), default=0x504D0331)
+    parser.add_argument('--work', type=Path, default=ROOT / 'target/trust-fuzz')
+    args = parser.parse_args()
+    require(1 <= args.count <= 1000000 and args.offset >= 0, 'fuzz-count')
+    require(os.environ.get('CI') != 'true' or args.count >= 100000, 'CI-fuzz-count')
+    print(f'FUZZ seed={args.seed} offset={args.offset} count={args.count} workers=4 input-timeout=5s cap={limit}', flush=True)
+    args.work.mkdir(mode=0o700)
+    binary = ROOT / 'target/bin/larder'; probe = ROOT / 'target/bin/trust-fuzz-probe'
+    now = json.loads((args.fixtures / 'cases.json').read_bytes())['now']
+    baseline = args.fixtures / 'baseline'
+    newer = args.fixtures / 'unknown-key-ignored'
+    recovery = args.fixtures / 'fast-forward-rotation-recovery'
+    accepted = args.work / 'accepted'
+    for command in [('bootstrap', '--root', args.fixtures / 'pinned-root.json'), ('update',)]:
+        p = subprocess.run([str(binary), *map(str, command), '--repo', baseline.as_uri(), '--state', str(accepted), '--now', now], capture_output=True, text=True, timeout=15)
+        require(p.returncode == 0 and not p.stderr, f'fuzz-setup {p.returncode} {p.stderr!r}')
+    pointer_bytes = (accepted / 'current').read_bytes(); pointer = json.loads(pointer_bytes)
+    generation = f'g{pointer["generation"]}'
+    header_bytes = (accepted / generation / 'state.json').read_bytes(); header = json.loads(header_bytes)
+    initial_bytes = (accepted / generation / 'root.json').read_bytes(); initial_root = json.loads(initial_bytes)
+    witnesses = {(w['keyid'], w['signed_sha256'], w['signature']) for w in json.loads((args.fixtures / 'signature-witnesses.json').read_bytes())}
+    protected = {p: sha(p.read_bytes()) for p in accepted.rglob('*') if p.is_file()}
+    seeds = {
+        'root': (recovery / 'metadata/3.root.json').read_bytes(),
+        'timestamp': (newer / 'metadata/timestamp.json').read_bytes(),
+        'snapshot': (newer / 'metadata/101.snapshot.json').read_bytes(),
+        'targets': (newer / 'metadata/101.targets.json').read_bytes(),
+        'state-pointer': pointer_bytes, 'state-header': header_bytes,
+    }
+    local = threading.local(); slot_lock = threading.Lock(); slots = []
+
+    def worker(index):
+        if not hasattr(local, 'work'):
+            with slot_lock:
+                slot = len(slots); slots.append(slot)
+            local.work = args.work / f'worker-{slot}'; local.work.mkdir(mode=0o700)
+            shutil.copytree(accepted, local.work / 'candidate')
+        work = local.work; candidate = work / 'candidate'
+        kind = KINDS[index % len(KINDS)]
+        data = mutate(seeds[kind], index, args.seed, kind)
+        (candidate / generation / 'state.json').write_bytes(header_bytes)
+        if kind == 'state-header':
+            (candidate / generation / 'state.json').write_bytes(data)
+            data = json.dumps({'generation': pointer['generation'], 'hash': sha(data)}, separators=(',', ':')).encode()
+        mutation = work / 'input'; mutation.write_bytes(data)
+        try:
+            p = subprocess.run([str(probe), kind, str(mutation), str(accepted), str(newer), str(recovery), str(candidate), now], capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f'input-timeout index={index} kind={kind}') from exc
+        require(p.returncode == 0 and not p.stderr, f'input-process index={index} kind={kind} exit={p.returncode} stderr={p.stderr!r}')
+        lines = p.stdout.splitlines()
+        require(len(lines) == 2 and lines[1].startswith('PROOF '), f'input-outcome index={index}')
+        require(lines[0] == 'UPDATE verified' or lines[0].startswith('REFUSE ') and len(lines[0]) > 7, f'input-named-refusal index={index}')
+        if index % 19 == 0: require(lines[0] == 'UPDATE verified', f'valid-seed-refused index={index} kind={kind}')
+        proof = json.loads(lines[1][6:])
+        verify_proof(proof, initial_root, initial_bytes, header, witnesses, now, str(baseline.resolve()))
+        if lines[0] == 'UPDATE verified': require(proof['stage'] == 3, 'input-incomplete-update')
+        for path, expected in protected.items(): require(sha(path.read_bytes()) == expected, f'accepted-generation-written index={index}')
+        require({p for p in accepted.rglob('*') if p.is_file()} == set(protected), f'accepted-file-created index={index}')
+        return kind, lines[0]
+
+    counts = {}; completed = 0; end = args.offset + args.count; next_index = args.offset
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        pending = {}
+        while next_index < end and len(pending) < 8:
+            future = pool.submit(worker, next_index); pending[future] = next_index; next_index += 1
+        while pending:
+            done, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                try: kind, outcome = future.result()
+                except Exception as exc:
+                    print(f'FAIL fuzz-input index={index} seed={args.seed} {exc}', flush=True)
+                    for unfinished in pending: unfinished.cancel()
+                    return 1
+                counts[(kind, outcome)] = counts.get((kind, outcome), 0) + 1
+                completed += 1
+                if completed % 1000 == 0: print(f'PASS fuzz-progress inputs={completed}', flush=True)
+                if next_index < end:
+                    future = pool.submit(worker, next_index); pending[future] = next_index; next_index += 1
+    require(completed == args.count, 'fuzz-completion-count')
+    if args.count >= 114:
+        require(all(counts.get((kind, 'UPDATE verified'), 0) > 0 for kind in KINDS), 'fuzz-positive-seed-coverage')
+    for (kind, outcome), count in sorted(counts.items()): print(f'FUZZ-OUTCOME kind={kind} count={count} {outcome}')
+    print(f'PASS trust-fuzz seed={args.seed} offset={args.offset} inputs={completed}')
+    return 0
+
+
+if __name__ == '__main__': sys.exit(main())

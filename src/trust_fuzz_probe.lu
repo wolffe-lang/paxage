@@ -1,0 +1,99 @@
+//! One bounded mutation per process. The harness supplies a hard Linux cap and timeout.
+//! Reads protected accepted state and an unpublished candidate; never writes either.
+use trust_io as io
+use trust_metadata as meta
+use trust_state as state
+use trust_store as store
+use trust_writer as writer
+use std.hex as hex
+
+fn from_file(path: str, role: str) -> meta.Meta {
+    let input = io.read(path, meta.limit(role))
+    if input.error != "" { var m = meta.absent(role); m.error = input.error; return m }
+    meta.parse(input.bytes, role)
+}
+fn referenced(path: str, role: str, reference: meta.Entry) -> meta.Meta {
+    var m = meta.absent(role)
+    let input = io.read(path, reference.length)
+    if input.error != "" { m.error = input.error; return m }
+    if input.bytes.len != reference.length { m.error = "metadata-length"; return m }
+    if meta.digest(input.bytes) != reference.digest { m.error = "metadata-hash"; return m }
+    meta.parse(input.bytes, role)
+}
+fn complete(mut s: state.State, repo: str, now: int) -> str {
+    if s.stage < 1 {
+        let timestamp = from_file("{repo}/metadata/timestamp.json", "timestamp")
+        let e = state.advance(mut s, timestamp, now)
+        if e != "" { return e }
+    }
+    if s.stage < 2 {
+        let r = copy s.timestamp.entries[0]
+        let snapshot = referenced("{repo}/metadata/{r.version}.snapshot.json", "snapshot", r)
+        let e = state.advance(mut s, snapshot, now)
+        if e != "" { return e }
+    }
+    if s.stage < 3 {
+        let r = copy s.snapshot.entries[0]
+        let targets = referenced("{repo}/metadata/{r.version}.targets.json", "targets", r)
+        let e = state.advance(mut s, targets, now)
+        if e != "" { return e }
+    }
+    state.ready(s, now)
+}
+fn finish(s: state.State, error: str) -> int {
+    if error == "" { print("UPDATE verified") } else { print("REFUSE {error}") }
+    print("PROOF {{\"floor\":{s.floor},\"repository\":{writer.quote(s.repository)},\"stage\":{s.stage},\"root\":\"{hex.encode(s.root.wire)}\",\"timestamp\":\"{hex.encode(s.timestamp.wire)}\",\"snapshot\":\"{hex.encode(s.snapshot.wire)}\",\"targets\":\"{hex.encode(s.targets.wire)}\",\"timestamp_version\":{s.timestamp_mark.version},\"timestamp_hash\":\"{s.timestamp_mark.hash}\",\"snapshot_version\":{s.snapshot_mark.version},\"snapshot_hash\":\"{s.snapshot_mark.hash}\",\"targets_version\":{s.targets_mark.version},\"targets_hash\":\"{s.targets_mark.hash}\",\"snapshot_floor\":{s.snapshot_floor},\"targets_floor\":{s.targets_floor}}}")
+    0
+}
+fn main() -> int {
+    let a = env_args()
+    if a.len != 7 { fs_write(2, "FAIL fuzz-arguments\n") else |_| {}; return 2 }
+    let kind = a[0]
+    let input_path = a[1]
+    let accepted = store.load(a[2])
+    let newer = a[3]
+    let recovery = a[4]
+    let candidate_dir = a[5]
+    let now = meta.utc(a[6])
+    if accepted.error != "" || accepted.value.stage != 3 || now < 0 {
+        fs_write(2, "FAIL fuzz-accepted-fixture\n") else |_| {}; return 2
+    }
+    var s = copy accepted.value
+    var error = ""
+    var following = newer
+    if kind == "state-pointer" || kind == "state-header" {
+        let input = io.read(input_path, 1024)
+        if input.error != "" { return finish(s, "state-invalid") }
+        let proposed = store.load_candidate(candidate_dir, input.bytes)
+        if proposed.error != "" { return finish(s, "state-invalid") }
+        error = state.continuity(s, proposed.value)
+        if error != "" { return finish(s, error) }
+        if proposed.value.floor > now { return finish(s, "clock-before-floor") }
+        s = copy proposed.value
+        following = copy s.repository
+    } else if kind == "root" {
+        let m = from_file(input_path, "root")
+        error = state.advance(mut s, m, now)
+        following = recovery
+    } else if kind == "timestamp" {
+        let m = from_file(input_path, "timestamp")
+        error = state.advance(mut s, m, now)
+    } else if kind == "snapshot" || kind == "targets" {
+        let timestamp = from_file("{newer}/metadata/timestamp.json", "timestamp")
+        let setup = state.advance(mut s, timestamp, now)
+        if setup != "" { fs_write(2, "FAIL fuzz-timestamp-fixture {setup}\n") else |_| {}; return 2 }
+        var r = copy s.timestamp.entries[0]
+        if kind == "targets" {
+            let snapshot = referenced("{newer}/metadata/{r.version}.snapshot.json", "snapshot", r)
+            let next = state.advance(mut s, snapshot, now)
+            if next != "" { fs_write(2, "FAIL fuzz-snapshot-fixture {next}\n") else |_| {}; return 2 }
+            r = copy s.snapshot.entries[0]
+        }
+        let m = referenced(input_path, kind, r)
+        error = state.advance(mut s, m, now)
+    } else {
+        fs_write(2, "FAIL fuzz-kind\n") else |_| {}; return 2
+    }
+    if error == "" { error = complete(mut s, following, now) }
+    finish(s, error)
+}

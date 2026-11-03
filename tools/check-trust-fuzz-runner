@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Linux-only. Caller must hold its host slot and set a 2 GiB address-space cap.
+set -eu
+cd "$(dirname "$0")/.."
+[ "$(uname -s)" = Linux ] || { echo 'FAIL trust-fuzz-requires-linux'; exit 1; }
+export LARDER_ROOT="$PWD"
+. tools/lib-toolchain.sh
+step() {
+  local name=$1 started=$SECONDS result=0
+  shift
+  printf 'START %s\n' "$name"
+  "$@" || result=$?
+  printf 'END %s exit=%s secs=%s\n' "$name" "$result" "$((SECONDS-started))"
+  return "$result"
+}
+build() {
+  bash tools/build
+  rm -rf src/.lu-cache
+  "$WOLF" build --deny-warnings src/trust_fuzz_probe.lu -o target/bin/trust-fuzz-probe
+}
+step trust-fuzz-build build
+step trust-fuzz python3 -I tools/check-trust-fuzz "$@"
