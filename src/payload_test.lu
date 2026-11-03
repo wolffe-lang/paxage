@@ -1,16 +1,20 @@
 use std.x.crypto.sha2 as sha2
 use payload
 
+fn expect(ok: bool, row: str) {
+    if !ok { eprint("FAIL {row}"); assert(ok, row) }
+}
+
 fn main() {
-    assert(!payload.allowed_path("../escape"), "F6-traversal-refused")
-    assert(!payload.allowed_path("/escape"), "F6-absolute-refused")
-    assert(!payload.allowed_path("var/db"), "F5-reserved-refused")
-    assert(!payload.safe_link("usr/x", "../../escape"), "F6-link-escape")
-    assert(payload.safe_link("usr/x", "../etc/config"), "F6-relative-link")
-    assert(payload.number("9223372036854775808".bytes(), 10) == -1, "F6-number-overflow")
-    assert(payload.number("00000000001".bytes(), 8) == 1, "F6-octal")
-    assert(payload.number([128 as byte], 8) == -1, "F6-base256-refused")
-    assert(payload.ustar_path("usr/bin/tool"), "F6-ustar-path")
+    expect(!payload.allowed_path("../escape"), "F6-traversal-refused")
+    expect(!payload.allowed_path("/escape"), "F6-absolute-refused")
+    expect(!payload.allowed_path("var/db"), "F5-reserved-refused")
+    expect(!payload.safe_link("usr/x", "../../escape"), "F6-link-escape")
+    expect(payload.safe_link("usr/x", "../etc/config"), "F6-relative-link")
+    expect(payload.number("9223372036854775808".bytes(), 10) == -1, "F6-number-overflow")
+    expect(payload.number("00000000001".bytes(), 8) == 1, "F6-octal")
+    expect(payload.number([128 as byte], 8) == -1, "F6-base256-refused")
+    expect(payload.ustar_path("usr/bin/tool"), "F6-ustar-path")
     let messages = ["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"]
     let hashes = [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -20,13 +24,13 @@ fn main() {
     for i in 0..messages.len {
         var st = sha2.new256()
         for b in messages[i].bytes() { sha2.update256(mut st, [b]) }
-        assert(sha2.to_hex(sha2.final256(take st)) == hashes[i], "FIPS-180-4-{i}")
+        expect(sha2.to_hex(sha2.final256(take st)) == hashes[i], "FIPS-180-4-{i}")
     }
     var million = sha2.new256()
     var chunk = List[byte]()
     for _i in 0..1000 { (mut chunk).push(97 as byte) }
     for _i in 0..1000 { sha2.update256(mut million, chunk) }
-    assert(
+    expect(
         sha2.to_hex(sha2.final256(take million)) ==
             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
         "FIPS-million-a",
