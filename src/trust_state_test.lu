@@ -78,6 +78,15 @@ fn main() -> int {
         if !row(loaded.error == "" && loaded.value.root.version == 2 && loaded.value.floor == 101 && state.ready(loaded.value, 101) == "", "T14-load-generation") { ok = false; print("DETAIL {loaded.error}") }
         let original_pointer = io.read("{dir}/current", 1024)
         let original_hash = meta.digest(original_pointer.bytes)
+        let candidate_loaded = store.load_candidate(dir, original_pointer.bytes)
+        if !row(candidate_loaded.error == "" && state.ready(candidate_loaded.value, 101) == "", "T19-valid-candidate-load") { ok = false }
+        let malformed: List[byte] = [123 as byte, 120 as byte]
+        if !row(store.load_candidate(dir, malformed).error == "state-invalid", "T19-malformed-candidate-load") { ok = false }
+        var lower_clock = copy s
+        lower_clock.floor = 100
+        if !row(store.save(dir, lower_clock, loaded.generation) == "clock-before-floor", "T19-candidate-clock-regression") { return 1 }
+        let unchanged = io.read("{dir}/current", 1024)
+        if !row(meta.digest(unchanged.bytes) == original_hash, "T19-candidates-preserve-accepted-generation") { ok = false }
         var proposed = copy s
         let third = parsed(writer.root(next, next[0..3], 3, 2000000000), "root")
         if !row(state.advance(mut proposed, third, 102) == "", "T14-proposed-rotation") { return 1 }
