@@ -1,0 +1,212 @@
+//! Test-only file repository publication. Timestamp is the only replaceable output.
+use trust_options as options
+use trust_writer as writer
+use trust_metadata as meta
+use trust_json as json
+use trust_io as io
+use trust_cache as cache
+use literal
+use schema
+use std.hex as hex
+
+/// Loaded test-only signing material, never accepted without its marker and mode.
+pub struct Keys { values: List[writer.Signing], error: str }
+fn names() -> List[str] { ["root1", "root2", "root3", "targets", "snapshot", "timestamp"] }
+/// Load six marked 0600 key files from a private directory.
+pub fn load_keys(dir: str) -> Keys {
+    var out = Keys { values: List[writer.Signing](), error: io.private_dir(dir) }
+    if out.error != "" { return out }
+    for name in names() {
+        let path = "{dir}/{name}.test-only.key"
+        let stat = fs_lstat(path) else |_| { out.error = "test-key-file"; return out }
+        if stat[0] != 0 || stat[4] != 384 { out.error = "test-key-mode"; return out }
+        let input = io.read(path, 4096)
+        if input.error != "" { out.error = input.error; return out }
+        let d = json.parse(input.bytes)
+        let marker = json.field(d, 0, "test-only")
+        if d.error != "" || marker < 0 || d.nodes[marker].kind != "bool" || d.nodes[marker].number != 1 {
+            out.error = "Real repository keys need std's constant-time signing review and the maintainer's ceremony (R-pm00-7)"
+            return out
+        }
+        let seed_hex = meta.text(d, 0, "seed")
+        if !schema.digest(seed_hex) { out.error = "test-key-seed"; return out }
+        let seed = hex.decode(seed_hex) else List[byte]()
+        let key = writer.test_key(seed)
+        if key.public != meta.text(d, 0, "public") { out.error = "test-key-public"; return out }
+        (mut out.values).push(key)
+    }
+    out
+}
+fn keygen(dir: str) -> str {
+    if dir == "" { return "missing-keys-directory" }
+    let error = cache.directory(dir)
+    if error != "" { return error }
+    let lock = io.lock(dir)
+    if lock < 0 { return "keys-locked" }
+    var result = ""
+    for name in names() {
+        let randomness = os_random(32)
+        var seed = List[byte]()
+        for b in randomness { (mut seed).push(b as byte) }
+        let key = writer.test_key(seed)
+        let seed_hex = hex.encode(seed)
+        let body = "{{\"public\":\"{key.public}\",\"seed\":\"{seed_hex}\",\"test-only\":true}}"
+        let bytes = body.bytes()
+        let path = "{dir}/{name}.test-only.key"
+        result = io.create(path, bytes)
+        if result != "" { break }
+        fs_set_mode(path, 384) else |_| { result = "test-key-mode" }
+        if result != "" { break }
+    }
+    fs_sync_dir(dir) else |_| { result = "state-dir-sync" }
+    fs_close(lock) else |_| { result = "state-close" }
+    result
+}
+fn write_metadata(repo: str, text: str, role: str, version: int) -> str {
+    if text == "" { return "metadata-encoding" }
+    let bytes = text.bytes()
+    let m = meta.parse(bytes, role)
+    if m.error != "" { return m.error }
+    if m.version != version { return "metadata-version" }
+    let error = io.create("{repo}/metadata/{version}.{role}.json", bytes)
+    if error != "" { return error }
+    fs_sync_dir("{repo}/metadata") else |_| { return "state-dir-sync" }
+    ""
+}
+fn initialize(repo: str, keys: Keys, o: options.Options, now: int) -> str {
+    let expires = options.expiry(o, "--root-validity", 31536000, now)
+    let text = writer.root(keys.values, keys.values[0..3], 1, expires)
+    write_metadata(repo, text, "root", 1)
+}
+fn rotate(repo: str, keys: Keys, o: options.Options, now: int) -> str {
+    let v = options.integer(options.get(o, "--version"))
+    if v < 2 { return "root-version" }
+    let old = load_keys(options.get(o, "--old-keys"))
+    if old.error != "" { return old.error }
+    let input = io.read("{repo}/metadata/{v - 1}.root.json", 65536)
+    if input.error != "" { return input.error }
+    let old_root = meta.parse(input.bytes, "root")
+    if old_root.error != "" { return old_root.error }
+    var signers = old.values[0..3]
+    for key in keys.values[0..3] { (mut signers).push(key) }
+    let text = writer.root(keys.values, signers, v, options.expiry(o, "--root-validity", 31536000, now))
+    let bytes = text.bytes()
+    let candidate = meta.parse(bytes, "root")
+    if candidate.error != "" { return candidate.error }
+    if meta.verify(candidate, old_root, "root") != "" { return "root-old-threshold" }
+    if meta.verify(candidate, candidate, "root") != "" { return "root-new-threshold" }
+    write_metadata(repo, text, "root", v)
+}
+fn add_file(repo: str, source: str, e: meta.Entry) -> str {
+    let path = "{repo}/targets/{e.digest}.{e.path}"
+    let old = fs_lstat(path) else |error| match error { not_found => { List[int]() }, _ => { return "target-file" } }
+    if old.len != 0 {
+        // Referencing an already verified immutable object is not rewriting it.
+        let measured = cache.measure(path, e.length)
+        if measured.error != "" || measured.length != e.length || measured.digest != e.digest { return "immutable-rewrite" }
+        return ""
+    }
+    cache.copy_verified(source, path, e)
+}
+fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
+    let v = options.integer(options.get(o, "--version"))
+    if v < 1 { return "metadata-version" }
+    if o.manifests.len != o.buildinfos.len { return "target-incomplete" }
+    var root_version = 1
+    if options.get(o, "--root-version") != "" { root_version = options.integer(options.get(o, "--root-version")) }
+    if root_version < 1 || root_version == 9223372036854775807 { return "root-version" }
+    if fs_exists("{repo}/metadata/{root_version + 1}.root.json") { return "publish-root-stale" }
+    let root_input = io.read("{repo}/metadata/{root_version}.root.json", 65536)
+    if root_input.error != "" { return root_input.error }
+    let root = meta.parse(root_input.bytes, "root")
+    if root.error != "" || meta.verify(root, root, "root") != "" { return "publish-root" }
+    if root.expires <= now { return "expired-root" }
+    var entries = List[meta.Entry]()
+    for i in 0..o.manifests.len {
+        let source = o.manifests[i]
+        let input = io.read(source, 1048576)
+        if input.error != "" { return input.error }
+        let d = literal.parse(input.bytes)
+        if d.error != "" { return d.error }
+        let error = schema.manifest(d, 0)
+        if error != "" { return error }
+        let name = schema.string(d, 0, "name")
+        let version = schema.string(d, 0, "version")
+        let arch = schema.string(d, 0, "arch")
+        if !source.ends_with(".manifest") { return "target-kind" }
+        let payload = source[0..source.len - 9] + ".payload.tar"
+        let paths = [source, payload, o.buildinfos[i]]
+        let kinds = ["manifest", "payload", "buildinfo"]
+        let suffixes = ["manifest", "payload.tar", "buildinfo"]
+        for j in 0..3 {
+            let path = paths[j]
+            let measured = cache.measure(path, 17179869184)
+            if measured.error != "" { return measured.error }
+            if j == 2 && measured.digest != schema.string(d, 0, "buildinfo") { return "buildinfo-hash" }
+            let e = meta.Entry { path: "{name}-{version}.{suffixes[j]}", digest: measured.digest, length: measured.length, version: 0, name: copy name, package_version: copy version, arch: copy arch, kind: kinds[j] }
+            if !meta.logical(e.path) { return "logical-name" }
+            let copied = add_file(repo, path, e)
+            if copied != "" { return copied }
+            (mut entries).push(e)
+        }
+    }
+    fs_sync_dir("{repo}/targets") else |_| { return "state-dir-sync" }
+    let targets_text = writer.targets(entries, v, options.expiry(o, "--targets-validity", 7776000, now), keys.values[3])
+    let targets_bytes = targets_text.bytes()
+    let targets = meta.parse(targets_bytes, "targets")
+    let target_auth = meta.verify(targets, root, "targets")
+    if target_auth != "" { return target_auth }
+    let targets_ref = meta.Entry { path: "targets.json", digest: meta.digest(targets_bytes), length: targets_bytes.len, version: v, name: "", package_version: "", arch: "", kind: "" }
+    let snapshot_text = writer.reference("snapshot", v, options.expiry(o, "--snapshot-validity", 1209600, now), targets_ref, keys.values[4])
+    let snapshot_bytes = snapshot_text.bytes()
+    let snapshot = meta.parse(snapshot_bytes, "snapshot")
+    let snapshot_auth = meta.verify(snapshot, root, "snapshot")
+    if snapshot_auth != "" { return snapshot_auth }
+    let snapshot_ref = meta.Entry { path: "snapshot.json", digest: meta.digest(snapshot_bytes), length: snapshot_bytes.len, version: v, name: "", package_version: "", arch: "", kind: "" }
+    let timestamp_text = writer.reference("timestamp", v, options.expiry(o, "--timestamp-validity", 172800, now), snapshot_ref, keys.values[5])
+    let timestamp_bytes = timestamp_text.bytes()
+    let timestamp = meta.parse(timestamp_bytes, "timestamp")
+    let timestamp_auth = meta.verify(timestamp, root, "timestamp")
+    if timestamp_auth != "" { return timestamp_auth }
+    let old = io.read("{repo}/metadata/timestamp.json", 16384)
+    if old.error == "" {
+        let previous = meta.parse(old.bytes, "timestamp")
+        if previous.error != "" { return previous.error }
+        if meta.verify(previous, root, "timestamp") == "" && previous.version >= v { return "publish-version" }
+    } else if old.error != "not-found" { return old.error }
+    let target_written = write_metadata(repo, targets_text, "targets", v)
+    if target_written != "" { return target_written }
+    let snapshot_written = write_metadata(repo, snapshot_text, "snapshot", v)
+    if snapshot_written != "" { return snapshot_written }
+    io.replace("{repo}/metadata", "timestamp.json", "timestamp.{v}.next", timestamp_bytes)
+}
+/// Run one test-only repository operation, with an exclusive publisher lock.
+pub fn run(verb: str, o: options.Options, now: int) -> str {
+    if verb == "keygen" { return keygen(options.get(o, "--keys")) }
+    let raw = options.file_path(options.get(o, "--repo"))
+    if raw == "" { return "unsupported-transport" }
+    let error = cache.directory(raw)
+    if error != "" { return error }
+    let repo = fs_realpath(raw) else |_| { return "directory" }
+    let lock = io.lock(repo)
+    if lock < 0 { return "repository-locked" }
+    var result = ""
+    for child in ["metadata", "targets"] {
+        result = cache.directory("{repo}/{child}")
+        if result != "" { break }
+    }
+    if result == "" {
+        let keys = load_keys(options.get(o, "--keys"))
+        result = keys.error
+        if result == "" {
+            if verb == "init" { result = initialize(repo, keys, o, now)
+            } else if verb == "rotate" { result = rotate(repo, keys, o, now)
+            } else if verb == "publish" { result = publish(repo, keys, o, now)
+            } else { result = "unsupported-repo-verb" }
+        }
+    }
+    fs_sync_dir(repo) else |_| { result = "state-dir-sync" }
+    fs_sync_dir("{repo}/..") else |_| { result = "state-dir-sync" }
+    fs_close(lock) else |_| { result = "state-close" }
+    result
+}
