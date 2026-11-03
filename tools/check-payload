@@ -143,15 +143,16 @@ def roundtrip(d):
     long=source/'usr'/('a'*150)/('b'*150);long.mkdir(parents=True);(long/'file').write_bytes(b'long')
     outputs=[]
     for n in range(2):
+        binary=BINARY if n==0 else BINARY.with_name('lrd')
         out=d/f'out{n}';out.mkdir()
-        invoke(['pack',source,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0])
+        invoke(['pack',source,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0],binary=binary)
         path=out/'sample-1-1.payload.tar';manifest=out/'sample-1-1.manifest'
-        verify(path,manifest=manifest)
-        rows=json.loads(invoke(['list-payload',path,'--length',path.stat().st_size,'--json']).stdout)
+        verify(path,manifest=manifest,binary=binary)
+        rows=json.loads(invoke(['list-payload',path,'--length',path.stat().st_size,'--json'],binary=binary).stdout)
         outputs.append(path.read_bytes())
         into=d/f'stage{n}';into.mkdir(mode=0o700)
         before=sorted(p.name for p in d.iterdir())
-        invoke(stage_args(path,manifest,into))
+        invoke(stage_args(path,manifest,into),binary=binary)
         assert before==sorted(p.name for p in d.iterdir()),'F6-no-write-outside-root'
         for e in rows:
             p=into/e['path'];s=p.lstat();assert s.st_mode&0o777==e['mode'],(e,oct(s.st_mode))
@@ -170,6 +171,7 @@ def roundtrip(d):
             for p in [source/'usr/é',source/'usr/bin/tool']:
                 raw=p.read_bytes();mode=p.stat().st_mode&0o777;p.unlink();p.write_bytes(raw);p.chmod(mode)
     assert outputs[0]==outputs[1],'F6-deterministic-listing-order'
+    artifact=ROOT/'target/evidence/canonical.payload.tar';artifact.parent.mkdir(parents=True,exist_ok=True);artifact.write_bytes(outputs[0])
     print('canonical payload sha256='+hashlib.sha256(outputs[0]).hexdigest(),flush=True)
     print('END F6-roundtrip-determinism-authentication exit=0',flush=True)
 

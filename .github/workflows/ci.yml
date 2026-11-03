@@ -29,3 +29,26 @@ jobs:
         run: tools/fetch-toolchain
       - name: Complete gate including F6 traversal, corpus, roundtrip, 100000 mutations and RSS
         run: bash tools/gauntlet
+      - name: Preserve deterministic payload even while RSS is blocked
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-${{ matrix.arch }}
+          path: target/evidence/canonical.payload.tar
+          if-no-files-found: error
+  determinism:
+    name: Cross-host four-payload byte identity
+    needs: gate
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: canonical-*
+      - name: Compare the per-host identical pairs byte for byte
+        shell: bash
+        run: |
+          cmp canonical-arm64/canonical.payload.tar canonical-x86_64/canonical.payload.tar
+          sha256sum canonical-arm64/canonical.payload.tar canonical-x86_64/canonical.payload.tar
+          echo 'END F6-cross-host-determinism exit=0'
