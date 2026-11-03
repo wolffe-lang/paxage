@@ -1,6 +1,8 @@
 //! Bounded local files and durable writes; no transport or subprocess calls.
+
 /// Bounded file bytes or a named refusal. Empty bytes may be a valid empty file.
 pub struct Input { bytes: List[byte], error: str }
+
 /// Read a regular no-follow file, testing size before allocating and exact EOF after.
 pub fn read(path: str, cap: int) -> Input {
     let fd = fs_open_mode(path, 21) else |e| match e {
@@ -29,16 +31,20 @@ pub fn read(path: str, cap: int) -> Input {
     fs_close(fd) else |_| { error = "repository-close" }
     Input { bytes: out, error }
 }
+
 /// Validate a private caller-owned directory; root and privileged callers refuse.
 pub fn private_dir(path: str) -> str {
     let uid = os_euid() else |_| { return "directory-owner" }
     if uid == 0 { return "privileged-trust-refused" }
     let s = fs_lstat(path) else |_| { return "directory" }
-    if s[0] != 1 || s[6] != uid || s[4] / 8 % 8 / 2 % 2 != 0 || s[4] % 8 / 2 % 2 != 0 { return "directory-owner" }
+    if s[0] != 1 || s[6] != uid || s[4] / 8 % 8 / 2 % 2 != 0 || s[4] % 8 / 2 % 2 != 0 {
+        return "directory-owner"
+    }
     let real = fs_realpath(path) else |_| { return "directory" }
     if real == "/" { return "directory-root" }
     ""
 }
+
 /// Exclusively create, write and sync one file (0600). Never overwrite on failure.
 pub fn create(path: str, bytes: List[byte]) -> str {
     let fd = fs_open_perm(path, 20, 384) else |e| match e {
@@ -51,6 +57,7 @@ pub fn create(path: str, bytes: List[byte]) -> str {
     fs_close(fd) else |_| { error = "state-close" }
     error
 }
+
 /// Exclusive temporary creation, file sync, same-directory rename, directory sync.
 pub fn replace(dir: str, name: str, temporary: str, bytes: List[byte]) -> str {
     let error = create("{dir}/{temporary}", bytes)
@@ -59,6 +66,7 @@ pub fn replace(dir: str, name: str, temporary: str, bytes: List[byte]) -> str {
     fs_sync_dir(dir) else |_| { return "state-dir-sync" }
     ""
 }
+
 /// Open a persistent advisory-lock inode and acquire it nonblocking; -1 is refusal.
 pub fn lock(dir: str) -> int {
     let fd = fs_open_perm("{dir}/lock", 19, 384) else |_| { return -1 }

@@ -1,36 +1,68 @@
 //! Pure T7-T13 transition rules. Persistence is a separate caller obligation.
+
 use trust_metadata as meta
+
 /// Highest accepted version and exact whole-envelope hash within this key epoch.
 pub struct Mark { version: int, hash: str }
+
 /// Authoritative state: root, current partial chain, rollback marks and time floor.
 pub struct State {
-    root: meta.Meta, timestamp: meta.Meta, snapshot: meta.Meta, targets: meta.Meta,
-    timestamp_mark: Mark, snapshot_mark: Mark, targets_mark: Mark,
-    snapshot_floor: int, targets_floor: int, floor: int, stage: int, repository: str,
+    root: meta.Meta,
+    timestamp: meta.Meta,
+    snapshot: meta.Meta,
+    targets: meta.Meta,
+    timestamp_mark: Mark,
+    snapshot_mark: Mark,
+    targets_mark: Mark,
+    snapshot_floor: int,
+    targets_floor: int,
+    floor: int,
+    stage: int,
+    repository: str,
 }
+
 /// Named version/hash refusal; no state change on failure.
 pub fn version_error(role: str, old: Mark, candidate: Mark) -> str {
     if old.version < 0 || candidate.version < 1 { return "metadata-version" }
     if candidate.version < old.version { return "rollback-{role}" }
-    if old.version != 0 && candidate.version == old.version && candidate.hash != old.hash { return "same-version-rewrite" }
+    if old.version != 0 && candidate.version == old.version && candidate.hash != old.hash {
+        return "same-version-rewrite"
+    }
     ""
 }
+
 /// Explicit supplied time cannot precede persisted update time.
 pub fn clock_error(floor: int, now: int) -> str {
     if floor < 0 || now < 0 { return "metadata-time" }
     if now < floor { return "clock-before-floor" }
     ""
 }
+
 /// Initial state from a caller-pinned root. Caller MUST check bootstrap_error first.
 pub fn initial(root: meta.Meta, now: int) -> State {
-    State { root: copy root, timestamp: meta.absent("timestamp"), snapshot: meta.absent("snapshot"), targets: meta.absent("targets"), timestamp_mark: Mark { version: 0, hash: "" }, snapshot_mark: Mark { version: 0, hash: "" }, targets_mark: Mark { version: 0, hash: "" }, snapshot_floor: 0, targets_floor: 0, floor: now, stage: 0, repository: "" }
+    State {
+        root: copy root,
+        timestamp: meta.absent("timestamp"),
+        snapshot: meta.absent("snapshot"),
+        targets: meta.absent("targets"),
+        timestamp_mark: Mark { version: 0, hash: "" },
+        snapshot_mark: Mark { version: 0, hash: "" },
+        targets_mark: Mark { version: 0, hash: "" },
+        snapshot_floor: 0,
+        targets_floor: 0,
+        floor: now,
+        stage: 0,
+        repository: "",
+    }
 }
+
 /// Structural/self-signature check, not a substitute for pinned-root provenance.
 pub fn bootstrap_error(root: meta.Meta, now: int) -> str {
     if now < 0 { return "metadata-time" }
     if root.role != "root" || root.version < 1 { return "bootstrap-unpinned" }
     meta.verify(root, root, "root")
 }
+
 /// Exact whole-file reference check before signature work.
 pub fn binding(candidate: meta.Meta, reference: meta.Entry) -> str {
     if candidate.wire.len != reference.length { return "metadata-length" }
@@ -38,6 +70,7 @@ pub fn binding(candidate: meta.Meta, reference: meta.Entry) -> str {
     if candidate.version != reference.version { return "{candidate.role}-version" }
     ""
 }
+
 /// Atomically applicable in-memory step: every refusal leaves s unchanged.
 pub fn advance(mut s: State, candidate: meta.Meta, now: int) -> str {
     let clock = clock_error(s.floor, now)
@@ -48,10 +81,13 @@ pub fn advance(mut s: State, candidate: meta.Meta, now: int) -> str {
         let old = Mark { version: s.root.version, hash: meta.digest(s.root.wire) }
         let error = version_error("root", old, mark)
         if error != "" { return error }
-        if s.root.version == 9223372036854775807 || candidate.version != s.root.version + 1 { return "root-version" }
+        if s.root.version == 9223372036854775807 || candidate.version != s.root.version + 1 {
+            return "root-version"
+        }
         if meta.verify(candidate, s.root, "root") != "" { return "root-old-threshold" }
         if meta.verify(candidate, candidate, "root") != "" { return "root-new-threshold" }
-        let reset = meta.keys_changed(s.root, candidate, "timestamp") || meta.keys_changed(s.root, candidate, "snapshot")
+        let reset = meta.keys_changed(s.root, candidate, "timestamp") ||
+            meta.keys_changed(s.root, candidate, "snapshot")
         s.root = copy candidate
         // Any root update invalidates active-chain authorization. High-water marks
         // survive unless freshness keys rotate; this also handles threshold changes.
@@ -97,7 +133,9 @@ pub fn advance(mut s: State, candidate: meta.Meta, now: int) -> str {
         if error != "" { return error }
         let bound = binding(candidate, s.timestamp.entries[0])
         if bound != "" { return bound }
-        if candidate.entries.len != 1 || candidate.entries[0].version < s.targets_floor { return "rollback-targets" }
+        if candidate.entries.len != 1 || candidate.entries[0].version < s.targets_floor {
+            return "rollback-targets"
+        }
         let verified = meta.verify(candidate, s.root, "snapshot")
         if verified != "" { return verified }
         s.snapshot = copy candidate
@@ -118,10 +156,13 @@ pub fn advance(mut s: State, candidate: meta.Meta, now: int) -> str {
         s.targets = copy candidate
         s.targets_mark = mark
         s.stage = 3
-    } else { return "role-type" }
+    } else {
+        return "role-type"
+    }
     s.floor = now
     ""
 }
+
 /// Recheck authorization/freshness before exposing any target from a loaded state.
 pub fn ready(s: State, now: int) -> str {
     let clock = clock_error(s.floor, now)
@@ -144,19 +185,27 @@ pub fn continuity(old: State, next: State) -> str {
     if next.repository != old.repository { return "repository-mismatch" }
     let clock = clock_error(old.floor, next.floor)
     if clock != "" { return clock }
-    let root = version_error("root", Mark { version: old.root.version, hash: meta.digest(old.root.wire) }, Mark { version: next.root.version, hash: meta.digest(next.root.wire) })
+    let root = version_error("root", Mark {
+        version: old.root.version,
+        hash: meta.digest(old.root.wire),
+    }, Mark { version: next.root.version, hash: meta.digest(next.root.wire) })
     if root != "" { return root }
     var reset = false
     if next.root.version != old.root.version {
-        if old.root.version == 9223372036854775807 || next.root.version != old.root.version + 1 { return "root-version" }
+        if old.root.version == 9223372036854775807 || next.root.version != old.root.version + 1 {
+            return "root-version"
+        }
         if meta.verify(next.root, old.root, "root") != "" { return "root-old-threshold" }
         if meta.verify(next.root, next.root, "root") != "" { return "root-new-threshold" }
-        reset = meta.keys_changed(old.root, next.root, "timestamp") || meta.keys_changed(old.root, next.root, "snapshot")
+        reset = meta.keys_changed(old.root, next.root, "timestamp") ||
+            meta.keys_changed(old.root, next.root, "snapshot")
     }
     if next.root.version == old.root.version && next.stage < old.stage {
         // A new timestamp may invalidate its descendants. Re-reading the same
         // metadata cannot discard an already verified phase of the chain.
-        if next.stage != 1 || next.timestamp_mark.version == old.timestamp_mark.version { return "state-invalid" }
+        if next.stage != 1 || next.timestamp_mark.version == old.timestamp_mark.version {
+            return "state-invalid"
+        }
     }
     if !reset {
         let before = [copy old.timestamp_mark, copy old.snapshot_mark, copy old.targets_mark]
@@ -175,14 +224,23 @@ pub fn continuity(old: State, next: State) -> str {
     let active = [copy next.timestamp, copy next.snapshot, copy next.targets]
     for i in 0..3 {
         if (reset || next_marks[i].version > prior_marks[i].version) && next_marks[i].version > 0 {
-            if active[i].version != next_marks[i].version || meta.digest(active[i].wire) != next_marks[i].hash { return "state-invalid" }
+            if active[i].version != next_marks[i].version ||
+                meta.digest(active[i].wire) != next_marks[i].hash {
+                return "state-invalid"
+            }
         }
     }
     if (reset || next.snapshot_floor > old.snapshot_floor) && next.snapshot_floor > 0 {
-        if next.timestamp.entries.len != 1 || next.timestamp.entries[0].version != next.snapshot_floor { return "state-invalid" }
+        if next.timestamp.entries.len != 1 ||
+            next.timestamp.entries[0].version != next.snapshot_floor {
+            return "state-invalid"
+        }
     }
     if (reset || next.targets_floor > old.targets_floor) && next.targets_floor > 0 {
-        if next.snapshot.entries.len != 1 || next.snapshot.entries[0].version != next.targets_floor { return "state-invalid" }
+        if next.snapshot.entries.len != 1 ||
+            next.snapshot.entries[0].version != next.targets_floor {
+            return "state-invalid"
+        }
     }
     ""
 }

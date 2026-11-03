@@ -1,8 +1,8 @@
-use trust_state as state
-use trust_metadata as meta
-use trust_writer as writer
-use trust_store as store
 use trust_io as io
+use trust_metadata as meta
+use trust_state as state
+use trust_store as store
+use trust_writer as writer
 
 fn keys(offset: int) -> List[writer.Signing] {
     // Deterministic test-only seeds, never repository production keys.
@@ -14,13 +14,25 @@ fn keys(offset: int) -> List[writer.Signing] {
     }
     out
 }
+
 fn parsed(text: str, role: str) -> meta.Meta {
     let bytes = text.bytes()
     meta.parse(bytes, role)
 }
+
 fn ref(m: meta.Meta) -> meta.Entry {
-    meta.Entry { path: "{m.role}.json", digest: meta.digest(m.wire), length: m.wire.len, version: m.version, name: "", package_version: "", arch: "", kind: "" }
+    meta.Entry {
+        path: "{m.role}.json",
+        digest: meta.digest(m.wire),
+        length: m.wire.len,
+        version: m.version,
+        name: "",
+        package_version: "",
+        arch: "",
+        kind: "",
+    }
 }
+
 fn chain(mut s: state.State, k: List[writer.Signing], v: int, now: int) -> bool {
     let t = parsed(writer.targets(List[meta.Entry](), v, 2000000000, k[3]), "targets")
     let snap = parsed(writer.reference("snapshot", v, 2000000000, ref(t), k[4]), "snapshot")
@@ -31,10 +43,12 @@ fn chain(mut s: state.State, k: List[writer.Signing], v: int, now: int) -> bool 
     }
     row(state.ready(s, now) == "", "T13-complete-chain")
 }
+
 fn row(ok: bool, name: str) -> bool {
     if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
     ok
 }
+
 fn main() -> int {
     var ok = true
     for role in ["root", "timestamp", "snapshot", "targets"] {
@@ -44,27 +58,50 @@ fn main() -> int {
         if !row(state.version_error(role, old, state.Mark { version: 2, hash: "a" }) == "", "T13-same-{role}") { ok = false }
         if !row(state.version_error(role, old, state.Mark { version: 3, hash: "b" }) == "", "T13-forward-{role}") { ok = false }
     }
-    if !row(state.clock_error(10, 9) == "clock-before-floor", "T13-clock-before-floor") { ok = false }
+    if !row(state.clock_error(10, 9) == "clock-before-floor", "T13-clock-before-floor") {
+        ok = false
+    }
     if !row(state.clock_error(10, 10) == "", "T13-clock-equal-floor") { ok = false }
     if !row(state.clock_error(10, 11) == "", "T13-clock-forward") { ok = false }
     let k = keys(1)
     let next = keys(11)
     let root = parsed(writer.root(k, k[0..3], 1, 2000000000), "root")
-    if !row(state.bootstrap_error(root, 100) == "", "T11-pinned-root-self-threshold") { ok = false; print("DETAIL root={root.error}") }
+    if !row(state.bootstrap_error(root, 100) == "", "T11-pinned-root-self-threshold") {
+        ok = false
+        print("DETAIL root={root.error}")
+    }
     var s = state.initial(root, 100)
     if !chain(mut s, k, 100, 100) { ok = false }
     let skip = parsed(writer.root(next, next[0..3], 3, 2000000000), "root")
     if !row(state.advance(mut s, skip, 100) == "root-version", "T12-skipped-root") { ok = false }
     let new_only = parsed(writer.root(next, next[0..3], 2, 2000000000), "root")
-    if !row(state.advance(mut s, new_only, 100) == "root-old-threshold", "T12-new-only") { ok = false }
+    if !row(state.advance(mut s, new_only, 100) == "root-old-threshold", "T12-new-only") {
+        ok = false
+    }
     let old_only = parsed(writer.root(next, k[0..3], 2, 2000000000), "root")
-    if !row(state.advance(mut s, old_only, 100) == "root-new-threshold", "T12-old-only") { ok = false }
-    if !row(s.stage == 3 && s.root.version == 1 && s.timestamp_mark.version == 100, "T13-refusal-preserves-state") { ok = false }
+    if !row(state.advance(mut s, old_only, 100) == "root-new-threshold", "T12-old-only") {
+        ok = false
+    }
+    if !row(
+        s.stage == 3 && s.root.version == 1 && s.timestamp_mark.version == 100,
+        "T13-refusal-preserves-state",
+    ) {
+        ok = false
+    }
     var signers = k[0..3]
     for key in next[0..3] { (mut signers).push(key) }
     let rotated = parsed(writer.root(next, signers, 2, 2000000000), "root")
     if !row(state.advance(mut s, rotated, 101) == "", "T12-dual-threshold") { ok = false }
-    if !row(s.stage == 0 && s.timestamp_mark.version == 0 && s.snapshot_mark.version == 0 && s.targets_mark.version == 0 && s.floor == 101, "T12-fast-forward-reset") { ok = false }
+    if !row(
+        s.stage == 0 &&
+            s.timestamp_mark.version == 0 &&
+            s.snapshot_mark.version == 0 &&
+            s.targets_mark.version == 0 &&
+            s.floor == 101,
+        "T12-fast-forward-reset",
+    ) {
+        ok = false
+    }
     if !chain(mut s, next, 1, 101) { ok = false }
     if !row(state.ready(s, 100) == "clock-before-floor", "T13-ready-clock-floor") { ok = false }
     if !row(state.ready(s, 2000000000) == "expired-root", "T13-expired-root") { ok = false }
@@ -75,46 +112,107 @@ fn main() -> int {
         let saved = store.save(dir, s, 0)
         if !row(saved == "", "T14-save-generation") { print("DETAIL {saved}"); return 1 }
         let loaded = store.load(dir)
-        if !row(loaded.error == "" && loaded.value.root.version == 2 && loaded.value.floor == 101 && state.ready(loaded.value, 101) == "", "T14-load-generation") { ok = false; print("DETAIL {loaded.error}") }
+        if !row(
+            loaded.error == "" &&
+                loaded.value.root.version == 2 &&
+                loaded.value.floor == 101 &&
+                state.ready(loaded.value, 101) == "",
+            "T14-load-generation",
+        ) {
+            ok = false
+            print("DETAIL {loaded.error}")
+        }
         var regressed = copy s
         regressed.stage = 0
         regressed.timestamp = meta.absent("timestamp")
         regressed.snapshot = meta.absent("snapshot")
         regressed.targets = meta.absent("targets")
-        if !row(store.save(dir, regressed, loaded.generation) == "state-invalid", "T19-same-root-stage-regression") { return 1 }
+        if !row(
+            store.save(dir, regressed, loaded.generation) == "state-invalid",
+            "T19-same-root-stage-regression",
+        ) {
+            return 1
+        }
         let original_pointer = io.read("{dir}/current", 1024)
         let original_hash = meta.digest(original_pointer.bytes)
         let candidate_loaded = store.load_candidate(dir, original_pointer.bytes)
-        if !row(candidate_loaded.error == "" && state.ready(candidate_loaded.value, 101) == "", "T19-valid-candidate-load") { ok = false }
+        if !row(
+            candidate_loaded.error == "" && state.ready(candidate_loaded.value, 101) == "",
+            "T19-valid-candidate-load",
+        ) {
+            ok = false
+        }
         let malformed: List[byte] = [123 as byte, 120 as byte]
-        if !row(store.load_candidate(dir, malformed).error == "state-invalid", "T19-malformed-candidate-load") { ok = false }
+        if !row(
+            store.load_candidate(dir, malformed).error == "state-invalid",
+            "T19-malformed-candidate-load",
+        ) {
+            ok = false
+        }
         var lower_clock = copy s
         lower_clock.floor = 100
-        if !row(store.save(dir, lower_clock, loaded.generation) == "clock-before-floor", "T19-candidate-clock-regression") { return 1 }
+        if !row(
+            store.save(dir, lower_clock, loaded.generation) == "clock-before-floor",
+            "T19-candidate-clock-regression",
+        ) {
+            return 1
+        }
         var other_repo = copy s
         other_repo.repository = "file:///different"
-        if !row(store.save(dir, other_repo, loaded.generation) == "repository-mismatch", "T19-candidate-repository-switch") { return 1 }
+        if !row(
+            store.save(dir, other_repo, loaded.generation) == "repository-mismatch",
+            "T19-candidate-repository-switch",
+        ) {
+            return 1
+        }
         var unproven = copy s
         unproven.stage = 0
         unproven.timestamp = meta.absent("timestamp")
         unproven.snapshot = meta.absent("snapshot")
         unproven.targets = meta.absent("targets")
         unproven.timestamp_mark.version += 1
-        if !row(store.save(dir, unproven, loaded.generation) == "state-invalid", "T19-candidate-unproven-high-water") { return 1 }
+        if !row(
+            store.save(dir, unproven, loaded.generation) == "state-invalid",
+            "T19-candidate-unproven-high-water",
+        ) {
+            return 1
+        }
         let unchanged = io.read("{dir}/current", 1024)
-        if !row(meta.digest(unchanged.bytes) == original_hash, "T19-candidates-preserve-accepted-generation") { ok = false }
+        if !row(
+            meta.digest(unchanged.bytes) == original_hash,
+            "T19-candidates-preserve-accepted-generation",
+        ) {
+            ok = false
+        }
         var proposed = copy s
         let third = parsed(writer.root(next, next[0..3], 3, 2000000000), "root")
         if !row(state.advance(mut proposed, third, 102) == "", "T14-proposed-rotation") { return 1 }
         for cut in 1..5 {
             let interrupted = store.test_interrupted_save(dir, proposed, loaded.generation, cut)
-            if !row(interrupted == "state-test-interruption", "T14-interruption-{cut}") { ok = false }
+            if !row(interrupted == "state-test-interruption", "T14-interruption-{cut}") {
+                ok = false
+            }
             let after = store.load(dir)
             if cut < 4 {
                 let pointer = io.read("{dir}/current", 1024)
-                if !row(meta.digest(pointer.bytes) == original_hash && after.error == "" && after.value.root.version == 2 && after.value.floor == 101 && state.ready(after.value, 101) == "", "T14-old-state-survives-cut-{cut}") { ok = false }
-            } else {
-                if !row(after.error == "" && after.value.root.version == 3 && after.value.floor == 102 && after.value.stage == 0, "T14-renamed-state-is-verified") { ok = false }
+                if !row(
+                    meta.digest(pointer.bytes) == original_hash &&
+                        after.error == "" &&
+                        after.value.root.version == 2 &&
+                        after.value.floor == 101 &&
+                        state.ready(after.value, 101) == "",
+                    "T14-old-state-survives-cut-{cut}",
+                ) {
+                    ok = false
+                }
+            } else if !row(
+                after.error == "" &&
+                    after.value.root.version == 3 &&
+                    after.value.floor == 102 &&
+                    after.value.stage == 0,
+                "T14-renamed-state-is-verified",
+            ) {
+                ok = false
             }
         }
     }

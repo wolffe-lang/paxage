@@ -1,4 +1,5 @@
 //! Atomic trust generations. current binds the small header, which binds role files.
+
 use trust_json as json
 use trust_metadata as meta
 use trust_state as state
@@ -8,11 +9,16 @@ use schema
 
 /// A loaded committed generation or a refusal. Caller must hold the directory lock.
 pub struct Loaded { value: state.State, generation: int, error: str }
+
 /// Read and validate the authoritative generation; temporary files are never consulted.
 pub fn load(dir: str) -> Loaded {
     let pointer = io.read("{dir}/current", 1024)
     if pointer.error != "" {
-        return Loaded { value: state.initial(meta.absent("root"), 0), generation: 0, error: "state-invalid" }
+        return Loaded {
+            value: state.initial(meta.absent("root"), 0),
+            generation: 0,
+            error: "state-invalid",
+        }
     }
     load_candidate(dir, pointer.bytes)
 }
@@ -26,29 +32,70 @@ pub fn load_candidate(dir: str, pointer_bytes: List[byte]) -> Loaded {
     if p.error != "" { out.error = "state-invalid"; return out }
     let gen = meta.number(p, 0, "generation")
     let header_hash = meta.text(p, 0, "hash")
-    if gen < 1 || gen > 1000000000 || !schema.digest(header_hash) { out.error = "state-invalid"; return out }
+    if gen < 1 || gen > 1000000000 || !schema.digest(header_hash) {
+        out.error = "state-invalid"
+        return out
+    }
     let base = "{dir}/g{gen}"
     let header = io.read("{base}/state.json", 4096)
-    if header.error != "" || meta.digest(header.bytes) != header_hash { out.error = "state-invalid"; return out }
+    if header.error != "" || meta.digest(header.bytes) != header_hash {
+        out.error = "state-invalid"
+        return out
+    }
     let d = json.parse(header.bytes)
     if d.error != "" { out.error = "state-invalid"; return out }
     let root_input = io.read("{base}/root.json", meta.limit("root"))
-    if root_input.error != "" || meta.digest(root_input.bytes) != meta.text(d, 0, "root_hash") { out.error = "state-invalid"; return out }
+    if root_input.error != "" || meta.digest(root_input.bytes) != meta.text(d, 0, "root_hash") {
+        out.error = "state-invalid"
+        return out
+    }
     let root = meta.parse(root_input.bytes, "root")
-    if root.error != "" || meta.verify(root, root, "root") != "" { out.error = "state-invalid"; return out }
+    if root.error != "" || meta.verify(root, root, "root") != "" {
+        out.error = "state-invalid"
+        return out
+    }
     out.value = state.initial(root, meta.number(d, 0, "floor"))
     out.value.repository = meta.text(d, 0, "repository")
     out.value.stage = meta.number(d, 0, "stage")
     out.value.snapshot_floor = meta.number(d, 0, "snapshot_floor")
     out.value.targets_floor = meta.number(d, 0, "targets_floor")
-    out.value.timestamp_mark = state.Mark { version: meta.number(d, 0, "timestamp_version"), hash: meta.text(d, 0, "timestamp_hash") }
-    out.value.snapshot_mark = state.Mark { version: meta.number(d, 0, "snapshot_version"), hash: meta.text(d, 0, "snapshot_hash") }
-    out.value.targets_mark = state.Mark { version: meta.number(d, 0, "targets_version"), hash: meta.text(d, 0, "targets_hash") }
-    if out.value.floor < 0 || out.value.stage < 0 || out.value.stage > 3 || out.value.snapshot_floor < 0 || out.value.targets_floor < 0 { out.error = "state-invalid"; return out }
-    for mark in [copy out.value.timestamp_mark, copy out.value.snapshot_mark, copy out.value.targets_mark] {
-        if mark.version < 0 || mark.version == 0 && mark.hash != "" || mark.version > 0 && !schema.digest(mark.hash) { out.error = "state-invalid"; return out }
+    out.value.timestamp_mark = state.Mark {
+        version: meta.number(d, 0, "timestamp_version"),
+        hash: meta.text(d, 0, "timestamp_hash"),
     }
-    if out.value.snapshot_floor < out.value.snapshot_mark.version || out.value.targets_floor < out.value.targets_mark.version { out.error = "state-invalid"; return out }
+    out.value.snapshot_mark = state.Mark {
+        version: meta.number(d, 0, "snapshot_version"),
+        hash: meta.text(d, 0, "snapshot_hash"),
+    }
+    out.value.targets_mark = state.Mark {
+        version: meta.number(d, 0, "targets_version"),
+        hash: meta.text(d, 0, "targets_hash"),
+    }
+    if out.value.floor < 0 ||
+        out.value.stage < 0 ||
+        out.value.stage > 3 ||
+        out.value.snapshot_floor < 0 ||
+        out.value.targets_floor < 0 {
+        out.error = "state-invalid"
+        return out
+    }
+    for mark in [
+        copy out.value.timestamp_mark,
+        copy out.value.snapshot_mark,
+        copy out.value.targets_mark,
+    ] {
+        if mark.version < 0 ||
+            mark.version == 0 && mark.hash != "" ||
+            mark.version > 0 && !schema.digest(mark.hash) {
+            out.error = "state-invalid"
+            return out
+        }
+    }
+    if out.value.snapshot_floor < out.value.snapshot_mark.version ||
+        out.value.targets_floor < out.value.targets_mark.version {
+        out.error = "state-invalid"
+        return out
+    }
     var step = 0
     for role in ["timestamp", "snapshot", "targets"] {
         step += 1
@@ -56,25 +103,45 @@ pub fn load_candidate(dir: str, pointer_bytes: List[byte]) -> Loaded {
         let input = io.read("{base}/{role}.json", meta.limit(role))
         if input.error != "" { out.error = "state-invalid"; return out }
         let m = meta.parse(input.bytes, role)
-        if m.error != "" || meta.verify(m, root, role) != "" || m.expires <= out.value.floor || root.expires <= out.value.floor { out.error = "state-invalid"; return out }
+        if m.error != "" ||
+            meta.verify(m, root, role) != "" ||
+            m.expires <= out.value.floor ||
+            root.expires <= out.value.floor {
+            out.error = "state-invalid"
+            return out
+        }
         var mark = copy out.value.timestamp_mark
         if role == "snapshot" { mark = copy out.value.snapshot_mark }
         if role == "targets" { mark = copy out.value.targets_mark }
-        if m.version != mark.version || meta.digest(input.bytes) != mark.hash { out.error = "state-invalid"; return out }
+        if m.version != mark.version || meta.digest(input.bytes) != mark.hash {
+            out.error = "state-invalid"
+            return out
+        }
         if role == "timestamp" {
-            if m.entries[0].version != out.value.snapshot_floor { out.error = "state-invalid"; return out }
+            if m.entries[0].version != out.value.snapshot_floor {
+                out.error = "state-invalid"
+                return out
+            }
             out.value.timestamp = m
         } else if role == "snapshot" {
-            if state.binding(m, out.value.timestamp.entries[0]) != "" || m.entries[0].version != out.value.targets_floor { out.error = "state-invalid"; return out }
+            if state.binding(m, out.value.timestamp.entries[0]) != "" ||
+                m.entries[0].version != out.value.targets_floor {
+                out.error = "state-invalid"
+                return out
+            }
             out.value.snapshot = m
         } else {
-            if state.binding(m, out.value.snapshot.entries[0]) != "" { out.error = "state-invalid"; return out }
+            if state.binding(m, out.value.snapshot.entries[0]) != "" {
+                out.error = "state-invalid"
+                return out
+            }
             out.value.targets = m
         }
     }
     out.generation = gen
     out
 }
+
 /// Test-only deterministic write interruption, never exposed by the CLI.
 /// Cuts: 1 partial root file, 2 synced generation, 3 synced pointer, 4 renamed pointer.
 /// Each returns state-test-interruption; old or new committed state remains verifiable.
@@ -152,7 +219,9 @@ fn save_inner(dir: str, s: state.State, previous: int, cut: int) -> str {
         let staged = io.create("{dir}/current.{generation}.next", pointer_bytes)
         if staged != "" { return staged }
         if cut == 4 {
-            fs_rename("{dir}/current.{generation}.next", "{dir}/current") else |_| { return "state-rename" }
+            fs_rename("{dir}/current.{generation}.next", "{dir}/current") else |_| {
+                return "state-rename"
+            }
         }
         return "state-test-interruption"
     }

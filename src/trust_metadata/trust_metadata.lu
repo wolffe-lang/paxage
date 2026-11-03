@@ -1,4 +1,5 @@
 //! T4-T10 metadata schemas and signature authorization; no I/O or implicit trust.
+
 use trust_json as json
 use schema
 use version as package_version
@@ -8,33 +9,59 @@ use std.x.crypto.curve25519 as curve
 
 /// Public key authorized by root metadata.
 pub struct Key { id: str, public: List[byte] }
+
 /// Distinct key identifiers and the threshold assigned to a top-level role.
 pub struct Role { name: str, keys: List[str], threshold: int }
+
 /// Signed metadata reference or target entry.
-pub struct Entry { path: str, digest: str, length: int, version: int, name: str, package_version: str, arch: str, kind: str }
+pub struct Entry {
+    path: str,
+    digest: str,
+    length: int,
+    version: int,
+    name: str,
+    package_version: str,
+    arch: str,
+    kind: str,
+}
+
 /// Parsed but not yet authenticated envelope. No consumer may trust it before verify.
-pub struct Meta { data: json.Data, wire: List[byte], role: str, version: int, expires: int, keys: List[Key], roles: List[Role], entries: List[Entry], error: str }
+pub struct Meta {
+    data: json.Data,
+    wire: List[byte],
+    role: str,
+    version: int,
+    expires: int,
+    keys: List[Key],
+    roles: List[Role],
+    entries: List[Entry],
+    error: str,
+}
 
 /// Lowercase SHA-256 of exactly the supplied bytes, never a reserialization.
 pub fn digest(bytes: List[byte]) -> str { sha2.to_hex(sha2.sum256(bytes)) }
+
 /// Read an immediate string field; missing or wrong-type is the empty string.
 pub fn text(d: json.Data, parent: int, name: str) -> str {
     let id = json.field(d, parent, name)
     if id < 0 || d.nodes[id].kind != "string" { return "" }
     d.nodes[id].text
 }
+
 /// Read an immediate integer field; missing or wrong-type is -1.
 pub fn number(d: json.Data, parent: int, name: str) -> int {
     let id = json.field(d, parent, name)
     if id < 0 || d.nodes[id].kind != "int" { return -1 }
     d.nodes[id].number
 }
+
 fn required(d: json.Data, parent: int, name: str, kind: str) -> str {
     let id = json.field(d, parent, name)
     if id < 0 { return "missing-field" }
     if d.nodes[id].kind != kind { return "field-type" }
     ""
 }
+
 fn digits(b: List[byte], start: int, end: int) -> int {
     var n = 0
     for i in start..end {
@@ -44,40 +71,66 @@ fn digits(b: List[byte], start: int, end: int) -> int {
     }
     n
 }
+
 fn leap(year: int) -> bool { year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) }
+
 fn month_days(year: int, month: int) -> int {
     if month == 2 { if leap(year) { return 29 }; return 28 }
     if month == 4 || month == 6 || month == 9 || month == 11 { return 30 }
     31
 }
+
 /// Parse exact TUF UTC seconds, years 1970..9999; -1 means invalid.
 pub fn utc(text: str) -> int {
     let b = text.bytes()
     if b.len != 20 { return -1 }
-    if b[4] != 45 as byte || b[7] != 45 as byte || b[10] != 84 as byte || b[13] != 58 as byte || b[16] != 58 as byte || b[19] != 90 as byte { return -1 }
+    if b[4] != 45 as byte ||
+        b[7] != 45 as byte ||
+        b[10] != 84 as byte ||
+        b[13] != 58 as byte ||
+        b[16] != 58 as byte ||
+        b[19] != 90 as byte {
+        return -1
+    }
     let y = digits(b, 0, 4)
     let m = digits(b, 5, 7)
     let d = digits(b, 8, 10)
     let h = digits(b, 11, 13)
     let minute = digits(b, 14, 16)
     let second = digits(b, 17, 19)
-    if y < 1970 || m < 1 || m > 12 || d < 1 || d > month_days(y, m) || h < 0 || h > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 { return -1 }
+    if y < 1970 ||
+        m < 1 ||
+        m > 12 ||
+        d < 1 ||
+        d > month_days(y, m) ||
+        h < 0 ||
+        h > 23 ||
+        minute < 0 ||
+        minute > 59 ||
+        second < 0 ||
+        second > 59 {
+        return -1
+    }
     var days = 0
     for year in 1970..y { days += 365; if leap(year) { days += 1 } }
     for month in 1..m { days += month_days(y, month) }
     (days + d - 1) * 86400 + h * 3600 + minute * 60 + second
 }
+
 /// Validate a single logical target basename under T10.
 pub fn logical(path: str) -> bool {
     if path.len == 0 || path.len > 512 || path == "." { return false }
     let b = path.bytes()
     for i in 0..b.len {
         let c = b[i] as int
-        if c < 32 || c == 127 || c == 47 || c == 92 || c == 37 || c == 63 || c == 35 { return false }
+        if c < 32 || c == 127 || c == 47 || c == 92 || c == 37 || c == 63 || c == 35 {
+            return false
+        }
         if i > 0 && c == 46 && b[i - 1] == 46 as byte { return false }
     }
     true
 }
+
 /// Client byte ceiling for the named top-level role; zero means unsupported.
 pub fn limit(role: str) -> int {
     if role == "timestamp" { return 16384 }
@@ -85,10 +138,13 @@ pub fn limit(role: str) -> int {
     if role == "targets" { return 1048576 }
     0
 }
+
 fn root(mut m: Meta, signed: int) -> str {
     let d = copy m.data
     let consistent = json.field(d, signed, "consistent_snapshot")
-    if consistent < 0 || d.nodes[consistent].kind != "bool" || d.nodes[consistent].number != 1 { return "consistent-snapshot-required" }
+    if consistent < 0 || d.nodes[consistent].kind != "bool" || d.nodes[consistent].number != 1 {
+        return "consistent-snapshot-required"
+    }
     let ki = json.field(d, signed, "keys")
     let ri = json.field(d, signed, "roles")
     if ki < 0 || ri < 0 { return "missing-field" }
@@ -99,7 +155,9 @@ fn root(mut m: Meta, signed: int) -> str {
     for i in keynodes {
         let n = copy d.nodes[i]
         if n.kind != "object" { return "field-type" }
-        if text(d, i, "keytype") != "ed25519" || text(d, i, "scheme") != "ed25519" { return "unsupported-scheme" }
+        if text(d, i, "keytype") != "ed25519" || text(d, i, "scheme") != "ed25519" {
+            return "unsupported-scheme"
+        }
         let value = json.field(d, i, "keyval")
         if value < 0 || d.nodes[value].kind != "object" { return "field-type" }
         let public = text(d, value, "public")
@@ -135,6 +193,7 @@ fn root(mut m: Meta, signed: int) -> str {
     }
     ""
 }
+
 fn entries(mut m: Meta, signed: int) -> str {
     let d = copy m.data
     var field_name = "meta"
@@ -152,7 +211,16 @@ fn entries(mut m: Meta, signed: int) -> str {
     for i in children {
         let n = copy d.nodes[i]
         if n.kind != "object" { return "field-type" }
-        var e = Entry { path: n.key, digest: "", length: number(d, i, "length"), version: number(d, i, "version"), name: "", package_version: "", arch: "", kind: "" }
+        var e = Entry {
+            path: n.key,
+            digest: "",
+            length: number(d, i, "length"),
+            version: number(d, i, "version"),
+            name: "",
+            package_version: "",
+            arch: "",
+            kind: "",
+        }
         let hashnode = json.field(d, i, "hashes")
         if hashnode < 0 || d.nodes[hashnode].kind != "object" { return "metadata-reference" }
         let hashes = json.children(d, hashnode)
@@ -166,7 +234,11 @@ fn entries(mut m: Meta, signed: int) -> str {
             e.package_version = text(d, custom, "version")
             e.arch = text(d, custom, "architecture")
             e.kind = text(d, custom, "kind")
-            if !schema.identity(e.name) || !schema.identity(e.arch) || !package_version.valid(e.package_version) { return "target-identity" }
+            if !schema.identity(e.name) ||
+                !schema.identity(e.arch) ||
+                !package_version.valid(e.package_version) {
+                return "target-identity"
+            }
             var bit = 0
             var suffix = e.kind
             if e.kind == "manifest" { bit = 1 }
@@ -191,9 +263,20 @@ fn entries(mut m: Meta, signed: int) -> str {
     for pair in groups.pairs() { if pair.1 != 7 { return "target-incomplete" } }
     ""
 }
+
 /// Absent role metadata, used only for an incomplete trust chain.
 pub fn absent(role: str) -> Meta {
-    Meta { data: json.Data { nodes: List[json.Node](), error: "" }, wire: List[byte](), role, version: 0, expires: 0, keys: List[Key](), roles: List[Role](), entries: List[Entry](), error: "" }
+    Meta {
+        data: json.Data { nodes: List[json.Node](), error: "" },
+        wire: List[byte](),
+        role,
+        version: 0,
+        expires: 0,
+        keys: List[Key](),
+        roles: List[Role](),
+        entries: List[Entry](),
+        error: "",
+    }
 }
 
 /// Parse a role envelope without claiming authentication. Bounds precede parsing.
@@ -226,18 +309,25 @@ pub fn parse(bytes: List[byte], role: str) -> Meta {
     var seen = Map[str, bool]()
     for i in signatures {
         let id = text(d, i, "keyid")
-        if d.nodes[i].kind != "object" || !schema.digest(id) || required(d, i, "sig", "string") != "" { m.error = "field-type"; return m }
+        if d.nodes[i].kind != "object" ||
+            !schema.digest(id) ||
+            required(d, i, "sig", "string") != "" {
+            m.error = "field-type"
+            return m
+        }
         if (seen[id] else false) { m.error = "duplicate-signature"; return m }
         seen[id] = true
     }
     if role == "root" { m.error = root(mut m, si) } else { m.error = entries(mut m, si) }
     m
 }
+
 /// Return a root role index, or -1 when not authorized.
 pub fn role_index(root: Meta, role: str) -> int {
     for i in 0..root.roles.len { if root.roles[i].name == role { return i } }
     -1
 }
+
 /// Verify distinct authorized signatures with std's strict small-order policy.
 pub fn verify(m: Meta, root: Meta, role: str) -> str {
     if m.error != "" { return m.error }
@@ -257,7 +347,9 @@ pub fn verify(m: Meta, root: Meta, role: str) -> str {
         let signature = text(m.data, i, "sig")
         if signature.len != 128 { return "signature-length" }
         for b in signature.bytes() {
-            if !(b >= 48 as byte && b <= 57 as byte || b >= 97 as byte && b <= 102 as byte) { return "bad-hex" }
+            if !(b >= 48 as byte && b <= 57 as byte || b >= 97 as byte && b <= 102 as byte) {
+                return "bad-hex"
+            }
         }
         let sig = hex.decode(signature) else List[byte]()
         if sig.len != 64 { return "bad-hex" }
@@ -268,6 +360,7 @@ pub fn verify(m: Meta, root: Meta, role: str) -> str {
     if count < root.roles[ri].threshold { return "signature-threshold" }
     ""
 }
+
 /// Compare role key sets, independent of key-list ordering; thresholds are not rotations.
 pub fn keys_changed(old: Meta, new: Meta, role: str) -> bool {
     let oi = role_index(old, role)

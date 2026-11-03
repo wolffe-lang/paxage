@@ -4,22 +4,27 @@ fn row(ok: bool, name: str) -> bool {
     if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
     ok
 }
+
 fn expect(text: str, error: str, name: str) -> bool {
     let bytes = text.bytes()
     let d = json.parse(bytes)
     if d.error != error { print("DETAIL {name} expected={error} actual={d.error}") }
     row(d.error == error, name)
 }
+
 fn signed(text: str, error: str, name: str) -> bool {
     let bytes = text.bytes()
     let d = json.parse(bytes)
     let actual = json.signed_error(d)
     if actual != error {
         print("DETAIL {name} expected={error} actual={actual} input={text}")
-        for n in d.nodes { print("NODE {n.kind} {n.key} canonical={n.canonical} span={n.start}..{n.end}") }
+        for n in d.nodes {
+            print("NODE {n.kind} {n.key} canonical={n.canonical} span={n.start}..{n.end}")
+        }
     }
     row(actual == error, name)
 }
+
 fn main() -> int {
     // Construct Unicode escapes as explicit runtime bytes. The initial test
     // source accidentally contained decoded letters, not the intended wire escapes.
@@ -28,7 +33,13 @@ fn main() -> int {
     var ok = true
     if !expect(r#"{"a":[0,true,false,null,"é"],"z":{}}"#, "", "T2-valid-shapes") { ok = false }
     if !expect(r#"{"a":1,"a":2}"#, "duplicate-key", "T2-duplicate-key") { ok = false }
-    if !expect(r#"{"a":1,""# + slash + r#"u0061":2}"#, "duplicate-key", "T2-decoded-duplicate-key") { ok = false }
+    if !expect(
+        r#"{"a":1,""# + slash + r#"u0061":2}"#,
+        "duplicate-key",
+        "T2-decoded-duplicate-key",
+    ) {
+        ok = false
+    }
     if !expect("1.5", "float", "T2-float") { ok = false }
     if !expect("1e2", "exponent", "T2-exponent") { ok = false }
     if !expect("-1", "negative-integer", "T2-negative-integer") { ok = false }
@@ -44,29 +55,55 @@ fn main() -> int {
     if !expect("\"" + "a".repeat(65536) + "\"", "", "T2-string-max") { ok = false }
     if !expect("\"" + "a".repeat(65537) + "\"", "string-limit", "T2-string-limit") { ok = false }
     if !expect("[".repeat(16) + "0" + "]".repeat(16), "", "T2-depth-max") { ok = false }
-    if !expect("[".repeat(17) + "0" + "]".repeat(17), "depth-limit", "T2-depth-limit") { ok = false }
+    if !expect("[".repeat(17) + "0" + "]".repeat(17), "depth-limit", "T2-depth-limit") {
+        ok = false
+    }
     let many = "[" + "0,".repeat(4095) + "0]"
     if !expect(many, "", "T2-member-max") { ok = false }
     if !expect("[" + "0,".repeat(4096) + "0]", "member-limit", "T2-member-limit") { ok = false }
-    if !expect("[" + many + "," + many + "," + many + "," + many + "]", "node-limit", "T2-node-limit") { ok = false }
+    if !expect(
+        "[" + many + "," + many + "," + many + "," + many + "]",
+        "node-limit",
+        "T2-node-limit",
+    ) {
+        ok = false
+    }
     if !expect(" ".repeat(1048577), "byte-limit", "T2-byte-limit") { ok = false }
     let invalid: List[byte] = [34 as byte, 192 as byte, 175 as byte, 34 as byte]
     if !row(json.parse(invalid).error == "bad-utf8", "T2-overlong-utf8") { ok = false }
     let surrogate: List[byte] = [34 as byte, 237 as byte, 160 as byte, 128 as byte, 34 as byte]
     if !row(json.parse(surrogate).error == "bad-utf8", "T2-surrogate-utf8") { ok = false }
-    if !signed(r#" { "signed" : {"a":1,"b":[true,null,"é"]}, "signatures":[] } "#, "", "T3-canonical-span") { ok = false }
+    if !signed(
+        r#" { "signed" : {"a":1,"b":[true,null,"é"]}, "signatures":[] } "#,
+        "",
+        "T3-canonical-span",
+    ) {
+        ok = false
+    }
     if !signed(r#"{"signed":{"b":1,"a":2}}"#, "non-canonical-signed", "T3-key-order") { ok = false }
     if !signed(r#"{"signed":{"a": 1}}"#, "non-canonical-signed", "T3-whitespace") { ok = false }
-    if !signed(r#"{"signed":{"a":""# + slash + r#"u0061"}}"#, "non-canonical-signed", "T3-escaped-scalar") { ok = false }
-    if !signed(r#"{"signed":{"a":"\n"}}"#, "non-canonical-signed", "T3-escaped-control") { ok = false }
-    if !signed(r#"{"signed":{"a":{"z":1,"a":2}}}"#, "non-canonical-signed", "T3-nested-key-order") { ok = false }
+    if !signed(
+        r#"{"signed":{"a":""# + slash + r#"u0061"}}"#,
+        "non-canonical-signed",
+        "T3-escaped-scalar",
+    ) {
+        ok = false
+    }
+    if !signed(r#"{"signed":{"a":"\n"}}"#, "non-canonical-signed", "T3-escaped-control") {
+        ok = false
+    }
+    if !signed(r#"{"signed":{"a":{"z":1,"a":2}}}"#, "non-canonical-signed", "T3-nested-key-order") {
+        ok = false
+    }
     if !signed(r#"{"signed":{"a":"\"\\"}}"#, "", "T3-required-escapes") { ok = false }
     let source = r#" {"signed":{"a":1},"signatures":[]} "#
     let source_bytes = source.bytes()
     let d = json.parse(source_bytes)
     let id = json.field(d, 0, "signed")
     var span_ok = false
-    if d.error == "" && id >= 0 { span_ok = source[d.nodes[id].start..d.nodes[id].end] == r#"{"a":1}"# }
+    if d.error == "" && id >= 0 {
+        span_ok = source[d.nodes[id].start..d.nodes[id].end] == r#"{"a":1}"#
+    }
     if !row(span_ok, "T3-exact-source-span") { ok = false }
     if ok { 0 } else { 1 }
 }

@@ -1,4 +1,5 @@
 //! File-only bootstrap/update/fetch. All mutations stay in caller-named state/cache.
+
 use trust_options as options
 use trust_metadata as meta
 use trust_state as state
@@ -22,6 +23,7 @@ fn bound(repo: str, role: str, ref: meta.Entry) -> meta.Meta {
     if meta.digest(input.bytes) != ref.digest { m.error = "metadata-hash"; return m }
     meta.parse(input.bytes, role)
 }
+
 fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
     let pinned = options.flag_value(o, "--root")
     if pinned == "" { return "bootstrap-unpinned" }
@@ -40,6 +42,7 @@ fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
     fs_sync_dir("{dir}/..") else |_| { return "state-dir-sync" }
     ""
 }
+
 fn update(repo: str, dir: str, now: int) -> str {
     var loaded = store.load(dir)
     if loaded.error != "" { return loaded.error }
@@ -74,7 +77,9 @@ fn update(repo: str, dir: str, now: int) -> str {
     if input.error != "" { return "timestamp: {input.error}" }
     let timestamp = meta.parse(input.bytes, "timestamp")
     if timestamp.error != "" { return "timestamp: {timestamp.error}" }
-    if loaded.value.stage == 3 && timestamp.version == loaded.value.timestamp_mark.version && meta.digest(input.bytes) == loaded.value.timestamp_mark.hash {
+    if loaded.value.stage == 3 &&
+        timestamp.version == loaded.value.timestamp_mark.version &&
+        meta.digest(input.bytes) == loaded.value.timestamp_mark.hash {
         let ready = state.ready(loaded.value, now)
         if ready != "" { return ready }
         loaded.value.floor = now
@@ -103,6 +108,7 @@ fn update(repo: str, dir: str, now: int) -> str {
     }
     state.ready(loaded.value, now)
 }
+
 fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -> str {
     let logical = options.flag_value(o, "--target")
     if !meta.logical(logical) { return "logical-name" }
@@ -120,7 +126,9 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         var buildinfo = -1
         for i in 0..s.targets.entries.len {
             let e = copy s.targets.entries[i]
-            if e.name == target.name && e.package_version == target.package_version && e.arch == target.arch {
+            if e.name == target.name &&
+                e.package_version == target.package_version &&
+                e.arch == target.arch {
                 if e.kind == "manifest" { manifest = i }
                 if e.kind == "buildinfo" { buildinfo = i }
             }
@@ -135,16 +143,38 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         if d.error != "" { return d.error }
         let valid = schema.manifest(d, 0)
         if valid != "" { return valid }
-        if schema.string(d, 0, "name") != target.name || schema.string(d, 0, "version") != target.package_version || schema.string(d, 0, "arch") != target.arch { return "target-identity" }
-        if schema.string(d, 0, "buildinfo") != s.targets.entries[buildinfo].digest { return "buildinfo-hash" }
+        if schema.string(d, 0, "name") != target.name ||
+            schema.string(d, 0, "version") != target.package_version ||
+            schema.string(d, 0, "arch") != target.arch {
+            return "target-identity"
+        }
+        if schema.string(d, 0, "buildinfo") != s.targets.entries[buildinfo].digest {
+            return "buildinfo-hash"
+        }
         let provenance = cache.fetch(repo, cache_dir, s.targets.entries[buildinfo])
         if provenance != "" { return provenance }
-        let arguments = ["stage", copy object, "--length", "{target.length}", "--sha256", copy target.digest, "--manifest", "{cache_dir}/objects/sha256/{entry.digest}", "--manifest-sha256", entry.digest, "--manifest-length", "{entry.length}", "--into", into]
+        let arguments = [
+            "stage",
+            copy object,
+            "--length",
+            "{target.length}",
+            "--sha256",
+            copy target.digest,
+            "--manifest",
+            "{cache_dir}/objects/sha256/{entry.digest}",
+            "--manifest-sha256",
+            entry.digest,
+            "--manifest-length",
+            "{entry.length}",
+            "--into",
+            into,
+        ]
         if payload_cli.run(arguments) != 0 { return "stage-failed" }
     }
     print("object={object} sha256={target.digest} length={target.length}")
     ""
 }
+
 fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
     let ready = state.ready(s, now)
     if ready != "" { return ready }
@@ -160,6 +190,7 @@ fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
     fs_close(lock) else |_| { error = "cache-close" }
     error
 }
+
 /// Execute a file-only client command while holding its private trust-directory lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
     let raw = options.file_path(options.flag_value(o, "--repo"))
@@ -179,14 +210,22 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
     }
     let lock = io.lock(dir)
     if lock < 0 { return "state-locked" }
-    if verb == "bootstrap" { error = bootstrap(repo, dir, o, now)
-    } else if verb == "update" { error = update(repo, dir, now)
+    if verb == "bootstrap" {
+        error = bootstrap(repo, dir, o, now)
+    } else if verb == "update" {
+        error = update(repo, dir, now)
     } else if verb == "fetch" {
         let loaded = store.load(dir)
-        if loaded.error != "" { error = loaded.error
-        } else if loaded.value.repository != repo { error = "repository-mismatch"
-        } else { error = fetch(repo, o, loaded.value, now) }
-    } else { error = "unsupported-client-verb" }
+        if loaded.error != "" {
+            error = loaded.error
+        } else if loaded.value.repository != repo {
+            error = "repository-mismatch"
+        } else {
+            error = fetch(repo, o, loaded.value, now)
+        }
+    } else {
+        error = "unsupported-client-verb"
+    }
     fs_close(lock) else |_| { error = "state-close" }
     error
 }

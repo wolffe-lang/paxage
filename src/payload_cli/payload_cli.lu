@@ -76,7 +76,16 @@ pub fn inventory(es: List[payload.Entry], as_json: bool) -> str {
     ""
 }
 
-fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_json: bool, manifest_hash: str, manifest_length: int) -> int {
+fn reader(
+    fd: int,
+    length: int,
+    verb: str,
+    manifest_path: str,
+    root: str,
+    as_json: bool,
+    manifest_hash: str,
+    manifest_length: int,
+) -> int {
     let offset = fs_seek(fd, 0, 0) else |_| { return fail("payload-seek") }
     if offset != 0 { return fail("payload-seek") }
     var s = payload.Stream { fd, pos: 0, length, error: "" }
@@ -166,8 +175,16 @@ pub fn run(args: List[str]) -> int {
         }
         i += 2
     }
-    if (manifest_hash_set || manifest_length_set) && (!manifest_hash_set || !manifest_length_set || manifest_length < 0 || !schema.digest(manifest_hash)) {
-        eprint("larder: stage manifest binding requires --manifest-sha256 HEX and --manifest-length N")
+    if (manifest_hash_set || manifest_length_set) &&
+        (
+            !manifest_hash_set ||
+                !manifest_length_set ||
+                manifest_length < 0 ||
+                !schema.digest(manifest_hash)
+        ) {
+        eprint(
+            "larder: stage manifest binding requires --manifest-sha256 HEX and --manifest-length N",
+        )
         return 2
     }
     if path == "" ||
@@ -186,7 +203,16 @@ pub fn run(args: List[str]) -> int {
         if hash.error != "" { fs_close(fd) else |_| {}; return fail(hash.error) }
         if hash.hash != expected { fs_close(fd) else |_| {}; return fail("payload-digest") }
     }
-    let code = reader(fd, length, verb, manifest_path, root, as_json, manifest_hash, manifest_length)
+    let code = reader(
+        fd,
+        length,
+        verb,
+        manifest_path,
+        root,
+        as_json,
+        manifest_hash,
+        manifest_length,
+    )
     fs_close(fd) else |_| { return fail("payload-close") }
     code
 }

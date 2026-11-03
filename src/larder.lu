@@ -23,8 +23,12 @@ fn bad_usage(message: str) -> int { eprint("larder: {message}\n{usage()}"); 2 }
 
 fn fail(message: str) -> int {
     if message == "state-invalid" || message.ends_with(": state-invalid") {
-        eprint("larder: {message}; re-bootstrap into a new, empty state directory from a caller-supplied pinned root")
-    } else { eprint("larder: {message}") }
+        eprint(
+            "larder: {message}; re-bootstrap into a new, empty state directory from a caller-supplied pinned root",
+        )
+    } else {
+        eprint("larder: {message}")
+    }
     1
 }
 
@@ -265,7 +269,12 @@ fn trust(args: List[str]) -> int {
     if verb == "repo" {
         if args.len < 2 { return bad_usage("repo needs keygen, init, rotate or publish") }
         operation = args[1]
-        if operation != "keygen" && operation != "init" && operation != "rotate" && operation != "publish" { return fail("unsupported-repo-verb") }
+        if operation != "keygen" &&
+            operation != "init" &&
+            operation != "rotate" &&
+            operation != "publish" {
+            return fail("unsupported-repo-verb")
+        }
         start = 2
     }
     let o = trust_options.parse(args, start)
@@ -273,8 +282,11 @@ fn trust(args: List[str]) -> int {
     let now = trust_options.now(o)
     if now < 0 { return fail("metadata-time") }
     var error = ""
-    if verb == "repo" { error = trust_repo.run(operation, o, now)
-    } else { error = trust_client.run(verb, o, now) }
+    if verb == "repo" {
+        error = trust_repo.run(operation, o, now)
+    } else {
+        error = trust_client.run(verb, o, now)
+    }
     if error != "" { return fail(error) }
     if verb == "repo" { print("repo {operation} ok") } else { print("{verb} ok") }
     0
@@ -290,7 +302,9 @@ fn main() -> int {
     for mutating in ["install", "remove", "upgrade", "sync"] {
         if verb == mutating { eprint("larder: {verb} refused: mutation arrives in pm04"); return 6 }
     }
-    if verb == "repo" || verb == "bootstrap" || verb == "update" || verb == "fetch" { return trust(a) }
+    if verb == "repo" || verb == "bootstrap" || verb == "update" || verb == "fetch" {
+        return trust(a)
+    }
     if verb == "recover-offline" { return fail("offline-recovery-refused") }
     if (verb == "--help" || verb == "help") && a.len == 1 { print(usage()); return 0 }
     if (verb == "version" || verb == "--version") && a.len == 1 {

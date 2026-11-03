@@ -1,14 +1,17 @@
 use trust_metadata as meta
+
 fn row(ok: bool, name: str) -> bool {
     if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
     ok
 }
+
 fn expect(text: str, role: str, error: str, name: str) -> bool {
     let bytes = text.bytes()
     let m = meta.parse(bytes, role)
     if m.error != error { print("DETAIL expected={error} actual={m.error}") }
     row(m.error == error, name)
 }
+
 fn main() -> int {
     var ok = true
     if !row(meta.utc("1970-01-01T00:00:00Z") == 0, "T4-epoch") { ok = false }
@@ -23,11 +26,41 @@ fn main() -> int {
     let good = r#"{"signatures":[],"signed":{"_type":"timestamp","expires":"2030-01-01T00:00:00Z","meta":{"snapshot.json":{"hashes":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"length":100,"version":1}},"spec_version":"1.0.37","version":1}}"#
     if !expect(good, "timestamp", "", "T7-timestamp-schema") { ok = false }
     if !expect(good, "snapshot", "role-type", "T4-role-type") { ok = false }
-    if !expect(r#"{"signatures":[],"signed":{}}"#, "root", "missing-field", "T4-missing-field") { ok = false }
-    if !expect(r#"{"signatures":[],"signed":{"_type":"root","expires":"2030-01-01T00:00:00Z","spec_version":"2.0.0","version":1}}"#, "root", "spec-version", "T4-spec-version") { ok = false }
-    if !expect(r#"{"signatures":[],"signed":{"_type":"timestamp","expires":"2030-01-01T00:00:00Z","meta":{},"spec_version":"1.0.37","version":1}}"#, "timestamp", "metadata-reference", "T7-missing-snapshot") { ok = false }
-    if !expect(r#"{"signatures":[],"signed":{"_type":"targets","delegations":{},"expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#, "targets", "unsupported-delegations", "T9-delegations") { ok = false }
-    if !expect(r#"{"signatures":[],"signed":{"_type":"targets","expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#, "targets", "", "T9-empty-targets") { ok = false }
+    if !expect(r#"{"signatures":[],"signed":{}}"#, "root", "missing-field", "T4-missing-field") {
+        ok = false
+    }
+    if !expect(
+        r#"{"signatures":[],"signed":{"_type":"root","expires":"2030-01-01T00:00:00Z","spec_version":"2.0.0","version":1}}"#,
+        "root",
+        "spec-version",
+        "T4-spec-version",
+    ) {
+        ok = false
+    }
+    if !expect(
+        r#"{"signatures":[],"signed":{"_type":"timestamp","expires":"2030-01-01T00:00:00Z","meta":{},"spec_version":"1.0.37","version":1}}"#,
+        "timestamp",
+        "metadata-reference",
+        "T7-missing-snapshot",
+    ) {
+        ok = false
+    }
+    if !expect(
+        r#"{"signatures":[],"signed":{"_type":"targets","delegations":{},"expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#,
+        "targets",
+        "unsupported-delegations",
+        "T9-delegations",
+    ) {
+        ok = false
+    }
+    if !expect(
+        r#"{"signatures":[],"signed":{"_type":"targets","expires":"2030-01-01T00:00:00Z","spec_version":"1.0.37","targets":{},"version":1}}"#,
+        "targets",
+        "",
+        "T9-empty-targets",
+    ) {
+        ok = false
+    }
     var signatures = ""
     for i in 0..17 {
         if i > 0 { signatures += "," }
