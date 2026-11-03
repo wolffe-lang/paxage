@@ -1,4 +1,4 @@
-//! T2/T3 byte reader contract; red-first placeholder.
+//! T2/T3 strict byte reader. No std.json and no compiler parser.
 /// Flat JSON value with original byte span and subtree-end index.
 pub struct Node {
     parent: int,
@@ -13,17 +13,253 @@ pub struct Node {
 }
 /// Bounded parse result; nodes must not be consumed on any error.
 pub struct Data { nodes: List[Node], error: str }
-/// Parse T2 bytes; the red-first placeholder refuses unimplemented input.
+struct Parser {
+    bytes: List[byte], pos: int, nodes: List[Node], error: str,
+    string_canonical: bool,
+}
+
+/// Shortest-form UTF-8 scalar validation without constructing strings.
+pub fn utf8(bytes: List[byte]) -> bool {
+    var i = 0
+    while i < bytes.len {
+        let a = bytes[i] as int
+        if a < 128 { i += 1; continue }
+        var width = 0
+        if a >= 194 && a <= 223 { width = 2 }
+        if a >= 224 && a <= 239 { width = 3 }
+        if a >= 240 && a <= 244 { width = 4 }
+        if width == 0 || width > bytes.len - i { return false }
+        let b = bytes[i + 1] as int
+        if b < 128 || b > 191 { return false }
+        if a == 224 && b < 160 || a == 237 && b >= 160 { return false }
+        if a == 240 && b < 144 || a == 244 && b >= 144 { return false }
+        for j in 2..width {
+            let c = bytes[i + j] as int
+            if c < 128 || c > 191 { return false }
+        }
+        i += width
+    }
+    true
+}
+fn peek(p: Parser) -> int {
+    if p.pos >= p.bytes.len { return -1 }
+    p.bytes[p.pos] as int
+}
+fn space(mut p: Parser) -> bool {
+    let start = p.pos
+    while peek(p) == 32 || peek(p) == 9 || peek(p) == 10 || peek(p) == 13 { p.pos += 1 }
+    p.pos == start
+}
+fn digit(c: int) -> bool { c >= 48 && c <= 57 }
+fn hex(c: int) -> int {
+    if digit(c) { return c - 48 }
+    if c >= 65 && c <= 70 { return c - 55 }
+    if c >= 97 && c <= 102 { return c - 87 }
+    -1
+}
+fn hex4(mut p: Parser) -> int {
+    var n = 0
+    for _i in 0..4 {
+        let d = hex(peek(p))
+        if d < 0 { p.error = "bad-escape"; return 0 }
+        n = n * 16 + d
+        p.pos += 1
+    }
+    n
+}
+fn codepoint(mut p: Parser) -> int {
+    let first = hex4(mut p)
+    if p.error != "" { return 0 }
+    if first < 55296 || first > 57343 { return first }
+    if first >= 56320 { p.error = "bad-surrogate"; return 0 }
+    if peek(p) != 92 { p.error = "bad-surrogate"; return 0 }
+    p.pos += 1
+    if peek(p) != 117 { p.error = "bad-surrogate"; return 0 }
+    p.pos += 1
+    let second = hex4(mut p)
+    if p.error != "" { return 0 }
+    if second < 56320 || second > 57343 { p.error = "bad-surrogate"; return 0 }
+    65536 + (first - 55296) * 1024 + second - 56320
+}
+fn string(mut p: Parser) -> str {
+    if peek(p) != 34 { p.error = "syntax"; return "" }
+    p.pos += 1
+    p.string_canonical = true
+    var out = List[byte]()
+    while p.pos < p.bytes.len {
+        var c = peek(p)
+        p.pos += 1
+        if c == 34 { return str_from_utf8(out) else |_| { p.error = "bad-utf8"; "" } }
+        if c < 32 { p.error = "control-byte"; return "" }
+        var unicode = false
+        if c == 92 {
+            c = peek(p)
+            p.pos += 1
+            if c != 34 && c != 92 { p.string_canonical = false }
+            if c == 117 {
+                c = codepoint(mut p)
+                unicode = true
+            } else if c == 98 { c = 8
+            } else if c == 102 { c = 12
+            } else if c == 110 { c = 10
+            } else if c == 114 { c = 13
+            } else if c == 116 { c = 9
+            } else if c != 34 && c != 92 && c != 47 { p.error = "bad-escape" }
+            if p.error != "" { return "" }
+        }
+        var width = 1
+        if unicode && c >= 128 { width = 2 }
+        if unicode && c >= 2048 { width = 3 }
+        if unicode && c >= 65536 { width = 4 }
+        if width > 65536 - out.len { p.error = "string-limit"; return "" }
+        if width == 4 {
+            (mut out).push((240 + c / 262144) as byte)
+            (mut out).push((128 + c / 4096 % 64) as byte)
+            (mut out).push((128 + c / 64 % 64) as byte)
+            (mut out).push((128 + c % 64) as byte)
+        } else if width == 3 {
+            (mut out).push((224 + c / 4096) as byte)
+            (mut out).push((128 + c / 64 % 64) as byte)
+            (mut out).push((128 + c % 64) as byte)
+        } else if width == 2 {
+            (mut out).push((192 + c / 64) as byte)
+            (mut out).push((128 + c % 64) as byte)
+        } else {
+            (mut out).push(c as byte)
+        }
+    }
+    p.error = "syntax"
+    ""
+}
+/// Strict lexicographic comparison of UTF-8 bytes, without Unicode normalization.
+pub fn before(a: str, b: str) -> bool {
+    let aa = a.bytes()
+    let bb = b.bytes()
+    var i = 0
+    while i < aa.len && i < bb.len {
+        if aa[i] != bb[i] { return aa[i] < bb[i] }
+        i += 1
+    }
+    aa.len < bb.len
+}
+fn value(mut p: Parser, parent: int, key: str, depth: int) {
+    if p.error != "" { return }
+    let _space = space(mut p)
+    if p.nodes.len >= 16384 { p.error = "node-limit"; return }
+    let c = peek(p)
+    if (c == 123 || c == 91) && depth >= 16 { p.error = "depth-limit"; return }
+    let id = p.nodes.len
+    var n = Node { parent, key, kind: "", text: "", number: 0, start: p.pos, end: 0, next: id + 1, canonical: true }
+    if c == 34 {
+        n.kind = "string"
+        n.text = string(mut p)
+        n.canonical = p.string_canonical
+    } else if digit(c) {
+        n.kind = "int"
+        while digit(peek(p)) {
+            let d = peek(p) - 48
+            if p.pos > n.start && c == 48 { p.error = "syntax"; return }
+            if n.number > 922337203685477580 || n.number == 922337203685477580 && d > 7 {
+                p.error = "integer-overflow"; return
+            }
+            n.number = n.number * 10 + d
+            p.pos += 1
+        }
+        if peek(p) == 46 { p.error = "float"; return }
+        if peek(p) == 101 || peek(p) == 69 { p.error = "exponent"; return }
+    } else if c == 45 {
+        p.error = "negative-integer"; return
+    } else if c == 116 || c == 102 || c == 110 {
+        var word = "null"
+        n.kind = "null"
+        if c == 116 { word = "true"; n.kind = "bool"; n.number = 1 }
+        if c == 102 { word = "false"; n.kind = "bool" }
+        for b in word.bytes() {
+            if peek(p) != b as int { p.error = "syntax"; return }
+            p.pos += 1
+        }
+        n.text = word
+    } else if c == 123 || c == 91 {
+        n.kind = "array"
+        var close = 93
+        if c == 123 { n.kind = "object"; close = 125 }
+        (mut p.nodes).push(copy n)
+        p.pos += 1
+        if !space(mut p) { n.canonical = false }
+        var count = 0
+        var previous = ""
+        var seen = Map[str, bool]()
+        while peek(p) != close && p.error == "" {
+            if count >= 4096 { p.error = "member-limit"; return }
+            if p.nodes.len >= 16384 { p.error = "node-limit"; return }
+            var field = ""
+            if c == 123 {
+                field = string(mut p)
+                if p.error != "" { return }
+                if !p.string_canonical { n.canonical = false }
+                if (seen[field] else false) { p.error = "duplicate-key"; return }
+                seen[field] = true
+                if count > 0 && !before(previous, field) { n.canonical = false }
+                previous = field
+                if !space(mut p) { n.canonical = false }
+                if peek(p) != 58 { p.error = "syntax"; return }
+                p.pos += 1
+                if !space(mut p) { n.canonical = false }
+            }
+            let child = p.nodes.len
+            value(mut p, id, field, depth + 1)
+            if p.error != "" { return }
+            if !p.nodes[child].canonical { n.canonical = false }
+            count += 1
+            if !space(mut p) { n.canonical = false }
+            if peek(p) == close { break }
+            if peek(p) != 44 { p.error = "syntax"; return }
+            p.pos += 1
+            if !space(mut p) { n.canonical = false }
+            if peek(p) == close { p.error = "syntax"; return }
+        }
+        if p.error != "" { return }
+        if peek(p) != close { p.error = "syntax"; return }
+        p.pos += 1
+        n.end = p.pos
+        n.next = p.nodes.len
+        p.nodes[id] = n
+        return
+    } else {
+        p.error = "syntax"; return
+    }
+    if p.error != "" { return }
+    n.end = p.pos
+    (mut p.nodes).push(n)
+}
+/// Parse bounded T2 bytes, retaining spans and canonicality; never consume nodes on error.
 pub fn parse(bytes: List[byte]) -> Data {
     if bytes.len > 1048576 { return Data { nodes: List[Node](), error: "byte-limit" } }
-    Data { nodes: List[Node](), error: "not-implemented" }
+    if !utf8(bytes) { return Data { nodes: List[Node](), error: "bad-utf8" } }
+    var p = Parser { bytes: copy bytes, pos: 0, nodes: List[Node](), error: "", string_canonical: false }
+    value(mut p, -1, "", 0)
+    let _space = space(mut p)
+    if p.error == "" && p.pos != p.bytes.len { p.error = "trailing-data" }
+    Data { nodes: p.nodes, error: p.error }
 }
-/// Return the matching immediate child index, or -1 for absence.
+/// Return the matching immediate child index, or -1 for absence/invalid parent.
 pub fn field(d: Data, parent: int, key: str) -> int {
-    for i in 0..d.nodes.len {
-        if d.nodes[i].parent == parent && d.nodes[i].key == key { return i }
+    if d.error != "" || parent < 0 || parent >= d.nodes.len { return -1 }
+    if d.nodes[parent].kind != "object" { return -1 }
+    var i = parent + 1
+    while i < d.nodes[parent].next {
+        if d.nodes[i].key == key { return i }
+        i = d.nodes[i].next
     }
     -1
+}
+/// Immediate child indices in wire order, empty on scalar/invalid input.
+pub fn children(d: Data, parent: int) -> List[int] {
+    var out = List[int]()
+    if d.error != "" || parent < 0 || parent >= d.nodes.len { return out }
+    var i = parent + 1
+    while i < d.nodes[parent].next { (mut out).push(i); i = d.nodes[i].next }
+    out
 }
 /// Check the envelope's signed object and canonical-span requirement (T3).
 pub fn signed_error(d: Data) -> str {
