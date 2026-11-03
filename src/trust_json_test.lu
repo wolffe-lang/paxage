@@ -5,12 +5,14 @@ fn row(ok: bool, name: str) -> bool {
     ok
 }
 fn expect(text: str, error: str, name: str) -> bool {
-    let d = json.parse(text.bytes())
+    let bytes = text.bytes()
+    let d = json.parse(bytes)
     if d.error != error { print("DETAIL {name} expected={error} actual={d.error}") }
     row(d.error == error, name)
 }
 fn signed(text: str, error: str, name: str) -> bool {
-    row(json.signed_error(json.parse(text.bytes())) == error, name)
+    let bytes = text.bytes()
+    row(json.signed_error(json.parse(bytes)) == error, name)
 }
 fn main() -> int {
     var ok = true
@@ -50,7 +52,8 @@ fn main() -> int {
     if !signed(r#"{"signed":{"a":{"z":1,"a":2}}}"#, "non-canonical-signed", "T3-nested-key-order") { ok = false }
     if !signed(r#"{"signed":{"a":"\"\\"}}"#, "", "T3-required-escapes") { ok = false }
     let source = r#" {"signed":{"a":1},"signatures":[]} "#
-    let d = json.parse(source.bytes())
+    let source_bytes = source.bytes()
+    let d = json.parse(source_bytes)
     let id = json.field(d, 0, "signed")
     var span_ok = false
     if d.error == "" && id >= 0 { span_ok = source[d.nodes[id].start..d.nodes[id].end] == r#"{"a":1}"# }
