@@ -11,6 +11,8 @@ def wait(p,label):
         except subprocess.TimeoutExpired:print(f'RSS waiting {label} pid={p.pid}',flush=True)
 
 def main():
+    if platform.system() == 'Darwin' and '78b9d3cbc41d51db44d18c40b6694403644d1c83' in (ROOT/'wolf-toolchain.toml').read_text():
+        raise SystemExit('F6-RSS-grows-with-payload: blocked on sc76; refusing known-growing Mac run')
     results=[]
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='rss-') as d:
         d=Path(d)
@@ -24,8 +26,9 @@ def main():
             with path.open('wb') as f:
                 f.write(v.header(b'usr/blob',b'0',size,0o644));f.seek(size,1);f.write(bytes(1024))
             args=['/usr/bin/time','-l' if platform.system()=='Darwin' else '-v',str(ROOT/'target/bin/larder'),'list-payload',str(path),'--length',str(path.stat().st_size),'--json']
+            if platform.system() == 'Linux':args=['prlimit','--as=2147483648','--',*args]
             p=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-            stdout,stderr=wait(p,str(size));assert p.returncode==0,(stdout,stderr)
+            stdout,stderr=wait(p,str(size));assert p.returncode==0,('F6-RSS-grows-with-payload',p.returncode,stdout,stderr)
             rows=json.loads(stdout);assert rows[0]['length']==size and rows[0]['sha256']==expected,rows
             text=stderr.decode()
             if platform.system()=='Darwin':rss=int(re.search(r'(\d+)\s+maximum resident set size',text)[1])//1024

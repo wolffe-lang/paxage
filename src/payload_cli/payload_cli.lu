@@ -137,7 +137,8 @@ pub fn run(args: List[str]) -> int {
     }
     if verb == "stage" {
         let uid = os_euid() else |_| { return fail("stage-identity-unavailable") }
-        if uid == 0 { return fail("privileged-staging-is-pm04-pm05") }
+        let denied = staging.privilege(uid)
+        if denied != "" { return fail(denied) }
     }
     let fd = fs_open_mode(path, 21) else |_| { return fail("payload-open") }
     let stat = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return fail("payload-stat") }

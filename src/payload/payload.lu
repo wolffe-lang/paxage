@@ -97,7 +97,10 @@ pub fn number(b: List[byte], base: int) -> int {
     n
 }
 
-fn octal(h: List[byte], a: int, n: int) -> int { number(slice(h, a, n), 8) }
+fn octal(h: List[byte], a: int, n: int) -> int {
+    if h[a + n - 1] != 0 as byte && h[a + n - 1] != 32 as byte { return -1 }
+    number(slice(h, a, n), 8)
+}
 
 fn string(h: List[byte], a: int, n: int) -> str {
     var b = List[byte]()
@@ -242,18 +245,21 @@ fn time_needed(v: str) -> bool {
     if b.len == 0 { return false }
     var at = 0
     var needed = false
-    if b[0] == 45 as byte { needed = true; at = 1 }
+    let negative = b[0] == 45 as byte
+    if negative { at = 1 }
     let start = at
     while at < b.len && b[at] >= 48 as byte && b[at] <= 57 as byte { at += 1 }
     if at == start { return false }
     let whole = number(slice(b, start, at - start), 10)
     if whole < 0 { return false }
-    if whole > 8589934591 { needed = true }
+    if whole > 8589934591 || negative && whole > 0 { needed = true }
     if at < b.len && b[at] == 46 as byte {
-        needed = true
         at += 1
         let fraction = at
-        while at < b.len && b[at] >= 48 as byte && b[at] <= 57 as byte { at += 1 }
+        while at < b.len && b[at] >= 48 as byte && b[at] <= 57 as byte {
+            if b[at] != 48 as byte { needed = true }
+            at += 1
+        }
         if at == fraction { return false }
     }
     at == b.len && needed
@@ -312,6 +318,7 @@ pub fn inspect(mut s: Stream) -> Inventory {
         let prefix = string(h, 345, 155)
         if prefix != "" { path = "{prefix}/{path}" }
         var target = string(h, 157, 100)
+        if bad_text(path) || bad_text(target) { s.error = "header-text"; break }
         let flag = h[156] as int
         if flag == 103 { s.error = "pax-global"; break }
         if flag == 120 {

@@ -27,6 +27,12 @@ pub fn manifest(es: List[payload.Entry], d: literal.Data) -> str {
     ""
 }
 
+/// Privileged staging is unavailable until the pm04/pm05 fd surface exists.
+pub fn privilege(uid: int) -> str {
+    if uid == 0 { return "privileged-staging-is-pm04-pm05" }
+    ""
+}
+
 fn same(a: List[int], b: List[int]) -> bool { a[0] == b[0] && a[9] == b[9] && a[10] == b[10] }
 
 /// Every mutation starts at the pinned cwd and checks every ancestor as a directory.
@@ -177,7 +183,9 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
 /// on failure, never recursively cleans it; caller discards it. Root is refused.
 pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str {
     let uid = os_euid() else |_| { return "stage-identity-unavailable" }
-    if uid == 0 { return "privileged-staging-is-pm04-pm05" }
+    let denied = privilege(uid)
+    if denied != "" { return denied }
+    if root == "/" { return "stage-root-is-root" }
     let before = fs_lstat(root) else |_| { return "stage-root" }
     if before[0] != 1 ||
         before[6] != uid ||

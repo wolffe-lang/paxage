@@ -40,7 +40,9 @@ def extended(body, following=None):
                    (following or header(b'usr/file',b'0',0,0o644),b''))
 
 def invoke(args, code=0, error=None, binary=BINARY, timeout=10):
-    p=subprocess.run([str(binary),*map(str,args)],capture_output=True,timeout=timeout)
+    command=[str(binary),*map(str,args)]
+    if sys.platform.startswith("linux"):command=["prlimit","--as=2147483648","--",*command]
+    p=subprocess.run(command,capture_output=True,timeout=timeout)
     assert p.returncode==code, (args,p.returncode,p.stdout,p.stderr)
     if error: assert p.stderr==f'larder: {error}\n'.encode(),(args,p.stderr,error)
     elif code==0: assert p.stderr==b'',(args,p.stderr)
@@ -68,7 +70,7 @@ def vectors(d):
     valid=archive((header(b'usr',b'5'),b''),(header(b'usr/file',b'0',3,0o644),b'abc'))
     cases=[]
     for path in [b'../escape',b'/escape',b'a/../escape',b'a//b',b'./a',b'var/db',b'home/user',b'usr/',b'a\\b',b'a\x01b',b'\xff']:
-        cases.append(('bad-path',archive((header(path,b'0',0,0o644),b''))))
+        cases.append(('header-text' if path in [b'a\x01b',b'\xff'] else 'bad-path',archive((header(path,b'0',0,0o644),b''))))
     cases += [('bad-symlink',archive((header(b'usr/link',b'2',0,0o777,b'../../escape'),b''))),
         ('path-conflict',archive((header(b'usr',b'2',0,0o777,b'etc'),b''),(header(b'usr/file',b'0',0,0o644),b''))),
         ('bad-hardlink',archive((header(b'usr/link',b'1',0,0o644,b'absent'),b''))),
@@ -93,6 +95,8 @@ def vectors(d):
         ('installed-limit',extended(pax('size',b'17179869185'))),
         ('pax-time',extended(pax('mtime',b'1.'))),
         ('pax-time',extended(pax('mtime',b'1'))),
+        ('pax-time',extended(pax('mtime',b'1.000'))),
+        ('pax-time',extended(pax('mtime',b'-0'))),
         ('pax-text',extended(pax('mtime',b'\xff'))),
         ('pax-text',extended(pax('mtime',b'-1\x00'))),
         ('pax-record',extended(b'9999 path=foo\n'))]
@@ -101,6 +105,7 @@ def vectors(d):
     for key in ['GNU.sparse.map','GNU.sparse.size','SCHILY.xattr.test','SCHILY.acl.access','uid','gid','uname','gname','hdrcharset','unknown']:
         cases.append(('pax-keyword',extended(pax(key,b'1'))))
     h=bytearray(header(b'usr/file',b'0',0,0o644));h[0]^=1;cases.append(('checksum',archive((bytes(h),b''))))
+    h=bytearray(header());field(h,136,12,b'777777777777');cases.append(('header-number',archive((checksum(h),b''))))
     h=bytearray(header());h[124]=128;cases.append(('header-number',archive((checksum(h),b''))))
     h=bytearray(header());h[329]=49;cases.append(('device-metadata',archive((checksum(h),b''))))
     h=bytearray(header());h[501]=1;cases.append(('header-padding',archive((checksum(h),b''))))
@@ -168,7 +173,9 @@ def fuzz(d,valid):
     seed=1347244082; rng=random.Random(seed);count=int(os.environ.get('LARDER_FUZZ_CASES','100000'))
     assert count>=100000,'F6-fuzz-minimum'
     print(f'F6 mutation seed={seed} inputs={count} per-input-timeout=5s',flush=True)
-    p=subprocess.Popen([str(PROBE)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+    command=[str(PROBE)]
+    if sys.platform.startswith('linux'):command=['prlimit','--as=2147483648','--',*command]
+    p=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
     accepted=0;refused=0;before=set(d.iterdir())
     try:
         for i in range(count):
@@ -204,10 +211,62 @@ def fuzz(d,valid):
     assert set(d.iterdir())==before,'F6-fuzz-outside-write'
     print(f'END F6-fuzz-{count}-accepted-{accepted}-refused-{refused} exit=0',flush=True)
 
+def edges(d):
+    template=ROOT/'tests/manifests/valid.manifest'
+    out=d/'refusal-out';out.mkdir()
+    source=d/'refusal-source';source.mkdir()
+    for name,create,error in [
+        ('setid',lambda p:(p.write_bytes(b'x'),p.chmod(0o4644)),'set-id-mode'),
+        ('sticky',lambda p:(p.write_bytes(b'x'),p.chmod(0o1644)),'set-id-mode'),
+        ('escape',lambda p:os.symlink('../outside',p),'bad-symlink'),
+        ('var',lambda p:p.mkdir(),'bad-path'),
+        ('fifo',lambda p:os.mkfifo(p),'pack-fifo')]:
+        path=source/name;create(path)
+        invoke(['pack',source,template,out,'--epoch',0],1,error)
+        path.rmdir() if path.is_dir() and not path.is_symlink() else path.unlink()
+        assert list(out.iterdir())==[],('F6-preflight-no-output',name)
+    sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+    try:
+        sock.bind(str(source/'socket'))
+        invoke(['pack',source,template,out,'--epoch',0],1,'pack-socket')
+    finally:sock.close();(source/'socket').unlink()
+    (source/'file').write_bytes(b'modes');(source/'file').chmod(0o400)
+    invoke(['pack',source,template,out,'--epoch',8589934592])
+    path=out/'sample-1-1.payload.tar';m=out/'sample-1-1.manifest'
+    verify(path,manifest=m)
+    # Exact modes can be more restrictive than staging's temporary creation mode.
+    into=d/'restricted-stage';into.mkdir(mode=0o700)
+    invoke(stage_args(path,m,'/'),1,'stage-root-is-root')
+    invoke(stage_args(path,m,into));assert (into/'file').stat().st_mode&0o777==0o400
+    for binary in [BINARY,BINARY.with_name('lrd')]:
+        invoke(['list-payload',path,'--length',path.stat().st_size,'--json'],binary=binary)
+        invoke(['pack',source,template,out,'--epoch','bad'],1,'pack-epoch',binary=binary)
+        invoke(['stage'],2,binary=binary)
+        invoke(['verify-payload',path,'--length',path.stat().st_size,'--length',1],2,binary=binary)
+        invoke(['verify-payload',path,'--length',path.stat().st_size+1],1,'payload-length',binary=binary)
+        invoke(['verify-payload',d/'absent','--length',0],1,'payload-open',binary=binary)
+    target=d/'auth-first-stage';target.mkdir(mode=0o700)
+    malformed=d/'malformed.manifest';malformed.write_text('not a manifest')
+    hostile=d/'auth-first.tar';hostile.write_bytes(archive((header(b'../escape',b'0',0,0o644),b'')))
+    invoke(stage_args(hostile,malformed,target,'0'*64),1,'payload-digest')
+    invoke(stage_args(hostile,template,target),1,'bad-path')
+    assert list(target.iterdir())==[],'F6-auth-first-zero-writes'
+    # Cumulative extension bytes: many individually legal local mtime headers.
+    large=d/'cumulative.tar';body=pax('mtime',b'-1.'+b'0'*1010)
+    with large.open('wb') as f:
+        for i in range(1048576//len(body)+1):
+            f.write(header(b'PaxHeader',b'x',len(body),0o644));f.write(body);f.write(bytes((-len(body))%512))
+            f.write(header(f'usr/f{i:06}'.encode(),b'0',0,0o644))
+        f.write(bytes(1024))
+    verify(large,'extension-limit');large.unlink()
+    oversized=d/'oversized-path.tar';oversized.write_bytes(extended(pax('path',b'u/'+b'a'*4095)))
+    verify(oversized,'bad-path')
+    print('END F6-packer-CLI-modes-auth-cumulative-edges exit=0',flush=True)
+
 def main():
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='payload-') as temp:
         d=Path(temp)
-        valid=vectors(d);roundtrip(d)
+        valid=vectors(d);roundtrip(d);edges(d)
         if '--fuzz' in sys.argv:fuzz(d,valid)
     print('END payload-cli-e2e exit=0',flush=True)
 if __name__=='__main__':main()

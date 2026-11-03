@@ -16,9 +16,10 @@ step unit tools/check-test
 step cli tools/check-e2e
 
 step payload python3 -I tools/check-payload --fuzz
-step rss python3 -I tools/check-payload-rss
 if [ "$(uname -s)" = Linux ]; then
   step container python3 -I tools/check-payload-container
+  step chunk-rss python3 -I tools/check-chunk-rss
 else
   echo "END container-platform-not-applicable-macOS exit=0"
 fi
+step rss python3 -I tools/check-payload-rss

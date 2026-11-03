@@ -1,7 +1,10 @@
 use std.x.crypto.sha2 as sha2
 use payload
+use staging
 
 fn main() {
+    assert(staging.privilege(0) == "privileged-staging-is-pm04-pm05", "stage-euid-zero-refused")
+    assert(staging.privilege(1000) == "", "stage-nonroot-allowed")
     assert(!payload.allowed_path("../escape"), "F6-traversal-refused")
     assert(!payload.allowed_path("/escape"), "F6-absolute-refused")
     assert(!payload.allowed_path("var/db"), "F5-reserved-refused")

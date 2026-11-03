@@ -11,3 +11,4 @@ for row in version literal solver payload; do
 done
 
 "$WOLF" build --deny-warnings src/payload_probe.lu -o target/bin/payload-probe
+"$WOLF" build --deny-warnings src/chunk_probe.lu -o target/bin/chunk-probe
