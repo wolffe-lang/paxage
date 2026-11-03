@@ -3,9 +3,9 @@
 PAX's package manager, also invoked as `lrd`. This repository is **private**.
 The current 0.1.0 implementation validates formats, orders versions, plans
 dependencies, packs canonical payloads and stages into a private empty directory.
-It cannot install, remove, upgrade, sync, fetch or sign. Large-file qualification
-is blocked on the bounded SHA-2 std fix (sc76); the RSS gate remains red. Do not
-use this revision for large packages.
+It cannot install, remove, upgrade, sync, fetch or sign. The std pin includes
+bounded incremental SHA-2. Large-file RSS measurements run only on Linux under
+a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
 
 ## Build and try
@@ -58,7 +58,8 @@ specification only; this program writes none of them.
 tools/gauntlet
 ```
 
-The stopping gauntlet prints each `END ... exit=N` and runs fmt, build, unit
+The stopping gauntlet prints flat `START` / `END ... exit=N secs=S` steps,
+retains subtest PASS/FAIL names, and runs fmt, build, unit
 properties and CLI fixture e2e. Units exhaustively enumerate 64 subsets for each
 of 10,000 seeded small graphs, independently comparing the abstract oracle,
 checker and solver; the seed is printed. Hand-derived version vectors have no
@@ -69,8 +70,9 @@ mode/digest/link roundtrips, insertion-order determinism, FIPS known answers,
 100,000 seeded mutations with per-input timeouts, capped Linux digest-free reader
 RSS, and 64 MiB/1 GiB full-reader RSS. Linux also runs digest-pinned GNU tar and
 bsdtar container contrasts and read-only-parent confinement; these are black boxes,
-not verdict oracles. Container tests require podman or Docker. Full SHA-2 RSS is
-currently blocked on sc76, not waived. The largest solver fixture has 24 packages;
+not verdict oracles. Container tests require podman or Docker. BSD negative-time
+binary numeric fields are expected F6.2 refusals, even with a valid pax override.
+The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest solver fixture has 24 packages;
 its time is reported, not gated. No SKIPs are hidden.
 
 **CI has one tier:** every PR (including draft) and every trunk push runs the
