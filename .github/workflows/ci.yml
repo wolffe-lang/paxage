@@ -36,7 +36,7 @@ jobs:
     steps:
       - name: full job set selected
         if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}
-        run: echo 'SELECTED gate'
+        run: echo 'SELECTED gate determinism'
       - uses: actions/checkout@v4
         if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}
       - name: local gate wiring proof
@@ -78,7 +78,7 @@ jobs:
   determinism:
     name: Cross-host four-payload byte identity
     needs: gate
-    if: ${{ !cancelled() }}
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) && (!cancelled()) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
