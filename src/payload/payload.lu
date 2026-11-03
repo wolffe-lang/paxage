@@ -306,7 +306,7 @@ pub fn inspect(mut s: Stream) -> Inventory {
             if s.error != "" { break }
             if !zero(end) { s.error = "end-blocks"; break }
             // F6 has exactly two end blocks, never unbounded trailing data.
-            if s.pos != s.length { s.error = "payload-length" }
+            if s.pos != s.length { s.error = "trailing-data" }
             break
         }
         var sum = 0

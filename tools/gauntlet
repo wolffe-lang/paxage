@@ -8,7 +8,7 @@ step() {
   local result=0
   "$@" || result=$?
   echo "END $name exit=$result"
-  if [ "$result" -ne 0 ]; then exit "$result"; fi
+  if [ "$result" -ne 0 ]; then echo "FAIL $name exit=$result" >&2; exit "$result"; fi
 }
 step fmt tools/check-fmt
 step build tools/build

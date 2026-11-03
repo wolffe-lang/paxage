@@ -2,6 +2,14 @@
 """F6 bounded-RSS qualification; large sparse zero fixtures deleted in this job."""
 from pathlib import Path
 import importlib.machinery, hashlib, json, os, platform, re, subprocess, tempfile, time
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL F6-RSS-grows-with-payload", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT=Path(__file__).resolve().parents[1]
 v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
 
@@ -12,7 +20,7 @@ def wait(p,label):
 
 def main():
     if platform.system() == 'Darwin' and '78b9d3cbc41d51db44d18c40b6694403644d1c83' in (ROOT/'wolf-toolchain.toml').read_text():
-        raise SystemExit('F6-RSS-grows-with-payload: blocked on sc76; refusing known-growing Mac run')
+        raise SystemExit('FAIL F6-RSS-grows-with-payload: blocked on sc76; refusing known-growing Mac run')
     results=[]
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='rss-') as d:
         d=Path(d)

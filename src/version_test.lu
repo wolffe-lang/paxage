@@ -1,17 +1,24 @@
 use version
 
+fn check_row(ok: bool, row: str) {
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
+}
+
 fn main() {
-    assert(version.compare("1~rc-1", "1-1") < 0, "V1-tilde-before-end")
-    assert(version.compare("1-1", "1.0-1") < 0, "V1-end-before-separator")
-    assert(version.compare("1.0-1", "1.00-1") == 0, "V1-zero-normalization")
-    assert(version.compare("1:0-1", "99999999999999999999999999999999-9") > 0, "V1-epoch-dominates")
-    assert(
+    check_row(version.compare("1~rc-1", "1-1") < 0, "V1-tilde-before-end")
+    check_row(version.compare("1-1", "1.0-1") < 0, "V1-end-before-separator")
+    check_row(version.compare("1.0-1", "1.00-1") == 0, "V1-zero-normalization")
+    check_row(
+        version.compare("1:0-1", "99999999999999999999999999999999-9") > 0,
+        "V1-epoch-dominates",
+    )
+    check_row(
         version.compare("1-99999999999999999999", "1-99999999999999999998") > 0,
         "V1-unbounded-release",
     )
-    assert(version.valid("0:1.0-01"), "V2-valid")
+    check_row(version.valid("0:1.0-01"), "V2-valid")
     for bad in ["", "1", "1-0", "-1", "1-1-1", "1:2:3-1", "1/2-1", "é-1", "-1:1-1", "1-+1"] {
-        assert(!version.valid(bad), "V2-invalid {bad}")
+        check_row(!version.valid(bad), "V2-invalid {bad}")
     }
     let values = [
         "0-1",
@@ -30,12 +37,12 @@ fn main() {
         "1-2",
     ]
     for a in values {
-        assert(version.compare(a, a) == 0, "V3-reflexive")
+        check_row(version.compare(a, a) == 0, "V3-reflexive")
         for b in values {
-            assert(version.compare(a, b) == -version.compare(b, a), "V3-antisymmetry")
+            check_row(version.compare(a, b) == -version.compare(b, a), "V3-antisymmetry")
             for c in values {
                 if version.compare(a, b) <= 0 && version.compare(b, c) <= 0 {
-                    assert(version.compare(a, c) <= 0, "V3-transitivity")
+                    check_row(version.compare(a, c) <= 0, "V3-transitivity")
                 }
             }
         }
@@ -47,12 +54,12 @@ fn main() {
         let p = prefix[i % prefix.len]
         let q = suffix[i * 3 % suffix.len]
         let v = "{i % 3}:{p}{q}-{i % 7 + 1}"
-        assert(version.valid(v), "V3-generated-valid")
+        check_row(version.valid(v), "V3-generated-valid")
         (mut generated).push(v)
     }
     for a in generated {
         for b in generated {
-            assert(version.compare(a, b) == -version.compare(b, a), "V3-generated-antisymmetry")
+            check_row(version.compare(a, b) == -version.compare(b, a), "V3-generated-antisymmetry")
         }
     }
     var seed = 1447375411
@@ -65,7 +72,7 @@ fn main() {
         seed = (seed * 1664525 + 1013904223) % 4294967296
         let c = generated[seed / 65536 % 64]
         if version.compare(a, b) <= 0 && version.compare(b, c) <= 0 {
-            assert(version.compare(a, c) <= 0, "V3-generated-transitivity")
+            check_row(version.compare(a, c) <= 0, "V3-generated-transitivity")
         }
     }
     print("END version-properties exit=0")

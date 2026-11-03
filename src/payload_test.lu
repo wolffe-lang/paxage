@@ -3,7 +3,7 @@ use payload
 use staging
 
 fn expect(ok: bool, row: str) {
-    if !ok { eprint("FAIL {row}"); assert(ok, row) }
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
 }
 
 fn main() {

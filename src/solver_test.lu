@@ -17,6 +17,10 @@ struct Vertex {
     replacement: int,
 }
 
+fn check_row(ok: bool, row: str) {
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
+}
+
 fn bit(mask: int, i: int) -> bool {
     var div = 1
     for _j in 0..i { div *= 2 }
@@ -156,19 +160,21 @@ fn main() {
             var ids = List[int]()
             for i in 0..6 { if bit(mask, i) { (mut ids).push(i) } }
             let checked = checker.check(s, wants, ids) == ""
-            assert(
+            check_row(
                 accepted == checked,
                 "S3-checker-exhaustive graph={graph} mask={mask} seed={seed}",
             )
             if accepted { exists = true }
         }
         let p = solver.resolve(s, wants)
-        assert(
+        check_row(
             (p.status == "solved") == exists,
             "S3-solver-exhaustive graph={graph} seed={seed} status={p.status}",
         )
-        assert(p.status != "budget-exceeded", "S2-small-graph-budget")
-        if exists { assert(checker.check(s, wants, p.selected) == "", "S3-returned-plan-checked") }
+        check_row(p.status != "budget-exceeded", "S2-small-graph-budget")
+        if exists {
+            check_row(checker.check(s, wants, p.selected) == "", "S3-returned-plan-checked")
+        }
     }
     let v1 = Vertex {
         family: 0,
@@ -204,8 +210,8 @@ fn main() {
         slot: "s0",
         budget: 1000,
     }
-    assert(solver.resolve(s, [need(0, 2)]).status == "unsatisfiable", "S1-held-package-refused")
-    assert(checker.check(s, [need(0, 2)], [1]) != "", "S3-held-package-checker")
+    check_row(solver.resolve(s, [need(0, 2)]).status == "unsatisfiable", "S1-held-package-refused")
+    check_row(checker.check(s, [need(0, 2)], [1]) != "", "S3-held-package-checker")
     let free = model.Snapshot {
         packages: [copy a, copy b],
         installed: List[str](),
@@ -215,7 +221,7 @@ fn main() {
         budget: 1000,
     }
     let latest = solver.resolve(free, [any(0)])
-    assert(
+    check_row(
         latest.status == "solved" && latest.selected.len == 1 && latest.selected[0] == 1,
         "S2-latest-compatible",
     )
@@ -227,9 +233,9 @@ fn main() {
         slot: "s0",
         budget: 1,
     }
-    assert(solver.resolve(tiny, [any(0)]).status == "budget-exceeded", "S2-budget-not-unsat")
-    assert(checker.check(free, [any(0)], [-1]) == "unknown-package", "S3-unknown-index")
-    assert(checker.check(free, [any(0)], [0, 0]) == "duplicate-package", "S3-duplicate-index")
+    check_row(solver.resolve(tiny, [any(0)]).status == "budget-exceeded", "S2-budget-not-unsat")
+    check_row(checker.check(free, [any(0)], [-1]) == "unknown-package", "S3-unknown-index")
+    check_row(checker.check(free, [any(0)], [0, 0]) == "duplicate-package", "S3-duplicate-index")
     print("END solver-exhaustive-10000 exit=0")
     print("END held-package-refused exit=0")
 }

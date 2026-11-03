@@ -2,6 +2,14 @@
 """Fixture CLI integration/e2e. No implementation or foreign comparator oracle."""
 from pathlib import Path
 import hashlib,json,os,subprocess,sys,time,tempfile
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL CLI-fixture-e2e", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT=Path(__file__).resolve().parents[1]
 BINARY=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/larder'
 LINK=BINARY.with_name('lrd')

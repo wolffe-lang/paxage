@@ -4,6 +4,14 @@ Uses the production read_into byte pump. Every measured run is Linux-only, cappe
 """
 from pathlib import Path
 import os, platform, re, subprocess, sys, tempfile
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL larder-only-chunk-RSS", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT=Path(__file__).resolve().parents[1]
 PROBE=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/chunk-probe'
 assert platform.system()=='Linux','memory-growing chunk witness is Linux-only'

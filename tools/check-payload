@@ -5,6 +5,14 @@ Verdicts below derive from FORMAT F5/F6, never GNU tar or bsdtar behavior.
 """
 from pathlib import Path
 import hashlib, json, os, random, select, socket, subprocess, sys, tempfile, time
+import sys
+
+def _named_failure(kind, value, traceback):
+    print("FAIL F6-payload-cli-e2e", file=sys.stderr, flush=True)
+    sys.__excepthook__(kind, value, traceback)
+
+if __name__ == '__main__': sys.excepthook = _named_failure
+
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / 'target/bin/larder'
 PROBE = ROOT / 'target/bin/payload-probe'
@@ -43,8 +51,8 @@ def invoke(args, code=0, error=None, binary=BINARY, timeout=10):
     command=[str(binary),*map(str,args)]
     if sys.platform.startswith("linux"):command=["prlimit","--as=2147483648","--",*command]
     p=subprocess.run(command,capture_output=True,timeout=timeout)
-    assert p.returncode==code, (args,p.returncode,p.stdout,p.stderr)
-    if error: assert p.stderr==f'larder: {error}\n'.encode(),(args,p.stderr,error)
+    assert p.returncode==code, ('FAIL F6-'+(error or str(args[0])),args,p.returncode,p.stdout,p.stderr)
+    if error: assert p.stderr==f'larder: {error}\n'.encode(),('FAIL F6-'+error,args,p.stderr,error)
     elif code==0: assert p.stderr==b'',(args,p.stderr)
     return p
 
@@ -79,7 +87,7 @@ def vectors(d):
         ('duplicate-path',archive((header(b'usr',b'0',0,0o644),b''),(header(b'usr',b'5'),b''))),
         ('payload-length',archive((header(b'usr/file',b'0',999999,0o644),b''))),
         ('payload-length',valid[:-1]),('end-blocks',valid[:-512]+header()),
-        ('payload-length',valid+bytes(512)),
+        ('trailing-data',valid+bytes(512)),('trailing-data',valid+b'\0'),
         ('set-id-mode',archive((header(b'usr/file',b'0',0,0o4644),b''))),
         ('type-size',archive((header(b'usr',b'5',1),b'x'))),
         ('unused-link',archive((header(b'usr/file',b'0',0,0o644,b'x'),b''))),
@@ -121,6 +129,7 @@ def vectors(d):
             path=d/'vector.tar';path.write_bytes(raw);verify(path,error,binary)
         for raw in positives:
             path=d/'vector.tar';path.write_bytes(raw);verify(path,binary=binary)
+    print('END F6-trailing-data-refused exit=0',flush=True)
     # 100001-entry bound is reached before allocation of entry 100001 or sorting.
     path=d/'entries.tar'
     with path.open('wb') as f:
