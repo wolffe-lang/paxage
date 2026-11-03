@@ -144,12 +144,22 @@ def vectors(d):
     return valid
 
 def roundtrip(d):
+    previous=os.umask(0)
+    try:return _roundtrip(d)
+    finally:os.umask(previous)
+
+def _roundtrip(d):
     source=d/'source';source.mkdir();(source/'usr').mkdir();(source/'usr/bin').mkdir()
     (source/'usr/bin/tool').write_bytes(b'hello\0payload\n');(source/'usr/bin/tool').chmod(0o755)
     (source/'usr/data').write_bytes(b'abc');(source/'usr/data').chmod(0o640)
     os.link(source/'usr/data',source/'usr/hard');os.symlink('data',source/'usr/link')
-    (source/'usr/é').write_bytes(b'utf8')
+    (source/'usr/a b').write_bytes(b'utf8')
     long=source/'usr'/('a'*150)/('b'*150);long.mkdir(parents=True);(long/'file').write_bytes(b'long')
+    for p in source.rglob('*'):
+        if p.is_symlink():assert p.lstat().st_mode&0o777==0o777,'F6-fixture-symlink-mode'
+        elif p.is_dir():p.chmod(0o755)
+        else:p.chmod(0o755 if p.name=='tool' else 0o640 if p.name in ['data','hard'] else 0o644)
+    print('canonical fixture modes fixed; caller umask=0000; nonportable ASCII path included',flush=True)
     outputs=[]
     for n in range(2):
         binary=BINARY if n==0 else BINARY.with_name('lrd')
@@ -177,7 +187,7 @@ def roundtrip(d):
         bad.rmdir() if not list(bad.iterdir()) else None
         if n==0:
             # Reverse physical insertion order without changing modes/inode relationships.
-            for p in [source/'usr/é',source/'usr/bin/tool']:
+            for p in [source/'usr/a b',source/'usr/bin/tool']:
                 raw=p.read_bytes();mode=p.stat().st_mode&0o777;p.unlink();p.write_bytes(raw);p.chmod(mode)
     assert outputs[0]==outputs[1],'F6-deterministic-listing-order'
     artifact=ROOT/'target/evidence/canonical.payload.tar';artifact.parent.mkdir(parents=True,exist_ok=True);artifact.write_bytes(outputs[0])
@@ -300,6 +310,14 @@ def edges(d):
     invoke(stage_args(hostile,malformed,target,'0'*64),1,'payload-digest')
     invoke(stage_args(hostile,template,target),1,'bad-path')
     assert list(target.iterdir())==[],'F6-auth-first-zero-writes'
+    unicode_out=d/'unicode-out';unicode_out.mkdir()
+    (source/'é').write_bytes(b'utf8');(source/'é').chmod(0o644)
+    invoke(['pack',source,template,unicode_out,'--epoch',0])
+    unicode_path=unicode_out/'sample-1-1.payload.tar';unicode_manifest=unicode_out/'sample-1-1.manifest'
+    verify(unicode_path,manifest=unicode_manifest)
+    unicode_stage=d/'unicode-stage';unicode_stage.mkdir(mode=0o700)
+    invoke(stage_args(unicode_path,unicode_manifest,unicode_stage))
+    assert (unicode_stage/'é').read_bytes()==b'utf8','F6-unicode-roundtrip'
     # Cumulative extension bytes: many individually legal local mtime headers.
     large=d/'cumulative.tar';body=pax('mtime',b'-1.'+b'0'*1010)
     with large.open('wb') as f:
