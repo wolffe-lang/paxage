@@ -318,3 +318,24 @@ hang or unverifiable state fails. Memory-growing cases run only on Linux
 under a 2 GiB address-space cap. One final-head, one-hunk local plant removes
 one check and must fail its named row; it never lands on the main branch.
 Every final gauntlet step's END exit is recorded; wrapper success is not proof.
+
+## T19 — Candidate fuzz and committed-state corruption (R-pm03-6)
+
+Fuzz proposed-state serialization and load inputs against a protected accepted
+generation. A malformed candidate never replaces that generation. Every
+metadata/update mutation leaves the accepted state verifiable, including valid
+partial chains. Test this separately from deliberately corrupting committed
+storage; a damaged input file is not an accepted state produced by an update.
+
+Corrupt each committed file independently: `current`, the generation header,
+and root, timestamp, snapshot and targets files. The client refuses
+`state-invalid` and performs zero writes: no repair, automatic selection of an
+older generation, reduction of a high-water mark, or change to the clock floor.
+Its refusal says: `re-bootstrap into a new, empty state directory from a
+caller-supplied pinned root`. That is an explicit operator action, not an
+automatic client recovery feature. The damaged directory remains untouched.
+
+R-pm03-6 B (a trusted recovery anchor and a redundancy policy) is a question
+for a later lane, not an implied fallback here. This ruling adds T19 after the
+original prediction of eighteen clauses; the prediction is not retroactively
+changed.
