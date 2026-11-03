@@ -1,33 +1,35 @@
 use literal
 
-fn check_row(ok: bool, row: str) {
-    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
+fn check_row(ok: bool, row: str) -> bool {
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {} }
+    ok
 }
 
-fn expect(s: str, e: str) {
+fn expect(s: str, e: str) -> bool {
     let p = literal.parse(s.bytes())
     check_row(p.error == e, "F2 {e}, got {p.error}")
 }
 
-fn main() {
-    expect("manifest {{ schema: 1, name: \"ok\", }}", "")
-    expect("manifest {{ a: 1, a: 2 }}", "duplicate-key")
-    expect("manifest {{ a: 9223372036854775808 }}", "integer-overflow")
-    expect("manifest {{ a: run(\"touch sentinel\") }}", "expression")
-    expect("manifest {{ a: 1 + 2 }}", "expression")
-    expect(r#"manifest { a: "{name}" }"#, "interpolation")
-    expect("manifest {{ // signed comment\n a: 1 }}", "comment")
-    expect("manifest {{ a: \"\\q\" }}", "bad-escape")
-    expect("manifest {{ a: 1 }} garbage", "trailing-data")
-    expect("manifest {{ a: [1 2] }}", "syntax")
-    expect("manifest {{ a: -1 }}", "expression")
+fn main() -> int {
+    if !expect("manifest {{ schema: 1, name: \"ok\", }}", "") { return 1 }
+    if !expect("manifest {{ a: 1, a: 2 }}", "duplicate-key") { return 1 }
+    if !expect("manifest {{ a: 9223372036854775808 }}", "integer-overflow") { return 1 }
+    if !expect("manifest {{ a: run(\"touch sentinel\") }}", "expression") { return 1 }
+    if !expect("manifest {{ a: 1 + 2 }}", "expression") { return 1 }
+    if !expect(r#"manifest { a: "{name}" }"#, "interpolation") { return 1 }
+    if !expect("manifest {{ // signed comment\n a: 1 }}", "comment") { return 1 }
+    if !expect("manifest {{ a: \"\\q\" }}", "bad-escape") { return 1 }
+    if !expect("manifest {{ a: 1 }} garbage", "trailing-data") { return 1 }
+    if !expect("manifest {{ a: [1 2] }}", "syntax") { return 1 }
+    if !expect("manifest {{ a: -1 }}", "expression") { return 1 }
     let invalid: List[byte] = [255 as byte]
-    check_row(literal.parse(invalid).error == "bad-utf8", "F2-bad-utf8")
+    if !check_row(literal.parse(invalid).error == "bad-utf8", "F2-bad-utf8") { return 1 }
     var deep = "manifest {{ a: "
     for _i in 0..33 { deep += "[" }
     deep += "0"
     for _i in 0..33 { deep += "]" }
     deep += " }}"
-    expect(deep, "depth-limit")
+    if !expect(deep, "depth-limit") { return 1 }
     print("END literal-refusals exit=0")
+    0
 }

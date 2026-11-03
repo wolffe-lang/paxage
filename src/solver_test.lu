@@ -17,8 +17,9 @@ struct Vertex {
     replacement: int,
 }
 
-fn check_row(ok: bool, row: str) {
-    if !ok { fs_write(2, "FAIL {row}\n") else |_| {}; os_exit(1) }
+fn check_row(ok: bool, row: str) -> bool {
+    if !ok { fs_write(2, "FAIL {row}\n") else |_| {} }
+    ok
 }
 
 fn bit(mask: int, i: int) -> bool {
@@ -116,7 +117,7 @@ fn draw(mut state: int, bound: int) -> int {
     state / 65536 % bound
 }
 
-fn main() {
+fn main() -> int {
     let seed = 1347240241
     print("solver exhaustive seed={seed} graphs=10000 subsets-per-graph=64")
     var rng = seed
@@ -160,20 +161,26 @@ fn main() {
             var ids = List[int]()
             for i in 0..6 { if bit(mask, i) { (mut ids).push(i) } }
             let checked = checker.check(s, wants, ids) == ""
-            check_row(
+            if !check_row(
                 accepted == checked,
                 "S3-checker-exhaustive graph={graph} mask={mask} seed={seed}",
-            )
+            ) {
+                return 1
+            }
             if accepted { exists = true }
         }
         let p = solver.resolve(s, wants)
-        check_row(
+        if !check_row(
             (p.status == "solved") == exists,
             "S3-solver-exhaustive graph={graph} seed={seed} status={p.status}",
-        )
-        check_row(p.status != "budget-exceeded", "S2-small-graph-budget")
+        ) {
+            return 1
+        }
+        if !check_row(p.status != "budget-exceeded", "S2-small-graph-budget") { return 1 }
         if exists {
-            check_row(checker.check(s, wants, p.selected) == "", "S3-returned-plan-checked")
+            if !check_row(checker.check(s, wants, p.selected) == "", "S3-returned-plan-checked") {
+                return 1
+            }
         }
     }
     let v1 = Vertex {
@@ -210,8 +217,13 @@ fn main() {
         slot: "s0",
         budget: 1000,
     }
-    check_row(solver.resolve(s, [need(0, 2)]).status == "unsatisfiable", "S1-held-package-refused")
-    check_row(checker.check(s, [need(0, 2)], [1]) != "", "S3-held-package-checker")
+    if !check_row(
+        solver.resolve(s, [need(0, 2)]).status == "unsatisfiable",
+        "S1-held-package-refused",
+    ) {
+        return 1
+    }
+    if !check_row(checker.check(s, [need(0, 2)], [1]) != "", "S3-held-package-checker") { return 1 }
     let free = model.Snapshot {
         packages: [copy a, copy b],
         installed: List[str](),
@@ -221,10 +233,12 @@ fn main() {
         budget: 1000,
     }
     let latest = solver.resolve(free, [any(0)])
-    check_row(
+    if !check_row(
         latest.status == "solved" && latest.selected.len == 1 && latest.selected[0] == 1,
         "S2-latest-compatible",
-    )
+    ) {
+        return 1
+    }
     let tiny = model.Snapshot {
         packages: [copy a, copy b],
         installed: List[str](),
@@ -233,9 +247,22 @@ fn main() {
         slot: "s0",
         budget: 1,
     }
-    check_row(solver.resolve(tiny, [any(0)]).status == "budget-exceeded", "S2-budget-not-unsat")
-    check_row(checker.check(free, [any(0)], [-1]) == "unknown-package", "S3-unknown-index")
-    check_row(checker.check(free, [any(0)], [0, 0]) == "duplicate-package", "S3-duplicate-index")
+    if !check_row(
+        solver.resolve(tiny, [any(0)]).status == "budget-exceeded",
+        "S2-budget-not-unsat",
+    ) {
+        return 1
+    }
+    if !check_row(checker.check(free, [any(0)], [-1]) == "unknown-package", "S3-unknown-index") {
+        return 1
+    }
+    if !check_row(
+        checker.check(free, [any(0)], [0, 0]) == "duplicate-package",
+        "S3-duplicate-index",
+    ) {
+        return 1
+    }
     print("END solver-exhaustive-10000 exit=0")
     print("END held-package-refused exit=0")
+    0
 }
