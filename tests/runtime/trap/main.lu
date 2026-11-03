@@ -1,0 +1,3 @@
+fn main() {
+    eprint("PM02-before-trap"); assert(false, "PM02-assert-message")
+}

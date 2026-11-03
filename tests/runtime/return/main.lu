@@ -1,0 +1,3 @@
+fn main() -> int {
+    eprint("PM02-before-return"); 1
+}
