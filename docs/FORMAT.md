@@ -99,3 +99,7 @@ nonzero padding, overlapping types and inconsistent manifest inventory. Authenti
 the full blob before even staging; verify installed lengths/digests/metadata before
 promotion. Never follow an archive-created symlink while staging. No archive is
 parsed or extracted by pm01. F6 reader tests are owned by pm02, not claimed here.
+
+**F6.1 — Exact end:** the reader accepts a payload ending exactly after its two
+512-byte zero end blocks and refuses every additional byte, including zero-filled
+blocks within the authenticated declared length, as `trailing-data`.
