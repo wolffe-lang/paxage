@@ -2,10 +2,12 @@
 
 PAX's package manager, also invoked as `lrd`. This repository is **private**.
 The current 0.1.0 implementation validates formats, orders versions, plans
-dependencies, packs canonical payloads and stages into a private empty directory.
-It cannot install, remove, upgrade, sync, fetch or sign. The std pin includes
-bounded incremental SHA-2. Large-file RSS measurements run only on Linux under
-a 2 GiB cap, never on the Mac.
+dependencies, packs canonical payloads, publishes test-only signed file repositories,
+and bootstraps/updates/fetches through a bounded TUF profile before isolated staging.
+It cannot install, remove, upgrade or sync. Signing keys must be marked `test-only`;
+production signing remains out of scope. The std pin includes bounded SHA-2 and
+strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
+only on Linux under a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
 
 ## Build and try
@@ -15,8 +17,8 @@ Supported CI hosts: Linux x86-64 and macOS arm64. No other runtime dependencies
 beyond the digest-pinned Wolf release/runtime and std tree.
 
 ```sh
-mkdir -p "$HOME/lanes/pm02/tmp"
-export TMPDIR="$HOME/lanes/pm02/tmp"
+mkdir -p "$HOME/lanes/pm03/tmp"
+export TMPDIR="$HOME/lanes/pm03/tmp"
 tools/fetch-toolchain
 tools/build
 target/bin/larder version
@@ -40,6 +42,8 @@ copy behind its host lock and memory/disk gates; see the lane contract.
 - [SOLVER](docs/SOLVER.md): immutable bounded snapshots, complete backtracking,
   latest compatible choices, independent checker, holds/ABI/optional/replacement
   policy and budget refusal distinct from exhaustive unsatisfiability.
+- [TRUST](docs/TRUST.md): canonical signed spans, four-role metadata, rotation,
+  clock/version floors, atomic generations, verified cache and test-only keys.
 - [CLI](docs/CLI.md): verbs, request syntax and exit codes.
 
 A checked manifest is syntactically valid, **not authenticated**. `stage` accepts
@@ -48,7 +52,13 @@ verifies staged bytes, modes and links. Staging is unprivileged and never promot
 a tree to a live root. Missing descriptor-relative calls leave a same-uid ancestor
 swap race; use a private empty caller-owned staging directory. [CLI C4–C7](docs/CLI.md)
 details the interface, safety refusals, failure state and large-file measurement policy.
-TUF, transactions and networking remain later work. Reserved paths
+`fetch --stage` authenticates payload, manifest and buildinfo through signed
+metadata and binds the manifest again at staging consumption. The client supports
+only literal `file://` URLs and a caller-supplied pinned root. Transactions and
+network transports remain later work. Trusted local state must not be coherently
+replaced by an actor able to write it; T20 documents this limit. Malformed state
+refuses without repair, directing an explicit re-bootstrap into a new empty directory.
+Reserved paths
 `/var/lib/larder/`, `/var/cache/larder/`, `/etc/larder/` and `.larder-new` are
 specification only; this program writes none of them.
 
@@ -67,13 +77,23 @@ foreign implementation oracle. CLI fixtures exercise both executable names,
 malformed-input rejection, exact-byte SHA-256, snapshots and all mutation
 refusals. Payload rows add independent POSIX-byte valid/hostile vectors, exact
 mode/digest/link roundtrips, insertion-order determinism, FIPS known answers,
-100,000 seeded mutations with per-input timeouts, capped Linux digest-free reader
+100,000 seeded mutations with per-input timeouts on capped Linux, capped Linux digest-free reader
 RSS, and 64 MiB/1 GiB full-reader RSS. Linux also runs digest-pinned GNU tar and
 bsdtar container contrasts and read-only-parent confinement; these are black boxes,
 not verdict oracles. Container tests require podman or Docker. BSD negative-time
 binary numeric fields are expected F6.2 refusals, even with a valid pax override.
 The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest solver fixture has 24 packages;
 its time is reported, not gated. No SKIPs are hidden.
+
+Trust tests include strict JSON/schema rows, RFC 8032 and all 151 vendored
+Wycheproof cases, independent OpenSSL-signed attack trees, interrupted-write cuts,
+zero-write corruption refusals, two-publication CLI roundtrips and a separate
+100,000-mutation Linux harness. Its per-input state oracle uses independently
+witnessed signatures, not the client's verdict alone. OpenSSL CLI runs only in
+the pinned offline unprivileged kasumi container. Mac runs use bounded rows and
+the payload roundtrip-only path, retaining the canonical-payload identity artifact;
+growth/fuzz/timing skips are explicit. Coherent local-storage replay has a labelled
+limit witness, not a claimed protection gate.
 
 Unlabelled PRs run one cheap job. The `ci` or `full-matrix` label runs the
 full platform-aware gate on Linux x86-64 and macOS arm64. Trunk pushes run it
