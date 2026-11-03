@@ -127,6 +127,8 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         if valid != "" { return valid }
         if schema.string(d, 0, "name") != target.name || schema.string(d, 0, "version") != target.package_version || schema.string(d, 0, "arch") != target.arch { return "target-identity" }
         if schema.string(d, 0, "buildinfo") != s.targets.entries[buildinfo].digest { return "buildinfo-hash" }
+        let provenance = cache.fetch(repo, cache_dir, s.targets.entries[buildinfo])
+        if provenance != "" { return provenance }
         let arguments = ["stage", copy object, "--length", "{target.length}", "--sha256", copy target.digest, "--manifest", "{cache_dir}/objects/sha256/{entry.digest}", "--into", into]
         if payload_cli.run(arguments) != 0 { return "stage-failed" }
     }
