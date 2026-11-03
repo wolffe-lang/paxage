@@ -1,0 +1,112 @@
+//! Canonical test-only metadata emission. No alternative cryptographic implementation.
+use trust_metadata as meta
+use trust_json as json
+use std.hex as hex
+use std.time as time
+use std.x.crypto.curve25519 as curve
+
+/// A test-only signing key. Only marked key files may construct one in the CLI.
+pub struct Signing { id: str, public: str, seed: List[byte] }
+/// Canonical key object under TUF section 4.2.2.
+pub fn key_object(public: str) -> str {
+    "{{\"keytype\":\"ed25519\",\"keyval\":{{\"public\":\"{public}\"}},\"scheme\":\"ed25519\"}}"
+}
+/// Derive a public test key and canonical key ID from a marked 32-byte test seed.
+pub fn test_key(seed: List[byte]) -> Signing {
+    if seed.len != 32 { return Signing { id: "", public: "", seed: List[byte]() } }
+    let public = hex.encode(curve.public(seed))
+    let object = key_object(public)
+    let bytes = object.bytes()
+    Signing { id: meta.digest(bytes), public, seed: copy seed }
+}
+/// Canonical string with only quote/backslash escapes; empty result means unsupported text.
+pub fn quote(text: str) -> str {
+    let bytes = text.bytes()
+    if !json.utf8(bytes) { return "" }
+    var out = List[byte]()
+    (mut out).push(34 as byte)
+    for b in bytes {
+        if b < 32 as byte { return "" }
+        if b == 34 as byte || b == 92 as byte { (mut out).push(92 as byte) }
+        (mut out).push(b)
+    }
+    (mut out).push(34 as byte)
+    str_from_utf8(out) else ""
+}
+/// Render whole UTC seconds in the supported date range; no system clock is read.
+pub fn date(seconds: int) -> str {
+    if seconds < 0 || seconds > 253402300799 { return "" }
+    let full = time.to_iso8601(seconds * 1000)
+    full[0..19] + "Z"
+}
+/// Sign precisely the supplied canonical role bytes with distinct marked test keys.
+pub fn envelope(signed: str, keys: List[Signing]) -> str {
+    let bytes = signed.bytes()
+    let d = json.parse(bytes)
+    if d.error != "" || d.nodes.len == 0 || !d.nodes[0].canonical { return "" }
+    var signatures = ""
+    var seen = Map[str, bool]()
+    for key in keys {
+        if key.seed.len != 32 || key.id == "" { return "" }
+        if (seen[key.id] else false) { continue }
+        seen[key.id] = true
+        if signatures != "" { signatures += "," }
+        let signature = hex.encode(curve.sign(key.seed, bytes))
+        signatures += "{{\"keyid\":\"{key.id}\",\"sig\":\"{signature}\"}}"
+    }
+    "{{\"signatures\":[{signatures}],\"signed\":{signed}}}"
+}
+/// Build the default 2-of-3 root and three disjoint 1-of-1 roles from six test keys.
+pub fn root(keys: List[Signing], signers: List[Signing], version: int, expires: int) -> str {
+    if keys.len != 6 || version < 1 || date(expires) == "" { return "" }
+    var order = List[int]()
+    for i in 0..keys.len { (mut order).push(i) }
+    for i in 0..order.len {
+        for j in i + 1..order.len {
+            if json.before(keys[order[j]].id, keys[order[i]].id) {
+                let old = order[i]; order[i] = order[j]; order[j] = old
+            }
+        }
+    }
+    var entries = ""
+    for i in order {
+        if entries != "" { entries += "," }
+        entries += "\"{keys[i].id}\":" + key_object(keys[i].public)
+    }
+    let roles = "{{\"root\":{{\"keyids\":[\"{keys[0].id}\",\"{keys[1].id}\",\"{keys[2].id}\"],\"threshold\":2}},\"snapshot\":{{\"keyids\":[\"{keys[4].id}\"],\"threshold\":1}},\"targets\":{{\"keyids\":[\"{keys[3].id}\"],\"threshold\":1}},\"timestamp\":{{\"keyids\":[\"{keys[5].id}\"],\"threshold\":1}}}}"
+    let signed = "{{\"_type\":\"root\",\"consistent_snapshot\":true,\"expires\":\"{date(expires)}\",\"keys\":{{{entries}}},\"roles\":{roles},\"spec_version\":\"1.0.37\",\"version\":{version}}}"
+    envelope(signed, signers)
+}
+/// Build a timestamp or snapshot with an exact whole-file metadata binding.
+pub fn reference(role: str, version: int, expires: int, ref: meta.Entry, signer: Signing) -> str {
+    if (role != "timestamp" && role != "snapshot") || version < 1 || date(expires) == "" { return "" }
+    let signed = "{{\"_type\":\"{role}\",\"expires\":\"{date(expires)}\",\"meta\":{{\"{ref.path}\":{{\"hashes\":{{\"sha256\":\"{ref.digest}\"}},\"length\":{ref.length},\"version\":{ref.version}}}}},\"spec_version\":\"1.0.37\",\"version\":{version}}}"
+    envelope(signed, [signer])
+}
+/// Build targets over sorted logical names with F3 identity fields and SHA-256 bindings.
+pub fn targets(entries: List[meta.Entry], version: int, expires: int, signer: Signing) -> str {
+    if version < 1 || entries.len > 72 || date(expires) == "" { return "" }
+    var order = List[int]()
+    for i in 0..entries.len { (mut order).push(i) }
+    for i in 0..order.len {
+        for j in i + 1..order.len {
+            if json.before(entries[order[j]].path, entries[order[i]].path) {
+                let old = order[i]; order[i] = order[j]; order[j] = old
+            }
+        }
+    }
+    var objects = ""
+    for i in order {
+        let e = copy entries[i]
+        let path = quote(e.path)
+        let name = quote(e.name)
+        let package_version = quote(e.package_version)
+        let arch = quote(e.arch)
+        let kind = quote(e.kind)
+        if path == "" || name == "" || package_version == "" || arch == "" || kind == "" { return "" }
+        if objects != "" { objects += "," }
+        objects += "{path}:{{\"custom\":{{\"architecture\":{arch},\"kind\":{kind},\"name\":{name},\"version\":{package_version}}},\"hashes\":{{\"sha256\":\"{e.digest}\"}},\"length\":{e.length}}}"
+    }
+    let signed = "{{\"_type\":\"targets\",\"expires\":\"{date(expires)}\",\"spec_version\":\"1.0.37\",\"targets\":{{{objects}}},\"version\":{version}}}"
+    envelope(signed, [signer])
+}
