@@ -81,6 +81,10 @@ fn update(repo: str, dir: str, now: int) -> str {
     loaded = store.load(dir)
     if loaded.error != "" { return "timestamp: {loaded.error}" }
     for role in ["snapshot", "targets"] {
+        if role == "snapshot" && loaded.value.stage >= 2 {
+            if loaded.value.snapshot.expires <= now { return "snapshot: expired-snapshot" }
+            continue
+        }
         var ref = copy loaded.value.timestamp.entries[0]
         if role == "targets" { ref = copy loaded.value.snapshot.entries[0] }
         let candidate = bound(repo, role, ref)
@@ -129,7 +133,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         if schema.string(d, 0, "buildinfo") != s.targets.entries[buildinfo].digest { return "buildinfo-hash" }
         let provenance = cache.fetch(repo, cache_dir, s.targets.entries[buildinfo])
         if provenance != "" { return provenance }
-        let arguments = ["stage", copy object, "--length", "{target.length}", "--sha256", copy target.digest, "--manifest", "{cache_dir}/objects/sha256/{entry.digest}", "--into", into]
+        let arguments = ["stage", copy object, "--length", "{target.length}", "--sha256", copy target.digest, "--manifest", "{cache_dir}/objects/sha256/{entry.digest}", "--manifest-sha256", entry.digest, "--manifest-length", "{entry.length}", "--into", into]
         if payload_cli.run(arguments) != 0 { return "stage-failed" }
     }
     print("object={object} sha256={target.digest} length={target.length}")
@@ -160,6 +164,13 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
     var error = ""
     if verb == "bootstrap" { error = cache.directory(dir) } else { error = io.private_dir(dir) }
     if error != "" { return error }
+    if verb == "bootstrap" {
+        let entries = fs_read_dir(dir) else |_| { return "directory" }
+        if entries.len != 0 {
+            if fs_exists("{dir}/current") { return "trust-state-exists" }
+            return "state-not-empty"
+        }
+    }
     let lock = io.lock(dir)
     if lock < 0 { return "state-locked" }
     if verb == "bootstrap" { error = bootstrap(repo, dir, o, now)

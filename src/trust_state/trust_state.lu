@@ -78,6 +78,12 @@ pub fn advance(mut s: State, candidate: meta.Meta, now: int) -> str {
         if candidate.entries[0].version < s.snapshot_floor { return "rollback-snapshot" }
         let verified = meta.verify(candidate, s.root, "timestamp")
         if verified != "" { return verified }
+        if s.stage >= 1 && candidate.version == s.timestamp_mark.version {
+            if s.stage >= 2 && s.snapshot.expires <= now { return "expired-snapshot" }
+            if s.stage >= 3 && s.targets.expires <= now { return "expired-targets" }
+            s.floor = now
+            return ""
+        }
         s.timestamp = copy candidate
         s.timestamp_mark = mark
         s.snapshot_floor = candidate.entries[0].version
@@ -146,6 +152,11 @@ pub fn continuity(old: State, next: State) -> str {
         if meta.verify(next.root, old.root, "root") != "" { return "root-old-threshold" }
         if meta.verify(next.root, next.root, "root") != "" { return "root-new-threshold" }
         reset = meta.keys_changed(old.root, next.root, "timestamp") || meta.keys_changed(old.root, next.root, "snapshot")
+    }
+    if next.root.version == old.root.version && next.stage < old.stage {
+        // A new timestamp may invalidate its descendants. Re-reading the same
+        // metadata cannot discard an already verified phase of the chain.
+        if next.stage != 1 || next.timestamp_mark.version == old.timestamp_mark.version { return "state-invalid" }
     }
     if !reset {
         let before = [copy old.timestamp_mark, copy old.snapshot_mark, copy old.targets_mark]
