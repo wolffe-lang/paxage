@@ -1,3 +1,4 @@
+//! member: false
 //! One bounded mutation per process. The harness supplies a hard Linux cap and timeout.
 //! Reads protected accepted state and an unpublished candidate; never writes either.
 use trust_io as io
