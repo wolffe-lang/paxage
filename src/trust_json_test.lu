@@ -12,7 +12,13 @@ fn expect(text: str, error: str, name: str) -> bool {
 }
 fn signed(text: str, error: str, name: str) -> bool {
     let bytes = text.bytes()
-    row(json.signed_error(json.parse(bytes)) == error, name)
+    let d = json.parse(bytes)
+    let actual = json.signed_error(d)
+    if actual != error {
+        print("DETAIL {name} expected={error} actual={actual} input={text}")
+        for n in d.nodes { print("NODE {n.kind} {n.key} canonical={n.canonical} span={n.start}..{n.end}") }
+    }
+    row(actual == error, name)
 }
 fn main() -> int {
     var ok = true
