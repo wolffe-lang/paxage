@@ -14,6 +14,8 @@ fn main() {
     assert(payload.number("00000000001".bytes(), 8) == 1, "F6-octal")
     assert(payload.number([128 as byte], 8) == -1, "F6-base256-refused")
     assert(payload.ustar_path("usr/bin/tool"), "F6-ustar-path")
+    assert(!payload.ustar_path("usr/é"), "F6-nonportable-path-needs-pax")
+    assert(!payload.ustar_path("usr/a b"), "F6-nonportable-space-needs-pax")
     let messages = ["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"]
     let hashes = [
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

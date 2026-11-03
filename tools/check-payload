@@ -114,7 +114,7 @@ def vectors(d):
     pad=bytearray(valid);pad[1027]=1;cases.append(('nonzero-padding',bytes(pad)))
     long=b'usr/'+b'a'*200+b'/'+b'b'*101
     cases.append(('bad-path',extended(pax('path',b'../'+b'x'*300))))
-    positives=[valid,extended(pax('path',long)),extended(pax('mtime',b'-1.25')),extended(pax('atime',b'0')+pax('ctime',b'1')),
+    positives=[valid,extended(pax('path',long)),extended(pax('path','usr/é'.encode())),extended(pax('linkpath','é'.encode()),header(b'usr/link',b'2',0,0o777)),extended(pax('mtime',b'-1.25')),extended(pax('atime',b'0')+pax('ctime',b'1')),
        archive((header(b'usr/f',b'0',0,0o644),b''),(header(b'usr/h',b'1',0,0o644,b'usr/f'),b''))]
     for binary in [BINARY,BINARY.with_name('lrd')]:
         for i,(error,raw) in enumerate(cases):
