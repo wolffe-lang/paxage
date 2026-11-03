@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Independent TUF 1.0.37 / TRUST T1-T18 bytes. OpenSSL is a container black box.
+Run only in an unprivileged, network-disabled container on kasumi. No TUF,
+canonicalization or crypto implementation/library is imported.
+"""
+import argparse
+import copy
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+NOW = '2026-11-03T00:00:00Z'
+FUTURE = '2030-01-01T00:00:00Z'
+PAST = '2020-01-01T00:00:00Z'
+
+
+def canonical(v):
+    # TUF section 4.1 and the cited OLPC grammar, with T2/T3's UTF-8 subset.
+    if v is None: return b'null'
+    if v is True: return b'true'
+    if v is False: return b'false'
+    if type(v) is int:
+        if not 0 <= v <= 9223372036854775807: raise ValueError('integer-overflow')
+        return str(v).encode('ascii')
+    if isinstance(v, str):
+        b = v.encode('utf-8', errors='strict')
+        if any(c < 32 for c in b): raise ValueError('non-canonical-signed')
+        return b'"' + b.replace(b'\\', b'\\\\').replace(b'"', b'\\"') + b'"'
+    if isinstance(v, list): return b'[' + b','.join(canonical(x) for x in v) + b']'
+    if isinstance(v, dict):
+        if not all(isinstance(k, str) for k in v): raise ValueError('field-type')
+        keys = sorted(v, key=lambda k: k.encode('utf-8'))
+        return b'{' + b','.join(canonical(k) + b':' + canonical(v[k]) for k in keys) + b'}'
+    raise ValueError('field-type')
+
+
+def digest(b): return hashlib.sha256(b).hexdigest()
+
+
+def command(*args):
+    p = subprocess.run(['openssl', *map(str, args)], capture_output=True, timeout=30)
+    if p.returncode: raise RuntimeError(f'OpenSSL black-box exit={p.returncode}: {p.stderr.decode(errors="replace")}')
+    return p.stdout
+
+
+class Generator:
+    def __init__(self, output, keys):
+        self.output, self.keys = output, keys
+        self.counter = 0
+        self.material = {}
+        self.cases = []
+        output.mkdir(mode=0o700)
+        keys.mkdir(mode=0o700)
+        (keys / 'test-only').write_text('test-only keys; never use outside these vectors\n')
+        for epoch in ('old', 'new'):
+            for role in ('root1', 'root2', 'root3', 'targets', 'snapshot', 'timestamp'):
+                self.key(f'{epoch}-{role}')
+        self.key('unknown')
+
+    def key(self, name):
+        # Marked before the private bytes are ever written to a file.
+        pem = command('genpkey', '-algorithm', 'ed25519')
+        path = self.keys / f'{name}.test-only.pem'
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as f: f.write(b'# test-only\n' + pem)
+        der = command('pkey', '-in', path, '-pubout', '-outform', 'DER')
+        if len(der) != 44: raise RuntimeError('unexpected Ed25519 public-key export length')
+        public = der[-32:].hex()
+        obj = {'keytype': 'ed25519', 'scheme': 'ed25519', 'keyval': {'public': public}}
+        self.material[name] = (digest(canonical(obj)), obj, path)
+        # An OpenSSL-produced public-key wrapper for later writer interop, not private data.
+        (self.output / f'{name}.public.der').write_bytes(der)
+
+    def sign(self, signed, names):
+        self.counter += 1
+        wire = canonical(signed)
+        path = self.keys / f'test-only-message-{self.counter}'
+        path.write_bytes(wire)
+        signatures = []
+        for name in names:
+            keyid, _, key = self.material[name]
+            signature = command('pkeyutl', '-sign', '-rawin', '-inkey', key, '-in', path)
+            if len(signature) != 64: raise RuntimeError('signature-length')
+            signatures.append({'keyid': keyid, 'sig': signature.hex()})
+        return {'signed': signed, 'signatures': signatures}
+
+    def root(self, version, epoch='old', signers=None, expires=FUTURE):
+        keys, roles = {}, {}
+        for role in ('root', 'snapshot', 'targets', 'timestamp'):
+            names = [f'{epoch}-root{i}' for i in (1, 2, 3)] if role == 'root' else [f'{epoch}-{role}']
+            ids = []
+            for name in names:
+                keyid, key, _ = self.material[name]
+                keys[keyid] = key; ids.append(keyid)
+            roles[role] = {'keyids': ids, 'threshold': 2 if role == 'root' else 1}
+        body = {'_type': 'root', 'consistent_snapshot': True, 'expires': expires, 'keys': keys,
+                'roles': roles, 'spec_version': '1.0.37', 'version': version}
+        return self.sign(body, signers or [f'{epoch}-root1', f'{epoch}-root2'])
+
+    def target_body(self, version, expires=FUTURE):
+        entries = {}
+        for kind, suffix in [('manifest', 'manifest'), ('payload', 'payload.tar'), ('buildinfo', 'buildinfo')]:
+            logical = f'alpha-1-1.{suffix}'
+            data = f'test-only opaque target: {kind}\n'.encode()
+            entries[logical] = {'length': len(data), 'hashes': {'sha256': digest(data)},
+                                'custom': {'name': 'alpha', 'version': '1-1', 'architecture': 'x86_64', 'kind': kind}}
+        return {'_type': 'targets', 'expires': expires, 'spec_version': '1.0.37', 'targets': entries, 'version': version}
+
+    def reference(self, role, version, child, child_name, expires=FUTURE, epoch='old'):
+        wire = canonical(child)
+        body = {'_type': role, 'expires': expires, 'spec_version': '1.0.37', 'version': version,
+                'meta': {child_name: {'version': child['signed']['version'], 'length': len(wire), 'hashes': {'sha256': digest(wire)}}}}
+        return self.sign(body, [f'{epoch}-{role}'])
+
+    def chain(self, repo, tv=100, sv=100, av=100, te=FUTURE, se=FUTURE, ae=FUTURE, epoch='old', target_body=None):
+        target = self.sign(target_body or self.target_body(av, ae), [f'{epoch}-targets'])
+        snapshot = self.reference('snapshot', sv, target, 'targets.json', se, epoch)
+        timestamp = self.reference('timestamp', tv, snapshot, 'snapshot.json', te, epoch)
+        (repo / 'metadata' / f'{av}.targets.json').write_bytes(canonical(target))
+        (repo / 'metadata' / f'{sv}.snapshot.json').write_bytes(canonical(snapshot))
+        (repo / 'metadata/timestamp.json').write_bytes(canonical(timestamp))
+        return timestamp, snapshot, target
+
+    def case(self, name, refusal, *, action='update', now=NOW):
+        repo = self.output / name
+        shutil.copytree(self.output / 'baseline', repo)
+        self.cases.append({'name': name, 'repository': name, 'refusal': refusal, 'action': action, 'now': now})
+        return repo
+
+    def emit(self):
+        base = self.output / 'baseline'
+        (base / 'metadata').mkdir(parents=True); (base / 'targets').mkdir()
+        for v in (1, 2): (base / f'metadata/{v}.root.json').write_bytes(canonical(self.root(v)))
+        for kind, suffix in [('manifest', 'manifest'), ('payload', 'payload.tar'), ('buildinfo', 'buildinfo')]:
+            data = f'test-only opaque target: {kind}\n'.encode()
+            (base / 'targets' / f'{digest(data)}.alpha-1-1.{suffix}').write_bytes(data)
+        self.chain(base)
+        (self.output / 'pinned-root.json').write_bytes((base / 'metadata/2.root.json').read_bytes())
+        self.chain(self.case('rollback-timestamp', 'rollback-timestamp'), tv=99)
+        self.chain(self.case('rollback-snapshot', 'rollback-snapshot'), tv=101, sv=99)
+        self.chain(self.case('rollback-targets', 'rollback-targets'), tv=101, sv=101, av=99)
+        self.chain(self.case('rollback-whole-snapshot', 'rollback-timestamp'), tv=99, sv=99, av=99)
+        self.chain(self.case('freeze-timestamp', 'expired-timestamp'), tv=101, te=PAST)
+        self.chain(self.case('freeze-snapshot', 'expired-snapshot'), tv=101, sv=101, se=PAST)
+        self.chain(self.case('freeze-targets', 'expired-targets'), tv=101, sv=101, av=101, ae=PAST)
+        for role, filename in [('root', '3.root.json'), ('timestamp', 'timestamp.json'), ('snapshot', '100.snapshot.json'), ('targets', '100.targets.json')]:
+            repo = self.case(f'same-version-rewrite-{role}', 'same-version-rewrite')
+            if role == 'root':
+                obj = self.root(2, expires='2031-01-01T00:00:00Z')
+                (repo / 'metadata' / filename).write_bytes(canonical(obj))
+            elif role == 'timestamp': self.chain(repo, te='2031-01-01T00:00:00Z')
+            elif role == 'snapshot': self.chain(repo, tv=101, se='2031-01-01T00:00:00Z')
+            else: self.chain(repo, tv=101, sv=101, ae='2031-01-01T00:00:00Z')
+        for name, v, signers, refusal in [
+            ('rollback-root', 1, ['old-root1', 'old-root2'], 'rollback-root'),
+            ('root-skipped-version', 4, ['old-root1', 'old-root2'], 'root-version'),
+            ('root-new-only', 3, ['new-root1', 'new-root2'], 'root-old-threshold'),
+            ('root-old-only', 3, ['old-root1', 'old-root2'], 'root-new-threshold')]:
+            repo = self.case(name, refusal)
+            epoch = 'new' if name in ('root-new-only', 'root-old-only') else 'old'
+            (repo / 'metadata/3.root.json').write_bytes(canonical(self.root(v, epoch, signers)))
+        repo = self.case('fast-forward-rotation-recovery', None)
+        rotated = self.root(3, 'new', ['old-root1', 'old-root2', 'new-root1', 'new-root2'])
+        (repo / 'metadata/3.root.json').write_bytes(canonical(rotated))
+        self.chain(repo, tv=1, sv=1, av=1, epoch='new')
+        repo = self.case('revoked-key', 'signature-threshold')
+        (repo / 'metadata/3.root.json').write_bytes(canonical(rotated)); self.chain(repo, tv=101, sv=101, av=101)
+        for name, refusal in [('below-threshold', 'signature-threshold'), ('duplicate-signature', 'duplicate-signature'),
+                              ('unknown-key', 'signature-threshold'), ('wrong-length-signature', 'signature-length')]:
+            repo = self.case(name, refusal); timestamp, _, _ = self.chain(repo, tv=101, sv=101, av=101)
+            if name == 'below-threshold': timestamp['signatures'] = []
+            elif name == 'duplicate-signature': timestamp['signatures'] *= 2
+            elif name == 'unknown-key': timestamp = self.sign(timestamp['signed'], ['unknown'])
+            else: timestamp['signatures'][0]['sig'] = timestamp['signatures'][0]['sig'][:-2]
+            (repo / 'metadata/timestamp.json').write_bytes(canonical(timestamp))
+        repo = self.case('unknown-key-ignored', None); timestamp, _, _ = self.chain(repo, tv=101, sv=101, av=101)
+        timestamp['signatures'] += self.sign(timestamp['signed'], ['unknown'])['signatures']
+        (repo / 'metadata/timestamp.json').write_bytes(canonical(timestamp))
+        repo = self.case('unsupported-scheme', 'unsupported-scheme')
+        root = copy.deepcopy(rotated); next(iter(root['signed']['keys'].values()))['scheme'] = 'ed25519ph'
+        (repo / 'metadata/3.root.json').write_bytes(canonical(root))
+        for role, length in [('timestamp', 16385), ('snapshot', 65537), ('targets', 1048577)]:
+            repo = self.case(f'{role}-byte-limit', 'metadata-byte-limit' if role == 'timestamp' else 'metadata-length')
+            self.chain(repo, tv=101, sv=101, av=101)
+            filename = 'timestamp.json' if role == 'timestamp' else f'101.{role}.json'
+            (repo / 'metadata' / filename).write_bytes(b' ' * length)
+        for role in ('snapshot', 'targets'):
+            for delta in ('long', 'short'):
+                repo = self.case(f'{role}-one-byte-{delta}', 'metadata-length')
+                self.chain(repo, tv=101, sv=101, av=101)
+                path = repo / f'metadata/101.{role}.json'; b = path.read_bytes()
+                path.write_bytes(b + b' ' if delta == 'long' else b[:-1])
+        repo = self.case('mix-and-match', 'metadata-hash'); self.chain(repo, tv=101, sv=101, av=101)
+        path = repo / 'metadata/101.targets.json'; b = path.read_bytes(); path.write_bytes(b.replace(b'2030-', b'2031-', 1))
+        repo = self.case('endless-timestamp-fifo', 'repository-file')
+        (repo / 'metadata/timestamp.json').unlink(); os.mkfifo(repo / 'metadata/timestamp.json', 0o600)
+        for name, logical in [('logical-slash', 'alpha/path'), ('logical-dotdot', 'alpha..path')]:
+            repo = self.case(name, 'logical-name'); body = self.target_body(101)
+            entry = body['targets'].pop('alpha-1-1.payload.tar'); body['targets'][logical] = entry
+            self.chain(repo, tv=101, sv=101, av=101, target_body=body)
+        repo = self.case('logical-NUL', 'non-canonical-signed'); self.chain(repo, tv=101, sv=101, av=101)
+        # Escape spelling is valid JSON but not canonical OLPC signed data. Rebind its exact bytes.
+        path = repo / 'metadata/101.targets.json'; bad = path.read_bytes().replace(b'alpha-1-1.payload.tar', b'alpha\\u0000payload.tar')
+        path.write_bytes(bad)
+        snap = json.loads((repo / 'metadata/101.snapshot.json').read_bytes())
+        snap['signed']['meta']['targets.json'].update(length=len(bad), hashes={'sha256': digest(bad)})
+        snap = self.sign(snap['signed'], ['old-snapshot'])
+        stamp = self.reference('timestamp', 101, snap, 'snapshot.json')
+        (repo / 'metadata/101.snapshot.json').write_bytes(canonical(snap)); (repo / 'metadata/timestamp.json').write_bytes(canonical(stamp))
+        for name, mutation, refusal in [('object-long', 'long', 'target-length'), ('object-short', 'short', 'target-length'),
+                                        ('object-hash', 'hash', 'target-hash'), ('lying-hash-prefix', 'hash', 'target-hash')]:
+            repo = self.case(name, refusal, action='fetch')
+            path = next((repo / 'targets').glob('*.payload.tar')); b = path.read_bytes()
+            path.write_bytes(b + b'x' if mutation == 'long' else b[:-1] if mutation == 'short' else bytes([b[0] ^ 1]) + b[1:])
+        self.case('clock-before-floor', 'clock-before-floor', now='2026-11-02T23:59:59Z')
+        self.case('root-expired', 'expired-root', now='2030-01-01T00:00:00Z')
+        (self.output / 'cases.json').write_text(json.dumps({'now': NOW, 'cases': self.cases}, indent=2) + '\n')
+        (self.output / 'openssl-version.txt').write_bytes(command('version'))
+        print(f'PASS independent-vectors cases={len(self.cases)}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--keys', type=Path, required=True)
+    args = parser.parse_args()
+    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PM03_HOST') != 'kasumi':
+        raise SystemExit('FAIL generator-requires-unprivileged-kasumi-container')
+    Generator(args.output, args.keys).emit()
+
+
+if __name__ == '__main__': main()
