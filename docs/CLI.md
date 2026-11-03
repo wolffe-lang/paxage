@@ -80,7 +80,9 @@ This verb alone does not authenticate the whole blob or a signer.
 HEX is the externally expected lowercase whole-blob SHA-256 (not a signer/trust
 check). Check the entire blob and byte length before parsing its headers or the
 manifest and before any entry is written. A held payload fd is reused throughout.
-Then validate the complete archive/inventory before extracting.
+Then validate the complete archive/inventory before extracting. Optional paired
+`--manifest-sha256 HEX --manifest-length N` authenticate the exact manifest
+bytes read at consumption, before parsing; `fetch --stage` always supplies them.
 
 DIR must be empty, caller-owned, a real directory, not `/`, and not group/world
 writable. Refuse detectable mount roots (different parent device or identical

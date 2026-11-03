@@ -121,6 +121,9 @@ def main():
     (repo / 'metadata/timestamp.json').write_bytes(latest)
     run('T13-clock-floor', 'update', '--repo', url, '--state', state, '--now', '2026-11-02T23:59:59Z', error='clock-before-floor')
     run('T1-network-refused', 'update', '--repo', 'https://invalid.example/', '--state', state, '--now', NOW, error='unsupported-transport')
+    evidence = Path(os.environ.get('LARDER_WRITER_EVIDENCE', ROOT / 'target/evidence/trust-writer-metadata'))
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(repo / 'metadata', evidence)
     print('PASS trust-e2e')
     return 0
 

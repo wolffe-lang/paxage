@@ -33,7 +33,7 @@ five batches of eight verifications of a 1 MiB message gave a median
 25.425536 ms/signature (range 25.387417–25.627197), process-inclusive with
 signing outside timing. Sixteen signatures therefore represent about 0.41 s
 of measured verify work at the largest input, not a wall-clock guarantee.
-The forthcoming strict std entrypoint must repeat this qualification.
+The strict entrypoint repeated the 1 MiB measurement under the Linux 2 GiB cap: median 24.004555 ms/signature, range 23.911569–27.006438 across five batches of eight. This is a separate run, not a controlled speedup claim; the ceiling stays 16.
 
 ## T2 — Strict byte-oriented JSON reader
 
@@ -295,7 +295,7 @@ vectors are qualification inputs; vendor data is read directly, never copied
 by hand. Refuse noncanonical S >= L (`non-canonical-scalar`), noncanonical
 key or R encodings (`non-canonical-key`, `non-canonical-R`), small-order key
 or R (`small-order-key`, `small-order-R`), and wrong lengths (T5).
-Use std verify, never another Ed25519 implementation. A missing primitive
+Use std `curve25519.verify_strict`, never another Ed25519 implementation. A missing primitive
 rejection is a qualification failure to report, not permission to implement
 new curve arithmetic here. Native kasumi verify cost, including sample count,
 message length and timing distribution, must justify T1's signature bound.
