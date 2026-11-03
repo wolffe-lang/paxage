@@ -4,7 +4,7 @@ use trust_metadata as meta
 /// Parsed flag values and repeated package inputs, or a named usage refusal.
 pub struct Options { values: Map[str, str], manifests: List[str], buildinfos: List[str], error: str }
 /// Read one optional flag, returning the empty string when absent.
-pub fn get(o: Options, name: str) -> str { o.values[name] else "" }
+pub fn flag_value(o: Options, name: str) -> str { o.values[name] else "" }
 /// Parse flag/value pairs. Repetition is allowed only for paired package inputs.
 pub fn parse(args: List[str], start: int) -> Options {
     var o = Options { values: Map[str, str](), manifests: List[str](), buildinfos: List[str](), error: "" }
@@ -22,7 +22,7 @@ pub fn parse(args: List[str], start: int) -> Options {
         if name == "--manifest" { (mut o.manifests).push(value)
         } else if name == "--buildinfo" { (mut o.buildinfos).push(value)
         } else {
-            if get(o, name) != "" { o.error = "duplicate-option"; return o }
+            if flag_value(o, name) != "" { o.error = "duplicate-option"; return o }
             o.values[name] = value
         }
         if o.manifests.len > 24 || o.buildinfos.len > 24 { o.error = "target-limit"; return o }
@@ -40,7 +40,7 @@ pub fn integer(text: str) -> int {
 }
 /// Fix update time once. Explicit tests use --now; fallback announces the system clock.
 pub fn now(o: Options) -> int {
-    let explicit = get(o, "--now")
+    let explicit = flag_value(o, "--now")
     if explicit != "" { return meta.utc(explicit) }
     print("clock=system")
     time_unix_ms() / 1000
@@ -48,7 +48,7 @@ pub fn now(o: Options) -> int {
 /// Positive validity window added without overflowing the supported UTC range.
 pub fn expiry(o: Options, option: str, defaults: int, now: int) -> int {
     var seconds = defaults
-    let specified = get(o, option)
+    let specified = flag_value(o, option)
     if specified != "" { seconds = integer(specified) }
     if now < 0 || seconds < 1 || seconds > 253402300799 - now { return -1 }
     now + seconds

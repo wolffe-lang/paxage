@@ -79,9 +79,9 @@ fn initialize(repo: str, keys: Keys, o: options.Options, now: int) -> str {
     write_metadata(repo, text, "root", 1)
 }
 fn rotate(repo: str, keys: Keys, o: options.Options, now: int) -> str {
-    let v = options.integer(options.get(o, "--version"))
+    let v = options.integer(options.flag_value(o, "--version"))
     if v < 2 { return "root-version" }
-    let old = load_keys(options.get(o, "--old-keys"))
+    let old = load_keys(options.flag_value(o, "--old-keys"))
     if old.error != "" { return old.error }
     let input = io.read("{repo}/metadata/{v - 1}.root.json", 65536)
     if input.error != "" { return input.error }
@@ -109,11 +109,11 @@ fn add_file(repo: str, source: str, e: meta.Entry) -> str {
     cache.copy_verified(source, path, e)
 }
 fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
-    let v = options.integer(options.get(o, "--version"))
+    let v = options.integer(options.flag_value(o, "--version"))
     if v < 1 { return "metadata-version" }
     if o.manifests.len != o.buildinfos.len { return "target-incomplete" }
     var root_version = 1
-    if options.get(o, "--root-version") != "" { root_version = options.integer(options.get(o, "--root-version")) }
+    if options.flag_value(o, "--root-version") != "" { root_version = options.integer(options.flag_value(o, "--root-version")) }
     if root_version < 1 || root_version == 9223372036854775807 { return "root-version" }
     if fs_exists("{repo}/metadata/{root_version + 1}.root.json") { return "publish-root-stale" }
     let root_input = io.read("{repo}/metadata/{root_version}.root.json", 65536)
@@ -182,8 +182,8 @@ fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
 }
 /// Run one test-only repository operation, with an exclusive publisher lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
-    if verb == "keygen" { return keygen(options.get(o, "--keys")) }
-    let raw = options.file_path(options.get(o, "--repo"))
+    if verb == "keygen" { return keygen(options.flag_value(o, "--keys")) }
+    let raw = options.file_path(options.flag_value(o, "--repo"))
     if raw == "" { return "unsupported-transport" }
     let error = cache.directory(raw)
     if error != "" { return error }
@@ -196,7 +196,7 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
         if result != "" { break }
     }
     if result == "" {
-        let keys = load_keys(options.get(o, "--keys"))
+        let keys = load_keys(options.flag_value(o, "--keys"))
         result = keys.error
         if result == "" {
             if verb == "init" { result = initialize(repo, keys, o, now)

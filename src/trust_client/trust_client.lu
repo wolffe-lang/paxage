@@ -23,7 +23,7 @@ fn bound(repo: str, role: str, ref: meta.Entry) -> meta.Meta {
     meta.parse(input.bytes, role)
 }
 fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
-    let pinned = options.get(o, "--root")
+    let pinned = options.flag_value(o, "--root")
     if pinned == "" { return "bootstrap-unpinned" }
     let input = io.read(pinned, 65536)
     if input.error != "" { return input.error }
@@ -94,7 +94,7 @@ fn update(repo: str, dir: str, now: int) -> str {
     state.ready(loaded.value, now)
 }
 fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -> str {
-    let logical = options.get(o, "--target")
+    let logical = options.flag_value(o, "--target")
     if !meta.logical(logical) { return "logical-name" }
     var index = -1
     for i in 0..s.targets.entries.len { if s.targets.entries[i].path == logical { index = i } }
@@ -103,7 +103,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
     let error = cache.fetch(repo, cache_dir, target)
     if error != "" { return error }
     let object = "{cache_dir}/objects/sha256/{target.digest}"
-    let into = options.get(o, "--stage")
+    let into = options.flag_value(o, "--stage")
     if into != "" {
         if target.kind != "payload" { return "target-kind" }
         var manifest = -1
@@ -136,7 +136,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
 fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
     let ready = state.ready(s, now)
     if ready != "" { return ready }
-    let dir = options.get(o, "--cache")
+    let dir = options.flag_value(o, "--cache")
     if dir == "" { return "missing-cache-directory" }
     for path in [copy dir, "{dir}/.part", "{dir}/objects", "{dir}/objects/sha256"] {
         let error = cache.directory(path)
@@ -150,10 +150,10 @@ fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
 }
 /// Execute a file-only client command while holding its private trust-directory lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
-    let raw = options.file_path(options.get(o, "--repo"))
+    let raw = options.file_path(options.flag_value(o, "--repo"))
     if raw == "" { return "unsupported-transport" }
     let repo = fs_realpath(raw) else |_| { return "repository-file" }
-    let dir = options.get(o, "--state")
+    let dir = options.flag_value(o, "--state")
     if dir == "" { return "missing-state-directory" }
     var error = ""
     if verb == "bootstrap" { error = cache.directory(dir) } else { error = io.private_dir(dir) }
