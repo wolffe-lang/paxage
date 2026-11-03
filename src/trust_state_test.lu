@@ -76,6 +76,12 @@ fn main() -> int {
         if !row(saved == "", "T14-save-generation") { print("DETAIL {saved}"); return 1 }
         let loaded = store.load(dir)
         if !row(loaded.error == "" && loaded.value.root.version == 2 && loaded.value.floor == 101 && state.ready(loaded.value, 101) == "", "T14-load-generation") { ok = false; print("DETAIL {loaded.error}") }
+        var regressed = copy s
+        regressed.stage = 0
+        regressed.timestamp = meta.absent("timestamp")
+        regressed.snapshot = meta.absent("snapshot")
+        regressed.targets = meta.absent("targets")
+        if !row(store.save(dir, regressed, loaded.generation) == "state-invalid", "T19-same-root-stage-regression") { return 1 }
         let original_pointer = io.read("{dir}/current", 1024)
         let original_hash = meta.digest(original_pointer.bytes)
         let candidate_loaded = store.load_candidate(dir, original_pointer.bytes)

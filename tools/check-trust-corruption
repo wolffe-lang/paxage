@@ -68,6 +68,19 @@ def main():
     require(p.returncode == 1 and not p.stdout and 'state-invalid' in p.stderr and GUIDANCE in p.stderr,
             'T19-oversized-pointer', repr((p.returncode, p.stdout, p.stderr)))
     require(snapshot(damaged) == before, 'T19-zero-writes-oversized-pointer')
+    nonempty = WORK / 'nonempty'; nonempty.mkdir(mode=0o700)
+    (nonempty / 'sentinel').write_text('keep')
+    before_nonempty = snapshot(nonempty)
+    p = call('bootstrap', '--repo', repo.as_uri(), '--root', pinned, '--state', nonempty, '--now', NOW)
+    require(p.returncode == 1 and 'state-not-empty' in p.stderr and not p.stdout, 'T19-bootstrap-nonempty', repr((p.returncode, p.stdout, p.stderr)))
+    require(snapshot(nonempty) == before_nonempty, 'T19-nonempty-zero-writes')
+    missing = WORK / 'missing-current'; shutil.copytree(state, missing); (missing / 'current').unlink()
+    before_missing = snapshot(missing)
+    p = call('update', '--repo', repo.as_uri(), '--state', missing, '--now', NOW)
+    require(p.returncode == 1 and 'state-invalid' in p.stderr and GUIDANCE in p.stderr, 'T19-missing-current')
+    p = call('bootstrap', '--repo', repo.as_uri(), '--root', pinned, '--state', missing, '--now', NOW)
+    require(p.returncode == 1 and 'state-not-empty' in p.stderr, 'T19-no-rebootstrap-in-damaged-directory')
+    require(snapshot(missing) == before_missing, 'T19-missing-current-zero-writes')
     # The explicit operator path is a new directory, never repairing the old one.
     fresh = WORK / 'explicit-rebootstrap'
     success('T19-explicit-new-bootstrap', 'bootstrap', '--repo', repo.as_uri(), '--root', pinned, '--state', fresh, '--now', NOW)

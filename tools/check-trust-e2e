@@ -69,6 +69,23 @@ def main():
     run('T15-root-create-only', 'repo', 'init', '--repo', url, '--keys', keys, '--now', NOW, error='immutable-rewrite')
     alpha = package('alpha', '1-1')
     beta = package('beta', '1-1')
+    original_manifest = alpha[1].read_bytes()
+    changed_manifest = WORK / 'changed.manifest'
+    changed_manifest.write_bytes(original_manifest.replace(b'name: "alpha"', b'name: "other"', 1))
+    payload = alpha[1].with_name('alpha-1-1.payload.tar')
+    destination = WORK / 'bound-manifest-stage'; destination.mkdir(mode=0o700)
+    bound = ['stage', payload, '--length', str(payload.stat().st_size), '--sha256', hashlib.sha256(payload.read_bytes()).hexdigest(),
+             '--manifest', changed_manifest, '--manifest-sha256', hashlib.sha256(original_manifest).hexdigest(),
+             '--manifest-length', str(len(original_manifest)), '--into', destination]
+    run('T16-manifest-replacement-at-consumption', *bound, error='manifest-digest')
+    check(not list(destination.iterdir()), 'T16-replaced-manifest-zero-writes')
+    bound[bound.index('--manifest') + 1] = alpha[1]
+    bound[bound.index('--manifest-length') + 1] = str(len(original_manifest) + 1)
+    run('T16-manifest-length-at-consumption', *bound, error='manifest-length')
+    check(not list(destination.iterdir()), 'T16-manifest-length-zero-writes')
+    bound[bound.index('--manifest-length') + 1] = str(len(original_manifest))
+    run('T16-bound-manifest-stage', *bound, last='stage ok entries=3')
+    check(tree(alpha[0]) == tree(destination), 'T16-bound-manifest-exact-tree')
     run('T15-publish-first', 'repo', 'publish', '--repo', url, '--keys', keys, '--version', '1',
         '--manifest', alpha[1], '--buildinfo', alpha[2], '--manifest', beta[1], '--buildinfo', beta[2], '--now', NOW,
         last='repo publish ok')
