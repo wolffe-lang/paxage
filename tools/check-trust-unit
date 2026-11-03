@@ -17,5 +17,13 @@ build() {
   rm -rf src/.lu-cache
   "$WOLF" build --deny-warnings "src/${unit}_test.lu" -o "target/tests/$unit"
 }
+run() {
+  if [ "$unit" = trust_state ]; then
+    mkdir -m 700 target/tests/state
+    "target/tests/$unit" "$PWD/target/tests/state"
+  else
+    "target/tests/$unit"
+  fi
+}
 step "$unit-build" build
-step "$unit" "target/tests/$unit"
+step "$unit" run

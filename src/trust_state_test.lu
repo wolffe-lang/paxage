@@ -1,4 +1,36 @@
 use trust_state as state
+use trust_metadata as meta
+use trust_writer as writer
+use trust_store as store
+use trust_io as io
+
+fn keys(offset: int) -> List[writer.Signing] {
+    // Deterministic test-only seeds, never repository production keys.
+    var out = List[writer.Signing]()
+    for i in 0..6 {
+        var seed = List[byte]()
+        for _j in 0..32 { (mut seed).push((offset + i) as byte) }
+        (mut out).push(writer.test_key(seed))
+    }
+    out
+}
+fn parsed(text: str, role: str) -> meta.Meta {
+    let bytes = text.bytes()
+    meta.parse(bytes, role)
+}
+fn ref(m: meta.Meta) -> meta.Entry {
+    meta.Entry { path: "{m.role}.json", digest: meta.digest(m.wire), length: m.wire.len, version: m.version, name: "", package_version: "", arch: "", kind: "" }
+}
+fn chain(mut s: state.State, k: List[writer.Signing], v: int, now: int) -> bool {
+    let t = parsed(writer.targets(List[meta.Entry](), v, 2000000000, k[3]), "targets")
+    let snap = parsed(writer.reference("snapshot", v, 2000000000, ref(t), k[4]), "snapshot")
+    let stamp = parsed(writer.reference("timestamp", v, 2000000000, ref(snap), k[5]), "timestamp")
+    for m in [stamp, snap, t] {
+        let error = state.advance(mut s, m, now)
+        if !row(error == "", "T13-accept-{m.role}") { print("DETAIL {error}"); return false }
+    }
+    row(state.ready(s, now) == "", "T13-complete-chain")
+}
 fn row(ok: bool, name: str) -> bool {
     if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
     ok
@@ -15,5 +47,35 @@ fn main() -> int {
     if !row(state.clock_error(10, 9) == "clock-before-floor", "T13-clock-before-floor") { ok = false }
     if !row(state.clock_error(10, 10) == "", "T13-clock-equal-floor") { ok = false }
     if !row(state.clock_error(10, 11) == "", "T13-clock-forward") { ok = false }
+    let k = keys(1)
+    let next = keys(11)
+    let root = parsed(writer.root(k, k[0..3], 1, 2000000000), "root")
+    if !row(state.bootstrap_error(root, 100) == "", "T11-pinned-root-self-threshold") { ok = false; print("DETAIL root={root.error}") }
+    var s = state.initial(root, 100)
+    if !chain(mut s, k, 100, 100) { ok = false }
+    let skip = parsed(writer.root(next, next[0..3], 3, 2000000000), "root")
+    if !row(state.advance(mut s, skip, 100) == "root-version", "T12-skipped-root") { ok = false }
+    let new_only = parsed(writer.root(next, next[0..3], 2, 2000000000), "root")
+    if !row(state.advance(mut s, new_only, 100) == "root-old-threshold", "T12-new-only") { ok = false }
+    let old_only = parsed(writer.root(next, k[0..3], 2, 2000000000), "root")
+    if !row(state.advance(mut s, old_only, 100) == "root-new-threshold", "T12-old-only") { ok = false }
+    if !row(s.stage == 3 && s.root.version == 1 && s.timestamp_mark.version == 100, "T13-refusal-preserves-state") { ok = false }
+    var signers = k[0..3]
+    for key in next[0..3] { (mut signers).push(key) }
+    let rotated = parsed(writer.root(next, signers, 2, 2000000000), "root")
+    if !row(state.advance(mut s, rotated, 101) == "", "T12-dual-threshold") { ok = false }
+    if !row(s.stage == 0 && s.timestamp_mark.version == 0 && s.snapshot_mark.version == 0 && s.targets_mark.version == 0 && s.floor == 101, "T12-fast-forward-reset") { ok = false }
+    if !chain(mut s, next, 1, 101) { ok = false }
+    if !row(state.ready(s, 100) == "clock-before-floor", "T13-ready-clock-floor") { ok = false }
+    if !row(state.ready(s, 2000000000) == "expired-root", "T13-expired-root") { ok = false }
+    let args = env_args()
+    if args.len == 1 {
+        let dir = args[0]
+        if !row(io.private_dir(dir) == "", "T14-private-state-dir") { return 1 }
+        let saved = store.save(dir, s, 0)
+        if !row(saved == "", "T14-save-generation") { print("DETAIL {saved}"); return 1 }
+        let loaded = store.load(dir)
+        if !row(loaded.error == "" && loaded.value.root.version == 2 && loaded.value.floor == 101 && state.ready(loaded.value, 101) == "", "T14-load-generation") { ok = false; print("DETAIL {loaded.error}") }
+    }
     if ok { 0 } else { 1 }
 }
