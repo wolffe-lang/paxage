@@ -140,8 +140,31 @@ pub fn safe_link(p: str, target: str) -> bool {
     true
 }
 
+/// POSIX portable filename characters plus path separators. Nonportable names
+/// require UTF-8 pax path/linkpath even when they fit ustar's byte widths.
+pub fn portable(value: str) -> bool {
+    for c in value.bytes() {
+        if !(
+            c >= 48 as byte && c <= 57 as byte ||
+                c >= 65 as byte && c <= 90 as byte ||
+                c >= 97 as byte && c <= 122 as byte ||
+                c == 46 as byte ||
+                c == 95 as byte ||
+                c == 45 as byte ||
+                c == 47 as byte
+        ) {
+            return false
+        }
+    }
+    true
+}
+
+/// Whether a link target fits ustar's portable 100-byte linkname field.
+pub fn ustar_link(value: str) -> bool { value.len <= 100 && portable(value) }
+
 /// Whether an F5 path fits POSIX name[100] + prefix[155], in UTF-8 bytes.
 pub fn ustar_path(p: str) -> bool {
+    if !portable(p) { return false }
     if p.len <= 100 { return true }
     let b = p.bytes()
     for i in 0..b.len {
@@ -316,6 +339,9 @@ pub fn inspect(mut s: Stream) -> Inventory {
             s.error = "header-text"
             break
         }
+        var ascii = true
+        for c in h { if c > 127 as byte { ascii = false } }
+        if !ascii { s.error = "header-text"; break }
         var path = string(h, 0, 100)
         let prefix = string(h, 345, 155)
         if prefix != "" { path = "{prefix}/{path}" }
@@ -350,6 +376,8 @@ pub fn inspect(mut s: Stream) -> Inventory {
             s.error = "payload-type"
             break
         }
+        var had_path = false
+        var had_link = false
         if pending {
             for i in 0..x.keys.len {
                 let k = x.keys[i]
@@ -357,12 +385,14 @@ pub fn inspect(mut s: Stream) -> Inventory {
                 if k == "path" {
                     if ustar_path(v) { s.error = "pax-unused"; break }
                     path = v
+                    had_path = true
                 } else if k == "linkpath" {
-                    if v.len <= 100 || !(kind == "symlink" || kind == "hardlink") {
+                    if ustar_link(v) || !(kind == "symlink" || kind == "hardlink") {
                         s.error = "pax-unused"
                         break
                     }
                     target = v
+                    had_link = true
                 } else if k == "size" {
                     let n = number(v.bytes(), 10)
                     if n < 0 { s.error = "pax-number"; break }
@@ -379,8 +409,13 @@ pub fn inspect(mut s: Stream) -> Inventory {
             if s.error != "" { break }
         }
         if !allowed_path(path) { s.error = "bad-path"; break }
+        if !had_path && !ustar_path(path) { s.error = "pax-required"; break }
         if kind == "symlink" && !safe_link(path, target) { s.error = "bad-symlink"; break }
         if kind == "hardlink" && !allowed_path(target) { s.error = "bad-hardlink"; break }
+        if (kind == "symlink" || kind == "hardlink") && !had_link && !ustar_link(target) {
+            s.error = "pax-required"
+            break
+        }
         if (kind == "file" || kind == "dir") && target != "" { s.error = "unused-link"; break }
         if kind != "file" && length != 0 { s.error = "type-size"; break }
         if es.len >= 100000 { s.error = "entry-limit"; break }

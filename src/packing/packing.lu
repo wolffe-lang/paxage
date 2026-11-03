@@ -106,7 +106,7 @@ fn header(path: str, kind: str, mode: int, length: int, target: str, epoch: int)
     var h = zeros(512)
     var name = path
     var prefix = ""
-    if path.len > 100 {
+    if payload.ustar_path(path) && path.len > 100 {
         let b = path.bytes()
         for i in 0..b.len {
             if b[i] == 47 as byte && i <= 155 && path.len - i - 1 <= 100 {
@@ -116,7 +116,7 @@ fn header(path: str, kind: str, mode: int, length: int, target: str, epoch: int)
             }
         }
     }
-    if name.len > 100 { name = "PaxFile" }
+    if !payload.ustar_path(path) { name = "PaxFile"; prefix = "" }
     put(mut h, 0, name)
     put(mut h, 345, prefix)
     put(mut h, 100, octal(mode, 8))
@@ -140,7 +140,7 @@ fn header(path: str, kind: str, mode: int, length: int, target: str, epoch: int)
         flag = "x"
     }
     put(mut h, 156, flag)
-    if target.len <= 100 { put(mut h, 157, target) }
+    if payload.ustar_link(target) { put(mut h, 157, target) }
     put(mut h, 257, "ustar")
     put(mut h, 263, "00")
     var sum = 0
@@ -232,7 +232,7 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
         var e = copy w.entries[i]
         var extension = ""
         if !payload.ustar_path(e.path) { extension += record("path", e.path) }
-        if e.target.len > 100 { extension += record("linkpath", e.target) }
+        if !payload.ustar_link(e.target) { extension += record("linkpath", e.target) }
         if e.length > 8589934591 { extension += record("size", "{e.length}") }
         if epoch > 8589934591 { extension += record("mtime", "{epoch}") }
         if extension != "" {
