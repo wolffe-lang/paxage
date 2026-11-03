@@ -351,9 +351,9 @@ def edges(d):
     for i in range(2000):(nodes/f'f{i:04}').touch()
     invoke(['pack',nodes,template,nodes_out,'--epoch',0],1,'node-limit')
     assert list(nodes_out.iterdir())==[],'F2-node-preflight-no-output'
-    bytes_source=d/'bytes-source';leaf=bytes_source/('a'*200)/('b'*200);leaf.mkdir(parents=True)
+    bytes_source=d/'bytes-source';leaf=bytes_source/('a'*200)/('b'*200)/('c'*200);leaf.mkdir(parents=True)
     bytes_out=d/'bytes-out';bytes_out.mkdir()
-    for i in range(1600):(leaf/f'f{i:04}').touch()
+    for i in range(1500):(leaf/f'f{i:04}').touch()
     invoke(['pack',bytes_source,template,bytes_out,'--epoch',0],1,'byte-limit',timeout=60)
     assert list(bytes_out.iterdir())==[],'F2-byte-preflight-no-output'
     print('END F6-packer-CLI-modes-auth-cumulative-edges exit=0',flush=True)
