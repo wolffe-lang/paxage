@@ -48,5 +48,11 @@ def main():
         result=container(cmd,[(ROOT/'target/bin/larder','/bin/larder','ro'),(out,'/fixture','ro'),(stage,'/fixture/stage','rw')])
         assert result.startswith(b'stage ok') and (stage/'usr/file').read_bytes()==b'abc'
         assert before=={p.name:(p.stat().st_ino,p.stat().st_size) for p in out.iterdir() if p.is_file()},'F6-container-parent-unchanged'
+        mounted=d/'mount-stage';mounted.mkdir(mode=0o700)
+        refused=cmd.replace('/fixture/','/input/').replace('--into /input/stage','--into /stage')
+        mount_cmd='message=$('+refused+' 2>&1); result=$?; test "$result" = 1 && test "$message" = "larder: stage-root-mount"'
+        container(mount_cmd,[(ROOT/'target/bin/larder','/bin/larder','ro'),(out,'/input','ro'),(mounted,'/stage','rw')])
+        assert list(mounted.iterdir())==[],'F6-mount-refusal-no-writes'
+
     print('END F6-container-interop-confinement exit=0',flush=True)
 if __name__=='__main__':main()

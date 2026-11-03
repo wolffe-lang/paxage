@@ -12,7 +12,12 @@ fn walk(root: str, parent: str, depth: int, mut w: Walk) {
     if depth > 4096 || w.error != "" { w.error = "bad-path"; return }
     var dir = root
     if parent != "" { dir += "/{parent}" }
-    let names = fs_read_dir(dir) else |_| { w.error = "pack-list"; return }
+    let names = fs_read_dir(dir) else |e| match e {
+        utf8 => { w.error = "bad-path"; return },
+        denied => { w.error = "pack-list"; return },
+        io => { w.error = "pack-list"; return },
+        not_found => { w.error = "pack-list"; return },
+    }
     for name in names {
         var path = name
         if parent != "" { path = "{parent}/{name}" }
