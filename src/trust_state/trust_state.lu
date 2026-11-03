@@ -131,3 +131,32 @@ pub fn ready(s: State, now: int) -> str {
     if snapshot != "" { return snapshot }
     binding(s.targets, s.snapshot.entries[0])
 }
+
+/// A proposed persisted state must preserve clock/version history or perform
+/// an authenticated single-step root epoch transition. No arbitrary fallback.
+pub fn continuity(old: State, next: State) -> str {
+    let clock = clock_error(old.floor, next.floor)
+    if clock != "" { return clock }
+    let root = version_error("root", Mark { version: old.root.version, hash: meta.digest(old.root.wire) }, Mark { version: next.root.version, hash: meta.digest(next.root.wire) })
+    if root != "" { return root }
+    var reset = false
+    if next.root.version != old.root.version {
+        if old.root.version == 9223372036854775807 || next.root.version != old.root.version + 1 { return "root-version" }
+        if meta.verify(next.root, old.root, "root") != "" { return "root-old-threshold" }
+        if meta.verify(next.root, next.root, "root") != "" { return "root-new-threshold" }
+        reset = meta.keys_changed(old.root, next.root, "timestamp") || meta.keys_changed(old.root, next.root, "snapshot")
+    }
+    if !reset {
+        let before = [copy old.timestamp_mark, copy old.snapshot_mark, copy old.targets_mark]
+        let after = [copy next.timestamp_mark, copy next.snapshot_mark, copy next.targets_mark]
+        let roles = ["timestamp", "snapshot", "targets"]
+        for i in 0..3 {
+            if after[i].version == 0 && before[i].version == 0 { continue }
+            let error = version_error(roles[i], before[i], after[i])
+            if error != "" { return error }
+        }
+        if next.snapshot_floor < old.snapshot_floor { return "rollback-snapshot" }
+        if next.targets_floor < old.targets_floor { return "rollback-targets" }
+    }
+    ""
+}
