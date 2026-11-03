@@ -6,7 +6,7 @@ pub struct Mark { version: int, hash: str }
 pub struct State {
     root: meta.Meta, timestamp: meta.Meta, snapshot: meta.Meta, targets: meta.Meta,
     timestamp_mark: Mark, snapshot_mark: Mark, targets_mark: Mark,
-    snapshot_floor: int, targets_floor: int, floor: int, stage: int,
+    snapshot_floor: int, targets_floor: int, floor: int, stage: int, repository: str,
 }
 /// Named version/hash refusal; no state change on failure.
 pub fn version_error(role: str, old: Mark, candidate: Mark) -> str {
@@ -23,7 +23,7 @@ pub fn clock_error(floor: int, now: int) -> str {
 }
 /// Initial state from a caller-pinned root. Caller MUST check bootstrap_error first.
 pub fn initial(root: meta.Meta, now: int) -> State {
-    State { root: copy root, timestamp: meta.absent("timestamp"), snapshot: meta.absent("snapshot"), targets: meta.absent("targets"), timestamp_mark: Mark { version: 0, hash: "" }, snapshot_mark: Mark { version: 0, hash: "" }, targets_mark: Mark { version: 0, hash: "" }, snapshot_floor: 0, targets_floor: 0, floor: now, stage: 0 }
+    State { root: copy root, timestamp: meta.absent("timestamp"), snapshot: meta.absent("snapshot"), targets: meta.absent("targets"), timestamp_mark: Mark { version: 0, hash: "" }, snapshot_mark: Mark { version: 0, hash: "" }, targets_mark: Mark { version: 0, hash: "" }, snapshot_floor: 0, targets_floor: 0, floor: now, stage: 0, repository: "" }
 }
 /// Structural/self-signature check, not a substitute for pinned-root provenance.
 pub fn bootstrap_error(root: meta.Meta, now: int) -> str {

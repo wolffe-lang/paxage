@@ -3,6 +3,7 @@ use trust_json as json
 use trust_metadata as meta
 use trust_state as state
 use trust_io as io
+use trust_writer as writer
 use schema
 
 /// A loaded committed generation or a refusal. Caller must hold the directory lock.
@@ -27,6 +28,7 @@ pub fn load(dir: str) -> Loaded {
     let root = meta.parse(root_input.bytes, "root")
     if root.error != "" || meta.verify(root, root, "root") != "" { out.error = "state-invalid"; return out }
     out.value = state.initial(root, meta.number(d, 0, "floor"))
+    out.value.repository = meta.text(d, 0, "repository")
     out.value.stage = meta.number(d, 0, "stage")
     out.value.snapshot_floor = meta.number(d, 0, "snapshot_floor")
     out.value.targets_floor = meta.number(d, 0, "targets_floor")
@@ -89,7 +91,9 @@ pub fn save(dir: str, s: state.State, previous: int) -> str {
         step += 1
     }
     let root_hash = meta.digest(s.root.wire)
-    let header = "{{\"floor\":{s.floor},\"root_hash\":\"{root_hash}\",\"snapshot_floor\":{s.snapshot_floor},\"snapshot_hash\":\"{s.snapshot_mark.hash}\",\"snapshot_version\":{s.snapshot_mark.version},\"stage\":{s.stage},\"targets_floor\":{s.targets_floor},\"targets_hash\":\"{s.targets_mark.hash}\",\"targets_version\":{s.targets_mark.version},\"timestamp_hash\":\"{s.timestamp_mark.hash}\",\"timestamp_version\":{s.timestamp_mark.version}}}"
+    let repository = writer.quote(s.repository)
+    if repository == "" { return "state-invalid" }
+    let header = "{{\"floor\":{s.floor},\"repository\":{repository},\"root_hash\":\"{root_hash}\",\"snapshot_floor\":{s.snapshot_floor},\"snapshot_hash\":\"{s.snapshot_mark.hash}\",\"snapshot_version\":{s.snapshot_mark.version},\"stage\":{s.stage},\"targets_floor\":{s.targets_floor},\"targets_hash\":\"{s.targets_mark.hash}\",\"targets_version\":{s.targets_mark.version},\"timestamp_hash\":\"{s.timestamp_mark.hash}\",\"timestamp_version\":{s.timestamp_mark.version}}}"
     let bytes = header.bytes()
     let error = io.create("{base}/state.json", bytes)
     if error != "" { return error }
