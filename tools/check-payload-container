@@ -10,7 +10,7 @@ IMAGE='docker.io/library/archlinux@sha256:8185e444e45ba166146b244b41f1cba2d7d91f
 
 def container(command,mounts):
     engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
-    args=[engine,'run','--rm','--network','none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
+    args=[engine,'run','--rm','--network','none','--memory','2g','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
     if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
     for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
     cpus=os.environ.get('LARDER_CONTAINER_CPUS')
@@ -25,8 +25,8 @@ def main():
         d=Path(d);work=d/'work';work.mkdir();tree=work/'tree';tree.mkdir();(tree/'usr').mkdir()
         file=tree/'usr/file';file.write_bytes(b'abc');file.chmod(0o644);os.utime(file,(0,0))
         # These invocations select the restricted profile, not the tools' verdicts.
-        container("tar --format=pax --owner=0 --group=0 --mtime=@0 --pax-option=delete=atime,delete=ctime -cf /work/gnu.tar -C /work/tree usr/file",[(work,'/work','rw')])
-        container("bsdtar --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd.tar -C /work/tree usr/file",[(work,'/work','rw')])
+        container("tar --blocking-factor=1 --format=pax --owner=0 --group=0 --mtime=@0 --pax-option=delete=atime,delete=ctime -cf /work/gnu.tar -C /work/tree usr/file",[(work,'/work','rw')])
+        container("bsdtar -b 1 --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd.tar -C /work/tree usr/file",[(work,'/work','rw')])
         for name in ['gnu','bsd']:
             v.verify(work/f'{name}.tar')
         out=work/'out';out.mkdir();v.invoke(['pack',tree,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0])
@@ -36,6 +36,12 @@ def main():
         for tool in ['tar','bsdtar']:
             names=container(f'{tool} -tf /input/sample-1-1.payload.tar',[(out,'/input','ro')]).decode().splitlines()
             assert sorted(s.rstrip('/') for s in names)==expected,('F6-interop-list',tool,names,expected)
+        # Bind an existing read-only character device, without creating a node
+        # or invoking a privileged process, to exercise pack's device refusal.
+        device=tree/'null';device.touch()
+        device_cmd="message=$(/bin/larder pack /tree /template /out --epoch 0 2>&1); result=$?; test \"$result\" = 1 && test \"$message\" = 'larder: pack-device'"
+        container(device_cmd,[(ROOT/'target/bin/larder','/bin/larder','ro'),(tree,'/tree','ro'),(Path('/dev/null'),'/tree/null','ro'),(ROOT/'tests/manifests/valid.manifest','/template','ro'),(out,'/out','rw')])
+        device.unlink()
         stage=out/'stage';stage.mkdir(mode=0o700)
         before={p.name:(p.stat().st_ino,p.stat().st_size) for p in out.iterdir() if p.is_file()}
         cmd='/bin/larder stage /fixture/sample-1-1.payload.tar --length '+str(payload.stat().st_size)+' --sha256 '+__import__('hashlib').sha256(payload.read_bytes()).hexdigest()+' --manifest /fixture/sample-1-1.manifest --into /fixture/stage'
