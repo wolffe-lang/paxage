@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""OpenSSL verifies exact signed spans emitted by the Wolf writer; container only."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+helpers = runpy.run_path(str(ROOT / 'tools/check-trust-fuzz'))
+strict_metadata, canonical = helpers['strict_metadata'], helpers['canonical']
+
+
+def command(*args):
+    p = subprocess.run(['openssl', *map(str, args)], capture_output=True, timeout=15)
+    if p.returncode: raise ValueError(f'OpenSSL exit={p.returncode} stderr={p.stderr!r}')
+    return p.stdout
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--metadata', type=Path, required=True)
+    parser.add_argument('--template', type=Path, required=True)
+    parser.add_argument('--work', type=Path, required=True)
+    args = parser.parse_args()
+    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PM03_HOST') != 'kasumi':
+        raise SystemExit('FAIL interop-requires-unprivileged-kasumi-container')
+    args.work.mkdir(mode=0o700)
+    template = args.template.read_bytes()
+    if len(template) != 44: raise ValueError('public-template-length')
+    description = command('pkey', '-pubin', '-inform', 'DER', '-in', args.template, '-text', '-noout')
+    if b'ED25519 Public-Key' not in description: raise ValueError('public-template-type')
+    metadata = []
+    files = sorted(args.metadata.glob('*.json'))
+    if not 4 <= len(files) <= 128: raise ValueError('metadata-file-count')
+    keys = {}; roles = set()
+    for path in files:
+        if path.stat().st_size > 1048576: raise ValueError('metadata-byte-limit')
+        raw = path.read_bytes(); doc = strict_metadata(raw); metadata.append((path.name, doc))
+        roles.add(doc['signed']['_type'])
+        if doc['signed']['_type'] == 'root':
+            for keyid, key in doc['signed']['keys'].items():
+                if hashlib.sha256(canonical(key)).hexdigest() != keyid: raise ValueError('key-id')
+                if key['keytype'] != 'ed25519' or key['scheme'] != 'ed25519': raise ValueError('scheme')
+                public = key['keyval']['public']
+                if re.fullmatch('[0-9a-f]{64}', public) is None: raise ValueError('public-key')
+                if keyid in keys and keys[keyid] != public: raise ValueError('key-alias')
+                keys[keyid] = public
+    if roles != {'root', 'timestamp', 'snapshot', 'targets'}: raise ValueError('role-set')
+    witnesses = []
+    for filename, doc in metadata:
+        signed = canonical(doc['signed'])
+        message = args.work / 'test-only-signed'; message.write_bytes(signed)
+        for signature in doc['signatures']:
+            keyid, sig = signature['keyid'], signature['sig']
+            if keyid not in keys or re.fullmatch('[0-9a-f]{128}', sig) is None: raise ValueError('signature-fields')
+            # Keep the exact OpenSSL-exported Ed25519 wrapper; replace only its
+            # fixed 32-byte public key, then ask the black box to parse and verify.
+            public_file = args.work / 'test-only-public.der'
+            public_file.write_bytes(template[:-32] + bytes.fromhex(keys[keyid]))
+            sigfile = args.work / 'test-only-signature'; sigfile.write_bytes(bytes.fromhex(sig))
+            result = command('pkeyutl', '-verify', '-rawin', '-pubin', '-keyform', 'DER', '-inkey', public_file,
+                             '-in', message, '-sigfile', sigfile)
+            if b'Signature Verified Successfully' not in result: raise ValueError('verify-output')
+            witnesses.append({'file': filename, 'keyid': keyid, 'signed_sha256': hashlib.sha256(signed).hexdigest(), 'signature': sig})
+    if len(witnesses) < 4: raise ValueError('signature-count')
+    (args.work / 'witnesses.json').write_text(json.dumps(witnesses, indent=2) + '\n')
+    version = command('version').decode().strip()
+    print(f'OpenSSL black-box version: {version}')
+    print(f'PASS T18-OpenSSL-verifies-writer files={len(metadata)} signatures={len(witnesses)}')
+
+
+if __name__ == '__main__': main()
