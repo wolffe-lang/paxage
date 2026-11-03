@@ -22,6 +22,6 @@ x86_64-unknown-linux-gnu = "34f52792bb59bc7565e0edc1235cd47d9a6ad13d5e6528993627
 
 [std]
 # The tree is pinned by commit: git's object hash is the digest.
-# sc76 fixes bounded incremental SHA-2 without changing its API or digests.
+# sc77 adds strict Ed25519 verification; bounded SHA-2 remains included.
 repo = "wolffe-lang/wolf-std"
-rev = "5b3a59942b2ee69b99682544341ce8a12c984e9e"
+rev = "23baa1add4e0f5565e298fa075e7bc7029ac410d"
