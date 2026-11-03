@@ -238,7 +238,7 @@ pub fn role_index(root: Meta, role: str) -> int {
     for i in 0..root.roles.len { if root.roles[i].name == role { return i } }
     -1
 }
-/// Verify distinct authorized signatures. Pending sc77, final use waits for verify_strict.
+/// Verify distinct authorized signatures with std's strict small-order policy.
 pub fn verify(m: Meta, root: Meta, role: str) -> str {
     if m.error != "" { return m.error }
     if m.role != role { return "role-type" }
@@ -262,7 +262,7 @@ pub fn verify(m: Meta, root: Meta, role: str) -> str {
         let sig = hex.decode(signature) else List[byte]()
         if sig.len != 64 { return "bad-hex" }
         for key in root.keys {
-            if key.id == id && curve.verify(key.public, signed, sig) { count += 1 }
+            if key.id == id && curve.verify_strict(key.public, signed, sig) { count += 1 }
         }
     }
     if count < root.roles[ri].threshold { return "signature-threshold" }
