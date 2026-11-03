@@ -1,5 +1,5 @@
 # larder release archives, checked twice through GitHub API 2026-11-02.
-# Bundled std is pinned by the wolf archive digest and STD-REV.
+# Std has an explicit git pin and is staged in place of the bundled tree.
 [wolf]
 version = "0.2.36"
 repo = "wolffe-lang/wolf-lang"
@@ -21,7 +21,7 @@ x86_64-unknown-linux-gnu = "34f52792bb59bc7565e0edc1235cd47d9a6ad13d5e6528993627
 
 
 [std]
-# The tree is pinned by commit: git's object hash is the digest. It is
-# the commit the wolf archive bundles as `std/`.
+# The tree is pinned by commit: git's object hash is the digest.
+# sc76 fixes bounded incremental SHA-2 without changing its API or digests.
 repo = "wolffe-lang/wolf-std"
-rev = "78b9d3cbc41d51db44d18c40b6694403644d1c83"
+rev = "5b3a59942b2ee69b99682544341ce8a12c984e9e"
