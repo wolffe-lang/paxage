@@ -56,6 +56,9 @@ pub fn read(mut s: Stream, n: int) -> List[byte] {
     out
 }
 
+/// EOF or I/O failure from a bounded bulk byte read.
+pub error ChunkReadErrors = {eof, io}
+
 /// Read at most 64 KiB into a reusable caller-owned buffer. EOF/io are named.
 pub fn read_into(fd: int, mut buf: List[byte], max: int) -> int ! ChunkReadErrors {
     var n = 0
