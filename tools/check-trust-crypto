@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# T17 primitive qualification, intentionally independent of an unbuilt adapter.
+set -eu
+cd "$(dirname "$0")/.."
+export LARDER_ROOT="$PWD"
+. tools/lib-toolchain.sh
+step() {
+  local name=$1 started=$SECONDS result=0
+  shift
+  printf 'START %s\n' "$name"
+  "$@" || result=$?
+  printf 'END %s exit=%s secs=%s\n' "$name" "$result" "$((SECONDS-started))"
+  return "$result"
+}
+build() {
+  mkdir -p target/tests
+  rm -rf src/.lu-cache
+  "$WOLF" build --deny-warnings src/trust_crypto_test.lu -o target/tests/trust-crypto
+}
+cost() {
+  python3 -I - "$PWD/target/tests/trust-crypto" <<'PY'
+import statistics
+import subprocess
+import sys
+import time
+command = [sys.argv[1], '--cost']
+expected = 'PASS T17-cost-valid-vector signatures=32 message-bytes=0\n'
+def sample():
+    start = time.monotonic_ns()
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    elapsed = time.monotonic_ns() - start
+    if proc.returncode != 0 or proc.stdout != expected or proc.stderr:
+        print('FAIL T17-cost-valid-vector', proc.returncode, repr(proc.stdout), repr(proc.stderr))
+        raise SystemExit(1)
+    return elapsed / 32 / 1_000_000
+sample()  # One warm-up process; five independent timed process batches.
+samples = [sample() for _ in range(5)]
+print('T17 native cost: signatures-per-batch=32 batches=5 message-bytes=0')
+print('T17 batch-process-inclusive ms/signature:', ','.join(f'{n:.6f}' for n in samples))
+print(f'T17 median-ms={statistics.median(samples):.6f} min-ms={min(samples):.6f} max-ms={max(samples):.6f}')
+PY
+}
+step trust-crypto-build build
+step trust-crypto-cost cost
+step trust-crypto-qualification target/tests/trust-crypto
