@@ -21,8 +21,8 @@ fn signed(text: str, error: str, name: str) -> bool {
     row(actual == error, name)
 }
 fn main() -> int {
-    // Build Unicode escapes at runtime: the pinned compiler decodes valid
-    // Unicode escapes even inside raw source literals. These are wire tests.
+    // Construct Unicode escapes as explicit runtime bytes. The initial test
+    // source accidentally contained decoded letters, not the intended wire escapes.
     let slash_bytes: List[byte] = [92 as byte]
     let slash = str_from_utf8(slash_bytes) else ""
     var ok = true
