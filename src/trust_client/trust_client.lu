@@ -50,10 +50,16 @@ fn update(repo: str, dir: str, now: int) -> str {
     loop {
         if loaded.value.root.version == 9223372036854775807 { return "root: metadata-version" }
         let next = loaded.value.root.version + 1
+        if rotations >= 32 {
+            let _present = fs_lstat("{repo}/metadata/{next}.root.json") else |e| match e {
+                not_found => { break },
+                _ => { return "root: repository-file" },
+            }
+            return "root: root-chain-limit"
+        }
         let input = io.read("{repo}/metadata/{next}.root.json", 65536)
         if input.error == "not-found" { break }
         if input.error != "" { return "root: {input.error}" }
-        if rotations >= 32 { return "root: root-chain-limit" }
         let candidate = meta.parse(input.bytes, "root")
         let error = state.advance(mut loaded.value, candidate, now)
         if error != "" { return "root: {error}" }
