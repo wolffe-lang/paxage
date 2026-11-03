@@ -19,10 +19,10 @@ generate() {
     --output "$PWD/target/tests/trust-crypto-vectors.lu"
 }
 build() {
-  mkdir -p target/tests
-  cp src/wolf.pkg target/tests/wolf.pkg
-  rm -rf src/.lu-cache
-  "$WOLF" build --deny-warnings src/trust_crypto_test.lu -o target/tests/trust-crypto
+  mkdir -p target/tests || return $?
+  cp src/wolf.pkg target/tests/wolf.pkg || return $?
+  rm -rf src/.lu-cache || return $?
+  "$WOLF" build --deny-warnings src/trust_crypto_test.lu -o target/tests/trust-crypto || return $?
   "$WOLF" build --deny-warnings target/tests/trust-crypto-vectors.lu -o target/tests/trust-crypto-vectors
 }
 cost() {

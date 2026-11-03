@@ -13,13 +13,13 @@ step() {
   return "$result"
 }
 build() {
-  mkdir -p target/tests
-  rm -rf src/.lu-cache
+  mkdir -p target/tests || return $?
+  rm -rf src/.lu-cache || return $?
   "$WOLF" build --deny-warnings "src/${unit}_test.lu" -o "target/tests/$unit"
 }
 run() {
   if [ "$unit" = trust_state ]; then
-    mkdir -m 700 target/tests/state
+    mkdir -m 700 target/tests/state || return $?
     "target/tests/$unit" "$PWD/target/tests/state"
   else
     "target/tests/$unit"

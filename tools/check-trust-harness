@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Regression: a first compiler exit 2 must not be hidden by a later successful command."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--script', type=Path, default=ROOT / 'tools/check-trust-crypto')
+    args = parser.parse_args()
+    work = ROOT / 'target/trust-harness'
+    work.mkdir(parents=True)
+    for name in ('tools/lib-toolchain.sh', 'tools/lib-toml.sh', 'tools/generate-trust-crypto-vectors',
+                 'wolf-toolchain.toml', 'src/wolf.pkg', 'src/trust_crypto_test.lu', 'tests/trust/rfc8032-s71.txt'):
+        dest = work / name; dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, dest)
+    shutil.copyfile(args.script, work / 'tools/check-trust-crypto')
+    real_wolf = Path(os.environ.get('WOLF_BIN', ROOT / '.wolf-bin/wolf')).resolve()
+    shim = work / 'shim'; shim.mkdir()
+    (shim / 'libwolf_rt.a').symlink_to(real_wolf.parent / 'libwolf_rt.a')
+    (shim / 'wolf').write_text('''#!/bin/sh
+if [ "$1" = --version ]; then exec "$REAL_WOLF" "$@"; fi
+if [ "$1" = build ]; then
+  if [ ! -f "$FAULT_COUNT" ]; then echo 1 > "$FAULT_COUNT"; echo 'injected compiler failure' >&2; exit 2; fi
+  echo 2 > "$FAULT_COUNT"
+  exit 0
+fi
+exit 3
+''')
+    (shim / 'wolf').chmod(0o700)
+    env = dict(os.environ, REAL_WOLF=str(real_wolf), FAULT_COUNT=str(work / 'calls'), WOLF_BIN=str(shim / 'wolf'),
+               LUPIN_BIN=str(Path(os.environ.get('LUPIN_BIN', ROOT / '.wolf-bin/lupin')).resolve()),
+               WOLF_STD=str(Path(os.environ.get('WOLF_STD', ROOT / '.wolf-bin/std')).resolve()))
+    p = subprocess.run(['bash', str(work / 'tools/check-trust-crypto')], env=env, capture_output=True, text=True, timeout=30)
+    calls = (work / 'calls').read_text().strip() if (work / 'calls').exists() else '0'
+    if p.returncode != 2 or calls != '1' or 'END trust-crypto-build exit=2 ' not in p.stdout or 'START trust-crypto-vectors' in p.stdout:
+        print(f'FAIL trust-build-status rc={p.returncode} calls={calls} stdout={p.stdout!r} stderr={p.stderr!r}')
+        return 1
+    print('PASS trust-build-status first-exit=2 later-command-not-run')
+    return 0
+
+
+if __name__ == '__main__': sys.exit(main())

@@ -14,8 +14,8 @@ step() {
   return "$result"
 }
 build() {
-  bash tools/build
-  rm -rf src/.lu-cache
+  bash tools/build || return $?
+  rm -rf src/.lu-cache || return $?
   "$WOLF" build --deny-warnings src/trust_fuzz_probe.lu -o target/bin/trust-fuzz-probe
 }
 step trust-fuzz-build build
