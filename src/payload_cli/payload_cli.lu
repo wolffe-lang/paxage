@@ -38,19 +38,25 @@ fn use_manifest(path: str, es: List[payload.Entry]) -> str {
     staging.manifest(es, d)
 }
 
-/// Stable text or JSON inventory; does not imply blob or signer authentication.
-pub fn inventory(es: List[payload.Entry], as_json: bool) {
-    if as_json {
-        var out = "["
-        for i in 0..es.len {
+/// Stream one bounded output row at a time; empty on success or inventory-write.
+/// Listing does not imply blob or signer authentication.
+pub fn inventory(es: List[payload.Entry], as_json: bool) -> str {
+    if as_json { fs_write(1, "[") else |_| { return "inventory-write" } }
+    for i in 0..es.len {
+        region output_row {
             let e = copy es[i]
-            if i > 0 { out += "," }
-            out += "{{\"path\":{quote(e.path)},\"type\":{quote(e.kind)},\"mode\":{e.mode},\"owner\":{e.owner},\"group\":{e.group},\"length\":{e.length},\"sha256\":{quote(e.hash)},\"target\":{quote(e.target)}}}"
+            var row = ""
+            if as_json {
+                if i > 0 { fs_write(1, ",") else |_| { return "inventory-write" } }
+                row = "{{\"path\":{quote(e.path)},\"type\":{quote(e.kind)},\"mode\":{e.mode},\"owner\":{e.owner},\"group\":{e.group},\"length\":{e.length},\"sha256\":{quote(e.hash)},\"target\":{quote(e.target)}}}"
+            } else {
+                row = "{e.kind}\t{e.mode}\t{e.length}\t{e.path}\t{e.target}\n"
+            }
+            fs_write(1, row) else |_| { return "inventory-write" }
         }
-        print("{out}]")
-    } else {
-        for e in es { print("{e.kind}\t{e.mode}\t{e.length}\t{e.path}\t{e.target}") }
     }
+    if as_json { fs_write(1, "]\n") else |_| { return "inventory-write" } }
+    ""
 }
 
 fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_json: bool) -> int {
@@ -68,7 +74,8 @@ fn reader(fd: int, length: int, verb: str, manifest_path: str, root: str, as_jso
         if e != "" { return fail(e) }
         print("stage ok entries={result.entries.len}")
     } else if verb == "list-payload" {
-        inventory(result.entries, as_json)
+        let written = inventory(result.entries, as_json)
+        if written != "" { return fail(written) }
     } else {
         print("payload ok entries={result.entries.len} bytes={length}")
     }

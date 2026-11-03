@@ -32,7 +32,8 @@ fn main() -> int {
             if result.error != "" {
                 print("refused:{result.error}")
             } else {
-                payload_cli.inventory(result.entries, true)
+                let written = payload_cli.inventory(result.entries, true)
+                if written != "" { eprint("FAIL {written}"); return 1 }
             }
         }
     }
