@@ -1,0 +1,293 @@
+{
+  "now": "2026-11-03T00:00:00Z",
+  "cases": [
+    {
+      "name": "rollback-timestamp",
+      "repository": "rollback-timestamp",
+      "refusal": "rollback-timestamp",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "rollback-snapshot",
+      "repository": "rollback-snapshot",
+      "refusal": "rollback-snapshot",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "rollback-targets",
+      "repository": "rollback-targets",
+      "refusal": "rollback-targets",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "rollback-whole-snapshot",
+      "repository": "rollback-whole-snapshot",
+      "refusal": "rollback-timestamp",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "freeze-timestamp",
+      "repository": "freeze-timestamp",
+      "refusal": "expired-timestamp",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "freeze-snapshot",
+      "repository": "freeze-snapshot",
+      "refusal": "expired-snapshot",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "freeze-targets",
+      "repository": "freeze-targets",
+      "refusal": "expired-targets",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "same-version-rewrite-root",
+      "repository": "same-version-rewrite-root",
+      "refusal": "same-version-rewrite",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "same-version-rewrite-timestamp",
+      "repository": "same-version-rewrite-timestamp",
+      "refusal": "same-version-rewrite",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "same-version-rewrite-snapshot",
+      "repository": "same-version-rewrite-snapshot",
+      "refusal": "same-version-rewrite",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "same-version-rewrite-targets",
+      "repository": "same-version-rewrite-targets",
+      "refusal": "same-version-rewrite",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "rollback-root",
+      "repository": "rollback-root",
+      "refusal": "rollback-root",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "root-skipped-version",
+      "repository": "root-skipped-version",
+      "refusal": "root-version",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "root-new-only",
+      "repository": "root-new-only",
+      "refusal": "root-old-threshold",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "root-old-only",
+      "repository": "root-old-only",
+      "refusal": "root-new-threshold",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "fast-forward-rotation-recovery",
+      "repository": "fast-forward-rotation-recovery",
+      "refusal": null,
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "revoked-key",
+      "repository": "revoked-key",
+      "refusal": "signature-threshold",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "below-threshold",
+      "repository": "below-threshold",
+      "refusal": "signature-threshold",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "duplicate-signature",
+      "repository": "duplicate-signature",
+      "refusal": "duplicate-signature",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "unknown-key",
+      "repository": "unknown-key",
+      "refusal": "signature-threshold",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "wrong-length-signature",
+      "repository": "wrong-length-signature",
+      "refusal": "signature-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "unknown-key-ignored",
+      "repository": "unknown-key-ignored",
+      "refusal": null,
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "unsupported-scheme",
+      "repository": "unsupported-scheme",
+      "refusal": "unsupported-scheme",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "timestamp-byte-limit",
+      "repository": "timestamp-byte-limit",
+      "refusal": "metadata-byte-limit",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "snapshot-byte-limit",
+      "repository": "snapshot-byte-limit",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "targets-byte-limit",
+      "repository": "targets-byte-limit",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "snapshot-one-byte-long",
+      "repository": "snapshot-one-byte-long",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "snapshot-one-byte-short",
+      "repository": "snapshot-one-byte-short",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "targets-one-byte-long",
+      "repository": "targets-one-byte-long",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "targets-one-byte-short",
+      "repository": "targets-one-byte-short",
+      "refusal": "metadata-length",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "mix-and-match",
+      "repository": "mix-and-match",
+      "refusal": "metadata-hash",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "endless-timestamp-fifo",
+      "repository": "endless-timestamp-fifo",
+      "refusal": "repository-file",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z",
+      "fifo": true
+    },
+    {
+      "name": "logical-slash",
+      "repository": "logical-slash",
+      "refusal": "logical-name",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "logical-dotdot",
+      "repository": "logical-dotdot",
+      "refusal": "logical-name",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "logical-NUL",
+      "repository": "logical-NUL",
+      "refusal": "non-canonical-signed",
+      "action": "update",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "object-long",
+      "repository": "object-long",
+      "refusal": "target-length",
+      "action": "fetch",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "object-short",
+      "repository": "object-short",
+      "refusal": "target-length",
+      "action": "fetch",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "object-hash",
+      "repository": "object-hash",
+      "refusal": "target-hash",
+      "action": "fetch",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "lying-hash-prefix",
+      "repository": "lying-hash-prefix",
+      "refusal": "target-hash",
+      "action": "fetch",
+      "now": "2026-11-03T00:00:00Z"
+    },
+    {
+      "name": "clock-before-floor",
+      "repository": "clock-before-floor",
+      "refusal": "clock-before-floor",
+      "action": "update",
+      "now": "2026-11-02T23:59:59Z"
+    },
+    {
+      "name": "root-expired",
+      "repository": "root-expired",
+      "refusal": "expired-root",
+      "action": "update",
+      "now": "2030-01-01T00:00:00Z"
+    }
+  ]
+}
