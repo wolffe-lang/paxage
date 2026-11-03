@@ -103,3 +103,7 @@ parsed or extracted by pm01. F6 reader tests are owned by pm02, not claimed here
 **F6.1 — Exact end:** the reader accepts a payload ending exactly after its two
 512-byte zero end blocks and refuses every additional byte, including zero-filled
 blocks within the authenticated declared length, as `trailing-data`.
+
+**F6.2 — Numeric encoding:** base-256 is forbidden even when a valid local pax
+record overrides the value; a base-256 mode, uid, gid, size or mtime is refused
+as `header-number`.

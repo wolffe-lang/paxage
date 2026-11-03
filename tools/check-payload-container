@@ -35,17 +35,25 @@ def main():
         # These invocations select the restricted profile, not the tools' verdicts.
         container("tar --blocking-factor=1 --format=pax --owner=0 --group=0 --mtime=@0 --pax-option=delete=atime,delete=ctime -cf /work/gnu.tar -C /work/tree usr/file",[(work,'/work','rw')])
         container("bsdtar -b 1 --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd.tar -C /work/tree usr/file",[(work,'/work','rw')])
-        for name in ['gnu','bsd']:
-            path=work/f'{name}.tar';raw=path.read_bytes();off=0
-            # POSIX framing only, independently identify physical tail padding.
+        # Positive BSD archive plus the negative-time contrast. Inspect the
+        # encoded numeric forms independently before invoking larder.
+        os.utime(file,(0,0))
+        container("bsdtar -b 1 --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd-zero.tar -C /work/tree usr/file",[(work,'/work','rw')])
+        for name in ['gnu','bsd','bsd-zero']:
+            path=work/f'{name}.tar';raw=path.read_bytes();off=0;expected=None;clause='F6'
             while raw[off:off+512] != bytes(512):
                 h=raw[off:off+512];assert len(h)==512,'F6-contrast-header-length'
+                for start,width in [(100,8),(108,8),(116,8),(124,12),(136,12)]:
+                    field=h[start:start+width]
+                    if field[0]&128:
+                        expected='header-number';clause='F6.2'
+                        print(f'contrast={name} offset={off} numeric_offset={start} hex={field.hex()} forbidden_base256=True',flush=True)
                 size=int(h[124:136].rstrip(b'\0 ').decode() or '0',8)
                 off+=512+((size+511)//512)*512
             assert raw[off:off+1024]==bytes(1024),'F6-contrast-end-blocks'
             extra=len(raw)-(off+1024)
-            expected='trailing-data' if extra else None
-            print(f'contrast={name} expected={expected or "accept"} extra_tail_bytes={extra}',flush=True)
+            if expected is None and extra:expected='trailing-data';clause='F6.1'
+            print(f'contrast={name} expected={expected or "accept"} clause={clause} extra_tail_bytes={extra}',flush=True)
             v.verify(path,expected)
         out=work/'out';out.mkdir();v.invoke(['pack',tree,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0])
         payload=out/'sample-1-1.payload.tar';manifest=out/'sample-1-1.manifest'
