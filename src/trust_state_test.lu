@@ -76,6 +76,22 @@ fn main() -> int {
         if !row(saved == "", "T14-save-generation") { print("DETAIL {saved}"); return 1 }
         let loaded = store.load(dir)
         if !row(loaded.error == "" && loaded.value.root.version == 2 && loaded.value.floor == 101 && state.ready(loaded.value, 101) == "", "T14-load-generation") { ok = false; print("DETAIL {loaded.error}") }
+        let original_pointer = io.read("{dir}/current", 1024)
+        let original_hash = meta.digest(original_pointer.bytes)
+        var proposed = copy s
+        let third = parsed(writer.root(next, next[0..3], 3, 2000000000), "root")
+        if !row(state.advance(mut proposed, third, 102) == "", "T14-proposed-rotation") { return 1 }
+        for cut in 1..5 {
+            let interrupted = store.test_interrupted_save(dir, proposed, loaded.generation, cut)
+            if !row(interrupted == "state-test-interruption", "T14-interruption-{cut}") { ok = false }
+            let after = store.load(dir)
+            if cut < 4 {
+                let pointer = io.read("{dir}/current", 1024)
+                if !row(meta.digest(pointer.bytes) == original_hash && after.error == "" && after.value.root.version == 2 && after.value.floor == 101 && state.ready(after.value, 101) == "", "T14-old-state-survives-cut-{cut}") { ok = false }
+            } else {
+                if !row(after.error == "" && after.value.root.version == 3 && after.value.floor == 102 && after.value.stage == 0, "T14-renamed-state-is-verified") { ok = false }
+            }
+        }
     }
     if ok { 0 } else { 1 }
 }

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""R-pm03-6: committed corruption refuses, with no repair, fallback or content writes."""
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / 'target/bin/larder'
+WORK = ROOT / 'target/trust-corruption'
+NOW = '2026-11-03T00:00:00Z'
+GUIDANCE = 're-bootstrap into a new, empty state directory from a caller-supplied pinned root'
+
+
+def require(ok, row, detail=''):
+    if not ok:
+        print(f'FAIL {row} {detail}')
+        raise SystemExit(1)
+    print(f'PASS {row}')
+
+
+def call(*args):
+    return subprocess.run([str(BIN), *map(str, args)], capture_output=True, text=True, timeout=15)
+
+
+def success(row, *args):
+    p = call(*args)
+    require(p.returncode == 0 and not p.stderr, row, repr((p.returncode, p.stdout, p.stderr)))
+
+
+def snapshot(directory):
+    result = {}
+    for p in directory.rglob('*'):
+        if p.is_file():
+            result[str(p.relative_to(directory))] = (p.stat().st_mode & 0o777, hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_size)
+        else: result[str(p.relative_to(directory))] = ('directory', p.stat().st_mode & 0o777)
+    return result
+
+
+def main():
+    WORK.mkdir(mode=0o700)
+    repo, keys, state = [WORK / name for name in ('repository', 'test-only-keys', 'accepted')]
+    success('T19-keygen', 'repo', 'keygen', '--keys', keys, '--now', NOW)
+    success('T19-init', 'repo', 'init', '--repo', repo.as_uri(), '--keys', keys, '--now', NOW)
+    success('T19-publish', 'repo', 'publish', '--repo', repo.as_uri(), '--keys', keys, '--version', '1', '--now', NOW)
+    pinned = WORK / 'pinned-root.json'; shutil.copyfile(repo / 'metadata/1.root.json', pinned)
+    success('T19-bootstrap', 'bootstrap', '--repo', repo.as_uri(), '--root', pinned, '--state', state, '--now', NOW)
+    success('T19-update', 'update', '--repo', repo.as_uri(), '--state', state, '--now', NOW)
+    pointer = json.loads((state / 'current').read_bytes())
+    base = f'g{pointer["generation"]}'
+    files = ['current', f'{base}/state.json', *[f'{base}/{role}.json' for role in ('root', 'timestamp', 'snapshot', 'targets')]]
+    for index, relative in enumerate(files):
+        damaged = WORK / f'damaged-{index}'
+        shutil.copytree(state, damaged)
+        target = damaged / relative
+        data = bytearray(target.read_bytes()); data[0] ^= 1; target.write_bytes(data)
+        before = snapshot(damaged)
+        p = call('update', '--repo', repo.as_uri(), '--state', damaged, '--now', NOW)
+        require(p.returncode == 1 and not p.stdout and 'state-invalid' in p.stderr and GUIDANCE in p.stderr,
+                f'T19-corruption-{target.name}', repr((p.returncode, p.stdout, p.stderr)))
+        require(snapshot(damaged) == before, f'T19-zero-writes-{target.name}')
+    damaged = WORK / 'oversized-pointer'; shutil.copytree(state, damaged)
+    (damaged / 'current').write_bytes(b'x' * 1025)
+    before = snapshot(damaged)
+    p = call('update', '--repo', repo.as_uri(), '--state', damaged, '--now', NOW)
+    require(p.returncode == 1 and not p.stdout and 'state-invalid' in p.stderr and GUIDANCE in p.stderr,
+            'T19-oversized-pointer', repr((p.returncode, p.stdout, p.stderr)))
+    require(snapshot(damaged) == before, 'T19-zero-writes-oversized-pointer')
+    # The explicit operator path is a new directory, never repairing the old one.
+    fresh = WORK / 'explicit-rebootstrap'
+    success('T19-explicit-new-bootstrap', 'bootstrap', '--repo', repo.as_uri(), '--root', pinned, '--state', fresh, '--now', NOW)
+    success('T19-explicit-new-update', 'update', '--repo', repo.as_uri(), '--state', fresh, '--now', NOW)
+    require(snapshot(damaged) == before, 'T19-rebootstrap-does-not-repair-old-state')
+    print('PASS committed-corruption')
+    return 0
+
+
+if __name__ == '__main__': sys.exit(main())

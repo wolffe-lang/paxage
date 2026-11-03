@@ -9,5 +9,9 @@ step() {
   printf 'END %s exit=%s secs=%s\n' "$name" "$result" "$((SECONDS-started))"
   return "$result"
 }
+case "${1:-e2e}" in
+  e2e|corruption) suite=${1:-e2e} ;;
+  *) echo 'usage: check-trust-integration [e2e|corruption]' >&2; exit 2 ;;
+esac
 step trust-cli-build bash tools/build
-step trust-cli-e2e python3 -I tools/check-trust-e2e
+step "trust-cli-$suite" python3 -I "tools/check-trust-$suite"

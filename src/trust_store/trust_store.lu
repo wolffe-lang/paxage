@@ -66,6 +66,12 @@ pub fn load(dir: str) -> Loaded {
     out.generation = gen
     out
 }
+/// Test-only interruption seam; never exposed by the CLI. Red-first placeholder.
+pub fn test_interrupted_save(dir: str, s: state.State, previous: int, cut: int) -> str {
+    if dir == "" || s.root.version < 1 || previous < 0 || cut < 1 { return "state-invalid" }
+    "not-implemented"
+}
+
 /// Write a complete generation before publishing its pointer. Orphans are never trusted.
 pub fn save(dir: str, s: state.State, previous: int) -> str {
     if previous < 0 || previous >= 1000000000 { return "state-generation-limit" }
