@@ -185,10 +185,14 @@ pub fn continuity(old: State, next: State) -> str {
     if next.repository != old.repository { return "repository-mismatch" }
     let clock = clock_error(old.floor, next.floor)
     if clock != "" { return clock }
-    let root = version_error("root", Mark {
-        version: old.root.version,
-        hash: meta.digest(old.root.wire),
-    }, Mark { version: next.root.version, hash: meta.digest(next.root.wire) })
+    let root = version_error(
+        "root",
+        Mark {
+            version: old.root.version,
+            hash: meta.digest(old.root.wire),
+        },
+        Mark { version: next.root.version, hash: meta.digest(next.root.wire) },
+    )
     if root != "" { return root }
     var reset = false
     if next.root.version != old.root.version {
