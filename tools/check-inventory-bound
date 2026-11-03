@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""F6 maximum inventory output must finish under a 2 GiB Linux address-space cap."""
+from pathlib import Path
+import importlib.machinery, json, os, subprocess, sys, tempfile
+ROOT=Path(__file__).resolve().parents[1]
+v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
+binary=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/larder'
+assert sys.platform.startswith('linux'),'F6-inventory-bound is Linux-only'
+try:
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='inventory-') as temp:
+        path=Path(temp)/'entries.tar'
+        with path.open('wb') as f:
+            for i in range(100000):f.write(v.header(f'usr/f{i:06}'.encode(),b'0',0,0o644))
+            f.write(bytes(1024))
+        p=subprocess.run(['prlimit','--as=2147483648','--',str(binary),'list-payload',str(path),'--length',str(path.stat().st_size),'--json'],stdin=subprocess.DEVNULL,capture_output=True,timeout=120)
+        assert p.returncode==0,('FAIL F6-inventory-output-bound',p.returncode,p.stderr)
+        rows=json.loads(p.stdout);assert len(rows)==100000,'F6-inventory-count'
+        for i,row in enumerate(rows):
+            assert row==dict(path=f'usr/f{i:06}',type='file',mode=420,owner=0,group=0,length=0,sha256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',target=''),('F6-inventory-record',i,row)
+    print('END F6-inventory-output-bound exit=0',flush=True)
+except BaseException:
+    print('FAIL F6-inventory-output-bound',file=sys.stderr,flush=True)
+    raise
