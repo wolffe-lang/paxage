@@ -1,0 +1,93 @@
+//! Whole-file streaming authentication and promotion; .part is never trusted.
+use payload
+use trust_metadata as meta
+use trust_io as io
+use std.x.crypto.sha2 as sha2
+
+/// File identity measured from a held descriptor, or a named refusal.
+pub struct Object { length: int, digest: str, error: str }
+fn extra(fd: int) -> bool {
+    let b = fs_read_chunk(fd, 1) else |e| match e { eof => { return false }, io => { return true } }
+    b.len != 0
+}
+/// Hash a whole regular file within an explicit bound, including exact EOF.
+pub fn measure(path: str, cap: int) -> Object {
+    let fd = fs_open_mode(path, 21) else |_| { return Object { length: 0, digest: "", error: "target-file" } }
+    let stat = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return Object { length: 0, digest: "", error: "target-file" } }
+    var out = Object { length: stat[1], digest: "", error: "" }
+    if stat[0] != 0 { out.error = "target-file" }
+    if stat[1] > cap { out.error = "target-length" }
+    if out.error == "" {
+        let d = payload.digest(fd, stat[1])
+        if d.error != "" || extra(fd) { out.error = "target-length" } else { out.digest = d.hash }
+    }
+    fs_close(fd) else |_| { out.error = "target-close" }
+    out
+}
+/// Copy exactly the authenticated object into an exclusively created file, then sync.
+/// A failure leaves that unverified partial file; the caller never promotes it.
+pub fn copy_verified(source: str, dest: str, expected: meta.Entry) -> str {
+    let input = fs_open_mode(source, 21) else |_| { return "target-file" }
+    let stat = fs_fstat(input) else |_| { fs_close(input) else |_| {}; return "target-file" }
+    if stat[0] != 0 || stat[1] != expected.length { fs_close(input) else |_| {}; return "target-length" }
+    let output = fs_open_perm(dest, 20, 384) else |_| { fs_close(input) else |_| {}; return "immutable-rewrite" }
+    var error = ""
+    var remaining = expected.length
+    var buffer = List[byte]()
+    var hash = sha2.new256()
+    while remaining > 0 && error == "" {
+        var amount = remaining
+        if amount > 65536 { amount = 65536 }
+        let got = payload.read_into(input, mut buffer, amount) else |_| { error = "target-length"; break }
+        if got == 0 { error = "target-length"; break }
+        remaining -= got
+        sha2.update256(mut hash, buffer)
+        fs_write_chunk(output, buffer) else |_| { error = "target-write" }
+    }
+    if error == "" && extra(input) { error = "target-length" }
+    if error == "" && sha2.to_hex(sha2.final256(take hash)) != expected.digest { error = "target-hash" }
+    if error == "" { fs_sync(output) else |_| { error = "target-sync" } }
+    fs_close(input) else |_| { error = "target-close" }
+    fs_close(output) else |_| { error = "target-close" }
+    error
+}
+/// Create or validate a private owned directory, never traversing a final symlink.
+pub fn directory(path: str) -> str {
+    fs_create_dir_mode(path, 448) else |e| match e {
+        exists => {},
+        _ => { return "directory" },
+    }
+    io.private_dir(path)
+}
+/// Acquire a verified cache object. Caller holds cache's advisory lock.
+pub fn fetch(repo: str, cache: str, expected: meta.Entry) -> str {
+    let object = "{cache}/objects/sha256/{expected.digest}"
+    let existing = fs_lstat(object) else |e| match e {
+        not_found => { List[int]() },
+        _ => { return "target-file" },
+    }
+    if existing.len != 0 {
+        let measured = measure(object, expected.length)
+        if measured.error != "" { return measured.error }
+        if measured.length != expected.length { return "target-length" }
+        if measured.digest != expected.digest { return "target-hash" }
+        return ""
+    }
+    var part = ""
+    for i in 0..64 {
+        let candidate = "{cache}/.part/{expected.digest}.{i}"
+        let old = fs_lstat(candidate) else |e| match e {
+            not_found => { List[int]() },
+            _ => { return "target-file" },
+        }
+        if old.len == 0 { part = candidate; break }
+    }
+    if part == "" { return "cache-part-limit" }
+    let source = "{repo}/targets/{expected.digest}.{expected.path}"
+    let copied = copy_verified(source, part, expected)
+    if copied != "" { return copied }
+    fs_rename(part, object) else |_| { return "cache-promote" }
+    fs_sync_dir("{cache}/objects/sha256") else |_| { return "cache-dir-sync" }
+    fs_sync_dir("{cache}/.part") else |_| { return "cache-dir-sync" }
+    ""
+}
