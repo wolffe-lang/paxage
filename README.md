@@ -47,7 +47,7 @@ an externally expected blob digest/length, validates the complete inventory, and
 verifies staged bytes, modes and links. Staging is unprivileged and never promotes
 a tree to a live root. Missing descriptor-relative calls leave a same-uid ancestor
 swap race; use a private empty caller-owned staging directory. [CLI C4–C7](docs/CLI.md)
-details the interface, safety refusals, failure state and current large-file blocker.
+details the interface, safety refusals, failure state and large-file measurement policy.
 TUF, transactions and networking remain later work. Reserved paths
 `/var/lib/larder/`, `/var/cache/larder/`, `/etc/larder/` and `.larder-new` are
 specification only; this program writes none of them.
@@ -76,9 +76,9 @@ The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest solver fix
 its time is reported, not gated. No SKIPs are hidden.
 
 **CI has one tier:** every PR (including draft) and every trunk push runs the
-same complete gate on Linux x86-64 and macOS arm64. No labels or planner select
-lesser coverage. A green run requires both matrix jobs, including CLI e2e; a
-unit-only run is insufficient.
+same platform-aware gate on Linux x86-64 and macOS arm64. No labels or planner select
+lesser coverage. A green run requires both matrix jobs, including CLI e2e, and the cross-host
+canonical-payload byte comparison; a unit-only run is insufficient.
 
 PR descriptions carry a `Footprint:` line: `notes` for prose only, `module` for
 one program/module without shared tools or specs, `cross-cutting` for format,
