@@ -339,3 +339,23 @@ R-pm03-6 B (a trusted recovery anchor and a redundancy policy) is a question
 for a later lane, not an implied fallback here. This ruling adds T19 after the
 original prediction of eighteen clauses; the prediction is not retroactively
 changed.
+
+## T20 — Trusted local storage boundary (R-pm03-7)
+
+A party able to write the trust-state directory is outside v1's threat model.
+It can replace any part of the state, including the root. Coherent rollback of
+local trusted storage is therefore not detected: a previously valid `current`
+pointer and its unchanged historical generation still verify. TUF treats the
+client's own trusted metadata as trusted. Production state will be root-owned
+in pm04/pm05; v1 uses a private caller-owned directory without claiming to
+protect it from its owner.
+
+Mirror rollback, freeze and mix-and-match remain in scope. T19 refuses
+malformed or inconsistent committed storage without repair; it does not claim
+an independent monotonic anchor. `tools/witness-trust-replay` pins this known
+limit explicitly, never as a successful rollback-protection row. Its original
+witness is `mac-replay-2b3af8e.record` in the lane's evidence.
+
+R-pm03-7 B, an independent monotonic anchor and its crash protocol, remains a
+pm04/pm05 question. No ad-hoc anchor is introduced here. T20 is a further ruled
+addition to the original eighteen-clause prediction.
