@@ -143,6 +143,22 @@ def vectors(d):
     print(f'END F6-independent-vectors-{len(cases)} exit=0',flush=True)
     return valid
 
+def tree_signature(root):
+    import stat
+    records={};inodes={}
+    for parent,dirs,files in os.walk(root,followlinks=False):
+        for name in dirs+files:
+            p=Path(parent)/name;rel=str(p.relative_to(root));info=p.lstat()
+            mode=stat.S_IMODE(info.st_mode)
+            if stat.S_ISLNK(info.st_mode):records[rel]=('symlink',mode,os.readlink(p))
+            elif stat.S_ISDIR(info.st_mode):records[rel]=('dir',mode)
+            else:
+                assert stat.S_ISREG(info.st_mode),('F6-tree-type',rel)
+                records[rel]=('file',mode,info.st_size,hashlib.sha256(p.read_bytes()).hexdigest())
+                inodes.setdefault((info.st_dev,info.st_ino),[]).append(rel)
+    aliases=sorted(tuple(sorted(names)) for names in inodes.values() if len(names)>1)
+    return records,aliases
+
 def roundtrip(d):
     previous=os.umask(0)
     try:return _roundtrip(d)
@@ -160,6 +176,7 @@ def _roundtrip(d):
         elif p.is_dir():p.chmod(0o755)
         else:p.chmod(0o755 if p.name=='tool' else 0o640 if p.name in ['data','hard'] else 0o644)
     print('canonical fixture modes fixed; caller umask=0000; nonportable ASCII path included',flush=True)
+    expected_tree=tree_signature(source)
     outputs=[]
     for n in range(2):
         binary=BINARY if n==0 else BINARY.with_name('lrd')
@@ -170,9 +187,11 @@ def _roundtrip(d):
         rows=json.loads(invoke(['list-payload',path,'--length',path.stat().st_size,'--json'],binary=binary).stdout)
         outputs.append(path.read_bytes())
         into=d/f'stage{n}';into.mkdir(mode=0o700)
+        assert tree_signature(source)==expected_tree,'F6-source-unchanged-between-packs'
         before=sorted(p.name for p in d.iterdir())
         invoke(stage_args(path,manifest,into),binary=binary)
         assert before==sorted(p.name for p in d.iterdir()),'F6-no-write-outside-root'
+        assert tree_signature(into)==expected_tree,'F6-independent-source-tree-roundtrip'
         for e in rows:
             p=into/e['path'];s=p.lstat();assert s.st_mode&0o777==e['mode'],(e,oct(s.st_mode))
             if e['type']=='file':assert hashlib.sha256(p.read_bytes()).hexdigest()==e['sha256'] and s.st_size==e['length']
@@ -328,6 +347,15 @@ def edges(d):
     verify(large,'extension-limit');large.unlink()
     oversized=d/'oversized-path.tar';oversized.write_bytes(extended(pax('path',b'u/'+b'a'*4095)))
     verify(oversized,'bad-path')
+    nodes=d/'nodes-source';nodes.mkdir();nodes_out=d/'nodes-out';nodes_out.mkdir()
+    for i in range(2000):(nodes/f'f{i:04}').touch()
+    invoke(['pack',nodes,template,nodes_out,'--epoch',0],1,'node-limit')
+    assert list(nodes_out.iterdir())==[],'F2-node-preflight-no-output'
+    bytes_source=d/'bytes-source';leaf=bytes_source/('a'*200)/('b'*200);leaf.mkdir(parents=True)
+    bytes_out=d/'bytes-out';bytes_out.mkdir()
+    for i in range(1600):(leaf/f'f{i:04}').touch()
+    invoke(['pack',bytes_source,template,bytes_out,'--epoch',0],1,'byte-limit',timeout=60)
+    assert list(bytes_out.iterdir())==[],'F2-byte-preflight-no-output'
     print('END F6-packer-CLI-modes-auth-cumulative-edges exit=0',flush=True)
 
 def main():
