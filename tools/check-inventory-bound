@@ -18,7 +18,7 @@ try:
         rows=json.loads(p.stdout);assert len(rows)==100000,'F6-inventory-count'
         for i,row in enumerate(rows):
             assert row==dict(path=f'usr/f{i:06}',type='file',mode=420,owner=0,group=0,length=0,sha256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',target=''),('F6-inventory-record',i,row)
-    print('END F6-inventory-output-bound exit=0',flush=True)
+    print('PASS F6-inventory-output-bound exit=0',flush=True)
 except BaseException:
     print('FAIL F6-inventory-output-bound',file=sys.stderr,flush=True)
     raise

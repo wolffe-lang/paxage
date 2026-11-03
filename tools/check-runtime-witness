@@ -30,4 +30,4 @@ for row in trap return; do
     if [ "$result" -ne 1 ] || ! grep -q PM02-before-return "$out/$row.stderr"; then echo "FAIL runtime-return-control" >&2; exit 1; fi
   fi
 done
-echo 'END runtime-witness-recorded exit=0'
+echo 'PASS runtime-witness-recorded'

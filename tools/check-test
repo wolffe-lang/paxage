@@ -7,11 +7,11 @@ cd "$LARDER_ROOT"
 mkdir -p target/tests
 for row in version literal solver payload; do
     rm -rf "$LARDER_ROOT/src/.lu-cache"
-    echo "BEGIN unit-$row"
+    echo "RUN unit-$row"
     result=0
     "$WOLF" build --deny-warnings "src/${row}_test.lu" -o "target/tests/$row" || result=$?
     if [ "$result" -eq 0 ]; then "target/tests/$row" || result=$?; fi
-    echo "END unit-$row exit=$result"
+    echo "unit-$row exit=$result"
     if [ "$result" -ne 0 ]; then echo "FAIL unit-$row exit=$result" >&2; exit "$result"; fi
 done
 

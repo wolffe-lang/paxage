@@ -101,4 +101,4 @@ with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
     path.write_text(basic)
     run(['resolve','--snapshot',temp,'--want','app~=1-1'],2)
 print(f'CLI fixture cases={COUNT}; larder and lrd; no SKIPs')
-print('END cli-fixture-e2e exit=0')
+print('PASS cli-fixture-e2e exit=0')

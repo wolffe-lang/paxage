@@ -50,6 +50,6 @@ fn main() -> int {
     ) {
         return 1
     }
-    print("END payload-unit-and-FIPS exit=0")
+    print("PASS payload-unit-and-FIPS exit=0")
     0
 }

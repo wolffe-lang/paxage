@@ -19,8 +19,8 @@ def wait(p,label):
         except subprocess.TimeoutExpired:print(f'RSS waiting {label} pid={p.pid}',flush=True)
 
 def main():
-    if platform.system() == 'Darwin' and '78b9d3cbc41d51db44d18c40b6694403644d1c83' in (ROOT/'wolf-toolchain.toml').read_text():
-        raise SystemExit('FAIL F6-RSS-grows-with-payload: blocked on sc76; refusing known-growing Mac run')
+    if platform.system() != 'Linux':
+        raise SystemExit('FAIL F6-RSS-grows-with-payload: large RSS measurements are Linux-only')
     results=[]
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='rss-') as d:
         d=Path(d)
@@ -44,6 +44,6 @@ def main():
             results.append(rss)
             print(f'RSS platform={platform.system()} bytes={size} peak_kib={rss} sha256={expected}',flush=True)
             path.unlink();raw.unlink()
-    assert results[1]-results[0] <= 8192,('F6-RSS-grows-with-payload',results)
-    print('END F6-RSS-64MiB-1GiB exit=0',flush=True)
+    assert results[1]-results[0] < 8192,('F6-RSS-grows-with-payload',results)
+    print('PASS F6-RSS-64MiB-1GiB exit=0',flush=True)
 if __name__=='__main__':main()

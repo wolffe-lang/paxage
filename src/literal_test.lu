@@ -30,6 +30,6 @@ fn main() -> int {
     for _i in 0..33 { deep += "]" }
     deep += " }}"
     if !expect(deep, "depth-limit") { return 1 }
-    print("END literal-refusals exit=0")
+    print("PASS literal-refusals exit=0")
     0
 }

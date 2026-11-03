@@ -87,6 +87,6 @@ fn main() -> int {
             if !check_row(version.compare(a, c) <= 0, "V3-generated-transitivity") { return 1 }
         }
     }
-    print("END version-properties exit=0")
+    print("PASS version-properties exit=0")
     0
 }

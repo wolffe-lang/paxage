@@ -32,4 +32,4 @@ with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') a
         print(f'larder-only-reader bytes={size} peak_kib={rss} cap_bytes=2147483648 digest_calls=0',flush=True)
         path.unlink()
 assert results[1]-results[0] < 8192,('larder-chunk-RSS-grows-with-payload',results)
-print('END larder-only-chunk-RSS exit=0',flush=True)
+print('PASS larder-only-chunk-RSS exit=0',flush=True)

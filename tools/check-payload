@@ -129,7 +129,7 @@ def vectors(d):
             path=d/'vector.tar';path.write_bytes(raw);verify(path,error,binary)
         for raw in positives:
             path=d/'vector.tar';path.write_bytes(raw);verify(path,binary=binary)
-    print('END F6-trailing-data-refused exit=0',flush=True)
+    print('PASS F6-trailing-data-refused exit=0',flush=True)
     # 100001-entry bound is reached before allocation of entry 100001 or sorting.
     path=d/'entries.tar'
     with path.open('wb') as f:
@@ -140,7 +140,7 @@ def vectors(d):
         f.truncate(100000*512);f.seek(0,2);f.write(bytes(1024))
     verify(path);path.unlink()
     # Bound-before-allocation was exercised with a declared 1MiB+1 header above.
-    print(f'END F6-independent-vectors-{len(cases)} exit=0',flush=True)
+    print(f'PASS F6-independent-vectors-{len(cases)} exit=0',flush=True)
     return valid
 
 def tree_signature(root):
@@ -211,7 +211,7 @@ def _roundtrip(d):
     assert outputs[0]==outputs[1],'F6-deterministic-listing-order'
     artifact=ROOT/'target/evidence/canonical.payload.tar';artifact.parent.mkdir(parents=True,exist_ok=True);artifact.write_bytes(outputs[0])
     print('canonical payload sha256='+hashlib.sha256(outputs[0]).hexdigest(),flush=True)
-    print('END F6-roundtrip-determinism-authentication exit=0',flush=True)
+    print('PASS F6-roundtrip-determinism-authentication exit=0',flush=True)
 
 def check_staged(rows,into):
     # Record modes before temporarily enabling reads/search for independent checks.
@@ -287,7 +287,7 @@ def fuzz(d,valid):
     finally:
         if p.poll() is None:p.kill();p.wait()
     assert set(d.iterdir())==before,'F6-fuzz-outside-write'
-    print(f'END F6-fuzz-{count}-accepted-{accepted}-refused-{refused} exit=0',flush=True)
+    print(f'PASS F6-fuzz-{count}-accepted-{accepted}-refused-{refused} exit=0',flush=True)
 
 def edges(d):
     template=ROOT/'tests/manifests/valid.manifest'
@@ -356,12 +356,12 @@ def edges(d):
     for i in range(1500):(leaf/f'f{i:04}').touch()
     invoke(['pack',bytes_source,template,bytes_out,'--epoch',0],1,'byte-limit',timeout=60)
     assert list(bytes_out.iterdir())==[],'F2-byte-preflight-no-output'
-    print('END F6-packer-CLI-modes-auth-cumulative-edges exit=0',flush=True)
+    print('PASS F6-packer-CLI-modes-auth-cumulative-edges exit=0',flush=True)
 
 def main():
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='payload-') as temp:
         d=Path(temp)
         valid=vectors(d);roundtrip(d);edges(d)
         if '--fuzz' in sys.argv:fuzz(d,valid)
-    print('END payload-cli-e2e exit=0',flush=True)
+    print('PASS payload-cli-e2e exit=0',flush=True)
 if __name__=='__main__':main()

@@ -262,7 +262,7 @@ fn main() -> int {
     ) {
         return 1
     }
-    print("END solver-exhaustive-10000 exit=0")
-    print("END held-package-refused exit=0")
+    print("PASS solver-exhaustive-10000 exit=0")
+    print("PASS held-package-refused exit=0")
     0
 }

@@ -72,5 +72,5 @@ def main():
         container(mount_cmd,[(ROOT/'target/bin/larder','/bin/larder','ro'),(out,'/input','ro'),(mounted,'/stage','rw')])
         assert list(mounted.iterdir())==[],'F6-mount-refusal-no-writes'
 
-    print('END F6-container-interop-confinement exit=0',flush=True)
+    print('PASS F6-container-interop-confinement exit=0',flush=True)
 if __name__=='__main__':main()

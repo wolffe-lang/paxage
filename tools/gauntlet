@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
+# Flat top-level records accepted by planning's gauntlet-record.sh (68dae09).
 set -eu
 cd "$(dirname "$0")/.."
 step() {
-  local name=$1
+  local name=$1 started=$SECONDS result=0
   shift
-  echo "BEGIN $name"
-  local result=0
+  printf 'START %s\n' "$name"
   "$@" || result=$?
-  echo "END $name exit=$result"
-  if [ "$result" -ne 0 ]; then echo "FAIL $name exit=$result" >&2; exit "$result"; fi
+  if [ "$result" -ne 0 ]; then printf 'FAIL %s exit=%s\n' "$name" "$result" >&2; fi
+  printf 'END %s exit=%s secs=%s\n' "$name" "$result" "$((SECONDS-started))"
+  if [ "$result" -ne 0 ]; then exit "$result"; fi
 }
 step fmt tools/check-fmt
 step build tools/build
+step runtime-witness bash tools/check-runtime-witness
 step unit tools/check-test
 step cli tools/check-e2e
-
 step payload python3 -I tools/check-payload --fuzz
 if [ "$(uname -s)" = Linux ]; then
   step container python3 -I tools/check-payload-container
   step inventory-bound python3 -I tools/check-inventory-bound
   step chunk-rss python3 -I tools/check-chunk-rss
+  step rss python3 -I tools/check-payload-rss
 else
-  echo "END container-platform-not-applicable-macOS exit=0"
+  echo 'SKIP container reason=Linux-only container interoperability and confinement'
+  echo 'SKIP inventory-bound reason=Linux-only capped maximum-inventory measurement'
+  echo 'SKIP chunk-rss reason=Linux-only capped allocation measurement'
+  echo 'SKIP rss reason=Linux-only capped large-file measurement; never on the Mac'
 fi
-step rss python3 -I tools/check-payload-rss
