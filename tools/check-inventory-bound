@@ -12,6 +12,7 @@ try:
         with path.open('wb') as f:
             for i in range(100000):f.write(v.header(f'usr/f{i:06}'.encode(),b'0',0,0o644))
             f.write(bytes(1024))
+        v.verify(path,binary=binary)
         p=subprocess.run(['prlimit','--as=2147483648','--',str(binary),'list-payload',str(path),'--length',str(path.stat().st_size),'--json'],stdin=subprocess.DEVNULL,capture_output=True,timeout=120)
         assert p.returncode==0,('FAIL F6-inventory-output-bound',p.returncode,p.stderr)
         rows=json.loads(p.stdout);assert len(rows)==100000,'F6-inventory-count'

@@ -11,6 +11,7 @@ mkdir -p "$out"
 "$WOLF" --version > "$out/version.txt"
 cat "$out/version.txt"
 for row in trap return; do
+  rm -rf "$LARDER_ROOT/tests/runtime/$row/.lu-cache"
   "$WOLF" build --deny-warnings "tests/runtime/$row/main.lu" -o "$out/$row"
   result=0
   if [ "$(uname -s)" = Linux ]; then
