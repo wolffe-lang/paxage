@@ -23,6 +23,7 @@ fn walk(root: str, parent: str, depth: int, mut w: Walk) {
         if parent != "" { path = "{parent}/{name}" }
         if !payload.allowed_path(path) { w.error = "bad-path"; return }
         if w.entries.len >= 100000 { w.error = "entry-limit"; return }
+        if w.entries.len >= w.limit { w.error = "node-limit"; return }
         let s = fs_lstat("{root}/{path}") else |_| { w.error = "pack-stat"; return }
         if s[4] > 511 { w.error = "set-id-mode"; return }
         var kind = ""
@@ -182,24 +183,52 @@ pub fn file_record(e: payload.Entry) -> str {
     "file {{ path: {escaped(e.path)}, type: {escaped(e.kind)}, mode: {e.mode}, owner: {e.owner}, group: {e.group}, length: {e.length}, sha256: {escaped(e.hash)}, target: {escaped(e.target)} }}"
 }
 
-fn render(d: literal.Data, n: int, records: str, bytes: int, inodes: int) -> str {
+struct Text { bytes: List[byte], error: str }
+
+fn add(mut out: Text, value: str) {
+    if out.error != "" { return }
+    if value.len > 1048576 - out.bytes.len { out.error = "byte-limit"; return }
+    for c in value.bytes() { (mut out.bytes).push(c) }
+}
+
+fn add_bytes(mut out: Text, value: List[byte]) {
+    if out.error != "" { return }
+    if value.len > 1048576 - out.bytes.len { out.error = "byte-limit"; return }
+    for c in value { (mut out.bytes).push(c) }
+}
+
+fn render_value(
+    mut out: Text,
+    d: literal.Data,
+    n: int,
+    records: List[byte],
+    bytes: int,
+    inodes: int,
+) {
+    if out.error != "" { return }
     let node = copy d.nodes[n]
-    if node.key == "files" { return records }
-    if node.key == "installed_bytes" { return "{bytes}" }
-    if node.key == "installed_inodes" { return "{inodes}" }
-    if node.kind == "string" { return escaped(node.text) }
-    if node.kind == "int" { return "{node.number}" }
-    if node.kind == "bool" { return node.text }
-    var out = "["
-    var close = "]"
-    if node.kind == "object" { out = "{node.text} {{ "; close = " }}" }
+    if node.key == "files" { add_bytes(mut out, records); return }
+    if node.key == "installed_bytes" { add(mut out, "{bytes}"); return }
+    if node.key == "installed_inodes" { add(mut out, "{inodes}"); return }
+    if node.kind == "string" { add(mut out, escaped(node.text)); return }
+    if node.kind == "int" { add(mut out, "{node.number}"); return }
+    if node.kind == "bool" { add(mut out, node.text); return }
+    if node.kind == "object" { add(mut out, "{node.text} {{ ") } else { add(mut out, "[") }
     let cs = literal.children(d, n)
     for i in 0..cs.len {
-        if i > 0 { out += ", " }
-        if node.kind == "object" { out += "{d.nodes[cs[i]].key}: " }
-        out += render(d, cs[i], records, bytes, inodes)
+        if out.error != "" { return }
+        if i > 0 { add(mut out, ", ") }
+        if node.kind == "object" { add(mut out, "{d.nodes[cs[i]].key}: ") }
+        render_value(mut out, d, cs[i], records, bytes, inodes)
     }
-    out + close
+    if node.kind == "object" { add(mut out, " }}") } else { add(mut out, "]") }
+}
+
+fn render(d: literal.Data, records: List[byte], bytes: int, inodes: int) -> Text {
+    var out = Text { bytes: List[byte](), error: "" }
+    render_value(mut out, d, 0, records, bytes, inodes)
+    add(mut out, "\n")
+    out
 }
 
 /// Produce normalized payload and regenerated manifest in caller-named output dir.
@@ -207,11 +236,15 @@ fn render(d: literal.Data, n: int, records: str, bytes: int, inodes: int) -> str
 pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
     let stat = fs_lstat(root) else |_| { return "pack-root" }
     if stat[0] != 1 { return "pack-root" }
+    let old_files = literal.children(template, literal.field(template, 0, "files")).len
+    let base_nodes = template.nodes.len - old_files * 9
+    let limit = (16384 - base_nodes) / 9
     var w = Walk {
         entries: List[payload.Entry](),
         ids: List[str](),
         targets: List[str](),
         error: "",
+        limit,
     }
     walk(root, "", 0, mut w)
     if w.error != "" { return w.error }
@@ -223,10 +256,31 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
     }
     let name = schema.string(template, 0, "name")
     let version = schema.string(template, 0, "version")
+    // Validate a bounded blueprint before creating any output. Digests have fixed
+    // 64-byte hex width; placeholders validate shape, never claim content hashes.
+    var blueprint_records = Text { bytes: List[byte](), error: "" }
+    add(mut blueprint_records, "[")
+    for i in 0..w.entries.len {
+        var e = copy w.entries[i]
+        if e.kind == "file" {
+            e.hash = "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+        if i > 0 { add(mut blueprint_records, ", ") }
+        add(mut blueprint_records, file_record(e))
+        if blueprint_records.error != "" { return blueprint_records.error }
+    }
+    add(mut blueprint_records, "]")
+    let blueprint = render(template, blueprint_records.bytes, installed, w.entries.len)
+    if blueprint.error != "" { return blueprint.error }
+    let checked = literal.parse(blueprint.bytes)
+    if checked.error != "" { return checked.error }
+    let shape = schema.manifest(checked, 0)
+    if shape != "" { return shape }
     let path = "{outdir}/{name}-{version}.payload.tar"
     let fd = fs_open_perm(path, 20, 384) else |_| { return "pack-output" }
     var error = ""
-    var records = "["
+    var records = Text { bytes: List[byte](), error: "" }
+    add(mut records, "[")
     var extension_bytes = 0
     var buffer = List[byte]()
     for i in 0..w.entries.len {
@@ -294,22 +348,24 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
         }
         error = write(fd, zeros((512 - e.length % 512) % 512))
         if error != "" { break }
-        if i > 0 { records += ", " }
-        records += file_record(e)
+        if i > 0 { add(mut records, ", ") }
+        add(mut records, file_record(e))
+        if records.error != "" { error = records.error; break }
     }
-    records += "]"
+    add(mut records, "]")
     if error == "" { error = write(fd, zeros(1024)) }
     fs_close(fd) else |_| { error = "pack-close" }
     if error != "" { return error }
-    let output = render(template, 0, records, installed, w.entries.len) + "\n"
-    let parsed = literal.parse(output.bytes())
+    let output = render(template, records.bytes, installed, w.entries.len)
+    if output.error != "" { return output.error }
+    let parsed = literal.parse(output.bytes)
     if parsed.error != "" { return parsed.error }
     let valid = schema.manifest(parsed, 0)
     if valid != "" { return valid }
     let manifest = fs_open_perm("{outdir}/{name}-{version}.manifest", 20, 384) else |_| {
         return "pack-manifest-output"
     }
-    let m = write(manifest, output.bytes())
+    let m = write(manifest, output.bytes)
     fs_close(manifest) else |_| { return "pack-close" }
     m
 }
