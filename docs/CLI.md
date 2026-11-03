@@ -38,9 +38,9 @@ solver fixture has 24 packages; its time is reported, not gated. Payload vectors
 are generated independently from POSIX.1-2017 and F6, not an archiver's verdict.
 Temporary files are lane-local or checkout-local, never system temporary paths.
 
-**Large-file qualification is currently blocked on the bounded SHA-2 std fix
-(sc76).** The pinned incremental API has growing ambient-arena allocations.
-The unchanged RSS gate remains red. Do not use this revision for large packages.
+The std pin includes bounded incremental SHA-2. Large-file RSS qualification is
+Linux-only under a 2 GiB address-space cap; the 1 GiB peak must grow by less than
+8 MiB over the 64 MiB peak. Never run that measurement on the Mac.
 
 ## C4 — pack
 

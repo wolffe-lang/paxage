@@ -11,6 +11,6 @@
 - Add canonical restricted pax packing, strict streaming payload inspection and
   unprivileged authenticated-blob staging with inventory/mode/link/digest checks.
 - Add independent hostile vectors, roundtrip/determinism, mutation, capped RSS
-  and container interop/confinement gates. Large-file RSS remains blocked on the
-  bounded std SHA-2 fix (sc76); no threshold is waived.
+  and container interop/confinement gates; record the bounded std SHA-2 pin and
+  require under 8 MiB RSS growth under a 2 GiB Linux cap. No threshold is waived.
 - Keep live-root installs, trust/signing, transactions and fetch unavailable.
