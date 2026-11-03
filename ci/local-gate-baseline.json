@@ -1,0 +1,51 @@
+{
+  "main": "ci.yml",
+  "main_name": "ci",
+  "root": "plan",
+  "new_router": true,
+  "router_body": "    name: plan\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - name: full job set selected\n        if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}\n        run: echo 'SELECTED gate'\n      - uses: actions/checkout@v4\n        if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}\n      - name: local gate wiring proof\n        if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}\n        run: python3 -I ci/local-gate-test.py\n      - name: local evidence gate\n        if: ${{ !(github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) }}\n        run: echo 'Local gauntlet evidence is the gate; request ci or full-matrix for CI.'\n",
+  "planner": [],
+  "full": {},
+  "selected": [
+    "gate"
+  ],
+  "module_path": "src/version/version.lu",
+  "cross_paths": [
+    ".github/workflows/ci.yml",
+    "ci/local-gate-test.py",
+    "tools/shared.sh",
+    "wolf-toolchain.toml"
+  ],
+  "push_patterns": [
+    ".github/**",
+    "ci/**",
+    "!ci/*.md",
+    "!ci/**/*.md",
+    "tools/**",
+    "spec/**",
+    "**/wolf-toolchain.toml",
+    "**/rust-toolchain.toml",
+    "**/*.pin",
+    "**/PAIRING",
+    "**/STD-PIN",
+    "vendor/tools.toml",
+    "gnu-oracle.toml",
+    ".gitmodules",
+    "Cargo.toml",
+    "Cargo.lock"
+  ],
+  "push_before": "  push:\n    branches: [trunk]\n",
+  "preserve_push": false,
+  "workflows": {
+    "ci.yml": {
+      "gate": "    name: ${{ matrix.name }} (fmt, build, units, CLI e2e)\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - {name: linux x86-64, os: ubuntu-latest, arch: x86_64}\n          - {name: macOS arm64, os: macos-latest, arch: arm64}\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@v4\n      - name: lane-local temporary files\n        shell: bash\n        run: |\n          test \"$(uname -m)\" = '${{ matrix.arch }}'\n          mkdir -p \"$HOME/lanes/pm01/tmp\"\n          echo \"TMPDIR=$HOME/lanes/pm01/tmp\" >> \"$GITHUB_ENV\"\n      - name: digest-pinned wolf and lupin\n        run: tools/fetch-toolchain\n      - name: fmt\n        run: tools/check-fmt\n      - name: build\n        if: ${{ !cancelled() }}\n        run: tools/build\n      - name: units, S3-solver-exhaustive and S1-held-package-refused\n        if: ${{ !cancelled() }}\n        run: tools/check-test\n      - name: CLI fixture e2e, both executable names\n        if: ${{ !cancelled() }}\n        run: tools/check-e2e\n"
+    }
+  },
+  "schedules": {},
+  "unchanged": {},
+  "exempt_jobs": [
+    "nightly-red",
+    "notify",
+    "sleep-alarm"
+  ]
+}
