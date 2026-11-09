@@ -11,8 +11,8 @@ and the refusal of an unjournalled filesystem. Its prediction is
 
 ## The claim
 
-This is the one place that states M-PM1's claim (R-pm04b-12, pending the
-maintainer's ruling; the wording is provisional and changes only here):
+This is the one place that states M-PM1's claim. Its scope is ruled, and
+M-PM1 was met at larder#10's merge (trunk `4e6fda1`):
 
 > larder's transactions on a synthetic Linux root, from a `file://` repository,
 > reach the old or the new generation only, recovered twice identically, after a
@@ -21,6 +21,18 @@ maintainer's ruling; the wording is provisional and changes only here):
 > ext4 and ext3 with jbd2, `data=ordered`, under QEMU/KVM, with every block
 > write the guest issued recorded. The live root (`--root /`) is pm05's and is
 > not claimed.
+
+What it does not claim yet:
+
+- **PAX's own filesystem and root.** Transactions on PAX's live root, with
+  its boot-time recovery, are pm05's.
+- **Other filesystems.** btrfs, xfs and the rest are refused by name.
+  Qualification accepts only ext3 and ext4 with an active jbd2 journal.
+- **Real power loss on metal.** The cuts are built from the writes a KVM
+  guest issued, on a device model that keeps every flushed write. A disk that
+  loses a write after acknowledging its flush is outside the claim.
+- **Network repositories.** The repository is a `file://` path. Fetching over
+  a network is later work.
 
 ## Forbidden
 
@@ -68,8 +80,9 @@ maintainer's ruling; the wording is provisional and changes only here):
   newstyle; EXPORT_NAME, INFO, GO, LIST, ABORT; READ, WRITE, FLUSH, DISC;
   simple replies). It logs every request on its two exports in arrival order,
   with each write's bytes. `--eio TEXT:write|flush` answers the first such
-  request after a named mark with NBD_EIO (R-pm04b-1, provisional: the EIO rows
-  are one function, `eio_runs`, so a different ruling replaces only it).
+  request after a named mark with NBD_EIO. That is the EIO method as ruled: the
+  guest's kernel sees an ordinary device error, and the log ties it to the step.
+  The EIO rows are one function, `eio_runs`.
 - `tools/powercut-synth`: crash states from a log (section 1 of the
   prediction), keyed so identical states are checked once.
 - `tools/powercut-guest`: the guest's run, eio and check phases.
@@ -148,6 +161,6 @@ crash keeps the page cache. That contrast is the plant's point
   survive it.
 - The four seeded subsets per window are a sample, not every subset. The
   before, after, after-all and flush states are exhaustive per window.
-- EIO is injected at the recorder, one request per run (R-pm04b-1, provisional).
+- EIO is injected at the recorder, one request per run, the method as ruled.
 - CI runs the host rows and SKIPs the VM step (R-pm04b-7); the witness runs in
   local KVM takes.
