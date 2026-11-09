@@ -10,7 +10,7 @@ Diagnostics start `paxage:` regardless of invocation name. Usage names both.
   byte length. This does not authenticate a signer or a payload.
 - `compare V1 V2`: V2 versions, normalized result -1, 0 or 1.
 - `resolve --snapshot DIR --want SPEC [--want SPEC ...] [--json]` reads
-  `DIR/snapshot.lrd`, emits a complete independently checked plan, or refuses.
+  `DIR/snapshot.pxg`, emits a complete independently checked plan, or refuses.
   A spec is `NAME[@ARCH/SLOT][OPVERSION]`, OP one of `= != < <= > >=`;
   absent constraint means any. Defaults come from the snapshot. JSON has
   `status`, `selected`, `removals`, `nodes`, `explanation`. Removals identify

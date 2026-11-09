@@ -1,4 +1,4 @@
-//! The installed database (X4). current is the commit decision; generations/<N>/db.lrd
+//! The installed database (X4). current is the commit decision; generations/<N>/db.pxg
 //! is immutable F2 literal data bounded by the 24-package snapshot limit, and its
 //! manifests live beside it by digest (generations/<N>/manifests/<sha256>).
 

@@ -235,7 +235,7 @@ fn resolve(args: List[str]) -> int {
     if dir == "" || wants.len == 0 || wants.len > 128 {
         return bad_usage("resolve needs --snapshot and 1..128 --want specifications")
     }
-    let input = read_input("{dir}/snapshot.lrd")
+    let input = read_input("{dir}/snapshot.pxg")
     if input.error != "" { return fail(input.error) }
     let data = literal.parse(input.bytes)
     if data.error != "" { return fail(data.error) }

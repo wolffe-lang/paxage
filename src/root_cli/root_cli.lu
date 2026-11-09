@@ -372,7 +372,7 @@ fn init(o: Opts) -> int {
     }
     let g0 = db.empty(o.arch, o.slot, repo, ownership)
     let bytes = db.render(g0).bytes()
-    if e == "" { e = create_rel(c, "{txn.state()}/generations/0/db.lrd", bytes, 420) }
+    if e == "" { e = create_rel(c, "{txn.state()}/generations/0/db.pxg", bytes, 420) }
     let record = db.render_current(db.
         Current { generation: 0, database: meta.digest(bytes), transaction: "", error: "" })
     if e == "" { e = create_rel(c, "{txn.state()}/current", record.bytes(), 384) }

@@ -2,7 +2,7 @@
 
 ## S1 — Snapshot and completeness
 
-`DIR/snapshot.lrd` is an immutable F2 `snapshot { schema: 1, features: [], arch,
+`DIR/snapshot.pxg` is an immutable F2 `snapshot { schema: 1, features: [], arch,
 slot, packages, installed, holds, budget }`. packages contains F3 manifest
 literals (maximum 24). installed and holds contain unique package IDs, spelled
 `name@arch/slot=version`, each referring to exactly one manifest; holds is a

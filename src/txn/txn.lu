@@ -892,7 +892,7 @@ pub fn read_rel(c: Ctx, rel: str, cap: int) -> List[byte] {
 
 /// Load generation n and check it against the commit record's digest.
 pub fn load(c: Ctx, cur: db.Current) -> db.Db {
-    let bytes = read_rel(c, "{state()}/generations/{cur.generation}/db.lrd", 1048576)
+    let bytes = read_rel(c, "{state()}/generations/{cur.generation}/db.pxg", 1048576)
     var bad = db.empty("", "", "", "")
     if bytes.len == 0 || sha2.to_hex(sha2.sum256(bytes)) != cur.database {
         bad.error = "database-invalid generation {cur.generation}"
@@ -1513,7 +1513,7 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     e = validate(c, p.ops)
     if e == "" { e = accounts_consistent(c, p.next) }
     if e != "" { return rollback(c, t, to, true, e) }
-    // Generation N: manifests by digest, then db.lrd, all synced.
+    // Generation N: manifests by digest, then db.pxg, all synced.
     let gens = walk.dir(c.root, "{state()}/generations")
     if gens.error != "" { return rollback(c, t, to, true, gens.error) }
     e = mkdir_in(gens, "{to}")
@@ -1531,7 +1531,7 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     }
     if e == "" { e = walk.sync(md) }
     walk.close(md)
-    if e == "" { e = write_new(g, "db.lrd", db_bytes, 420) }
+    if e == "" { e = write_new(g, "db.pxg", db_bytes, 420) }
     if e == "" { fs_set_mode_fd(g.fd, 493) else |_| { e = "mode generation" } }
     if e == "" { e = walk.sync(g) }
     walk.close(g)

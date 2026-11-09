@@ -100,8 +100,8 @@ with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
     run(['check-manifest',path],out=f'manifest ok sha256={hashlib.sha256(changed).hexdigest()} bytes={len(changed)}\n',err='')
     assert hashlib.sha256(original).digest()!=hashlib.sha256(changed).digest()
     # Snapshot schema rejects comparator-equal duplicate spellings and malformed holds.
-    basic=(ROOT/'tests/snapshots/basic/snapshot.lrd').read_text()
-    path=temp/'snapshot.lrd'
+    basic=(ROOT/'tests/snapshots/basic/snapshot.pxg').read_text()
+    path=temp/'snapshot.pxg'
     path.write_text(basic.replace('version: "2-1"','version: "01-1"'))
     run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='paxage: duplicate-version\n')
     path.write_text(basic.replace('holds: []','holds: ["app@x86_64/default=1-1"]'))

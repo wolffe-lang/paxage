@@ -49,8 +49,8 @@ process-wide working directory is sound.
   or non-file refuses `lock-inode`.
 - `current`: the commit decision, F2 `current { schema, features, generation,
   database, transaction }`. `database` is the SHA-256 of that generation's
-  `db.lrd`.
-- `generations/<N>/db.lrd`: an immutable F2 `database` record, holding:
+  `db.pxg`.
+- `generations/<N>/db.pxg`: an immutable F2 `database` record, holding:
   - arch, slot, repository and ownership mode;
   - the installed packages, each with its reason (explicit or dependency) and the
     SHA-256 of its manifest;
@@ -97,7 +97,7 @@ in order, each followed by its named hook (X8):
 5. **validate**: every operation's path is its new identity, with hard links
    sharing their source's inode, and every declared account is consistent across
    passwd and group.
-6. **generation**: `generations/<N>/` with its manifests and `db.lrd`, all
+6. **generation**: `generations/<N>/` with its manifests and `db.pxg`, all
    fsynced.
 7. **commit-written**, **commit-renamed**, **commit**: `current.t<N>` is written
    and fsynced, renamed over `current`, and the directory is fsynced. `current`
