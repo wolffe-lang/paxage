@@ -1,0 +1,124 @@
+//! The transaction intent (X5, R-pm04-12): one framed line per operation, tab
+//! separated (F5 paths and link targets hold no control bytes), ending with the
+//! SHA-256 of every preceding byte. Rescue reads nothing else to undo.
+
+use std.str as text
+use std.x.crypto.sha2 as sha2
+
+/// What a name must be: absent, file, dir, symlink, or link (a second name of the
+/// regular file at target, a root-relative path).
+pub struct Want { kind: str, mode: int, uid: int, gid: int, length: int, sha256: str, target: str }
+
+/// One live-tree operation. action: mkdir, put, link, delete, rmdir or chmeta.
+/// backup is true when transactions/t<N>/backup/<index> holds old's bytes.
+pub struct Op { index: int, action: str, path: str, old: Want, new: Want, backup: bool }
+
+/// A whole intent.
+pub struct Intent { transaction: str, from: int, to: int, database: str, ops: List[Op], error: str }
+
+/// An absent name.
+pub fn nothing() -> Want { Want { kind: "absent", mode: 0, uid: 0, gid: 0, length: 0, sha256: "", target: "" } }
+
+fn sub(s: str, a: int, b: int) -> str { text.get(s, a, b) else |_| { "" } }
+
+/// A bounded nonnegative decimal, -1 when malformed.
+pub fn decimal(s: str) -> int {
+    let b = s.bytes()
+    if b.len == 0 || b.len > 18 { return -1 }
+    var n = 0
+    for c in b {
+        let v = c as int
+        if v < 48 || v > 57 { return -1 }
+        n = n * 10 + (v - 48)
+    }
+    n
+}
+
+fn want_fields(w: Want) -> str {
+    "{w.kind}\t{w.mode}\t{w.uid}\t{w.gid}\t{w.length}\t{w.sha256}\t{w.target}"
+}
+
+/// Canonical bytes of an intent, trailer included.
+pub fn render(i: Intent) -> List[byte] {
+    var body = "larder-intent\t1\ntransaction\t{i.transaction}\nfrom\t{i.from}\nto\t{i.to}\ndatabase\t{i.database}\nops\t{i.ops.len}\n"
+    for op in i.ops {
+        var backup = 0
+        if op.backup { backup = 1 }
+        body += "op\t{op.index}\t{op.action}\t{op.path}\t{want_fields(op.old)}\t{want_fields(op.new)}\t{backup}\n"
+    }
+    let bytes = body.bytes()
+    let hash = sha2.to_hex(sha2.sum256(bytes))
+    let full = body + "end\t{hash}\n"
+    full.bytes()
+}
+
+fn want_at(f: List[str], at: int) -> Want {
+    Want {
+        kind: f[at],
+        mode: decimal(f[at + 1]),
+        uid: decimal(f[at + 2]),
+        gid: decimal(f[at + 3]),
+        length: decimal(f[at + 4]),
+        sha256: f[at + 5],
+        target: f[at + 6],
+    }
+}
+
+fn want_ok(w: Want) -> bool {
+    if w.mode < 0 || w.uid < 0 || w.gid < 0 || w.length < 0 { return false }
+    w.kind == "absent" || w.kind == "file" || w.kind == "dir" || w.kind == "symlink" || w.kind == "link"
+}
+
+fn malformed(why: str) -> Intent {
+    Intent { transaction: "", from: -1, to: -1, database: "", ops: List[Op](), error: "rescue-malformed-intent {why}" }
+}
+
+/// Parse and authenticate an intent by its trailer; any deviation refuses by name.
+pub fn parse(bytes: List[byte]) -> Intent {
+    let s = str_from_utf8(bytes) else |_| { return malformed("utf8") }
+    if !s.ends_with("\n") { return malformed("truncated") }
+    let lines = text.split(sub(s, 0, s.len - 1), "\n")
+    if lines.len < 7 { return malformed("short") }
+    let last = lines[lines.len - 1]
+    if !text.starts_with(last, "end\t") { return malformed("trailer") }
+    let body_len = s.len - last.len - 1
+    let body = sub(s, 0, body_len)
+    let expect = sub(last, 4, last.len)
+    let bb = body.bytes()
+    if sha2.to_hex(sha2.sum256(bb)) != expect { return malformed("digest") }
+    var out = Intent { transaction: "", from: -1, to: -1, database: "", ops: List[Op](), error: "" }
+    if lines[0] != "larder-intent\t1" { return malformed("header") }
+    let keys = ["transaction", "from", "to", "database", "ops"]
+    var values = List[str]()
+    for k in 0..keys.len {
+        let f = text.split(lines[k + 1], "\t")
+        if f.len != 2 || f[0] != keys[k] { return malformed("field {keys[k]}") }
+        (mut values).push(f[1])
+    }
+    out.transaction = values[0]
+    out.from = decimal(values[1])
+    out.to = decimal(values[2])
+    out.database = values[3]
+    let count = decimal(values[4])
+    if out.from < 0 || out.to != out.from + 1 || count < 0 || count != lines.len - 7 {
+        return malformed("counts")
+    }
+    if out.transaction != "t{out.to}" { return malformed("transaction") }
+    for k in 0..count {
+        let f = text.split(lines[k + 6], "\t")
+        if f.len != 19 || f[0] != "op" || decimal(f[1]) != k { return malformed("op {k}") }
+        let op = Op {
+            index: k,
+            action: f[2],
+            path: f[3],
+            old: want_at(f, 4),
+            new: want_at(f, 11),
+            backup: f[18] == "1",
+        }
+        if !want_ok(op.old) || !want_ok(op.new) || (f[18] != "0" && f[18] != "1") || op.path == "" {
+            return malformed("op {k}")
+        }
+        (mut out.ops).push(op)
+    }
+    out
+}
