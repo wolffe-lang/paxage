@@ -1,4 +1,4 @@
-# Working on larder
+# Working on paxage
 
 Authority: `docs/{FORMAT,RECIPE,VERSION,SOLVER,CLI}.md`, with numbered rules;
 `prediction.txt` records pm01's implementation prediction. The design of record
@@ -19,3 +19,5 @@ sprints/pm/01-the-format/pm01-the-format-and-harness.md.
 - Tests are first class. Add fixture CLI e2e and unit rows with every rule.
   Search/checker share data/version order only, never feasibility predicates.
 - No attribution/co-author trailers, labels, merge, tag or release by lanes.
+- The former name stays only in the records `tools/check-census` lists. A new
+  lane note or prediction that must name it goes on that list by path.
