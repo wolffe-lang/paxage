@@ -10,6 +10,7 @@ LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export LARDER_ROOT
 cd "$LARDER_ROOT"
 . tools/lib-toml.sh
+. tools/lib-fetch.sh
 
 target=$(host_target) || {
     echo "fetch-toolchain: no pinned archive for $(uname -s) $(uname -m)" >&2
@@ -54,7 +55,7 @@ fetch_archive() {
     else
         url="https://github.com/$repo/releases/download/v$version/$base.tar.gz"
         echo "fetch-toolchain: $url"
-        curl -sSfL --retry 3 --retry-delay 5 -o "$tmp/$base.tar.gz" "$url"
+        fetch_release "$url" "$tmp/$base.tar.gz"
     fi
     have=$(sha256 "$tmp/$base.tar.gz")
     if [ "$have" != "$3" ]; then
