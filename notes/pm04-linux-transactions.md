@@ -74,6 +74,16 @@ what was built:
   - A directory shared by two removed packages was planned twice (red in
     orphan-cycle); fixed.
   - A modified hardlinked file must keep its link in the undo record; fixed.
+  - The CLI fixture (`tools/check-e2e`) still expected:
+    - the old version line and usage;
+    - install, remove and upgrade refused with exit 6.
+
+    The first final take (at `60c756b`) went red at `END cli exit=1` on hasu and on
+    the Mac; both records are void. The fixture now expects:
+    - the new line;
+    - `sync` refused by name;
+    - `root-missing` and `live-root-is-pm05` for the three root verbs;
+    - usage errors for root verbs without `--root`.
 
 ## Evidence index
 
