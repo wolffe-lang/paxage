@@ -1,0 +1,84 @@
+//! Filesystem qualification (X2, R-pm04-6). Linux: ext3/ext4 only, with an active
+//! jbd2 journal for the root's own device, read from /sys/dev/block (or
+//! /proc/self/mountinfo) and /proc/fs/jbd2. statfs's ext magic alone cannot tell
+//! ext2 from ext3. macOS roots are development roots: durability is not claimed.
+
+use std.str as text
+
+/// accepted: journalled (Linux, witnessed) or development (macOS); error refuses.
+pub struct Verdict { kind: str, detail: str, error: str }
+
+fn read_small(path: str, cap: int) -> str {
+    let fd = fs_open_mode(path, 21) else |_| { return "" }
+    var data = List[byte]()
+    loop {
+        let chunk = fs_read_chunk(fd, 65536) else |_| { break }
+        if chunk.len == 0 { break }
+        for b in chunk { (mut data).push(b) }
+        if data.len > cap { break }
+    }
+    fs_close(fd) else |_| {}
+    str_from_utf8(data) else |_| { "" }
+}
+
+fn major(dev: int) -> int {
+    let high = dev / 4294967296 % 4294967296
+    dev / 256 % 4096 + high - high % 4096
+}
+
+fn minor(dev: int) -> int {
+    let mid = dev / 4096 % 4294967296
+    dev % 256 + mid - mid % 256
+}
+
+fn base(path: str) -> str {
+    let parts = text.rsplit_once(path, "/") else |_| { return path }
+    let (_head, tail) = parts
+    tail
+}
+
+fn kernel_name(majmin: str) -> str {
+    let raw = fs_read_link("/sys/dev/block/{majmin}") else |_| { List[byte]() }
+    if raw.len > 0 {
+        let link = str_from_utf8(raw) else |_| { "" }
+        if link != "" { return base(link) }
+    }
+    let info = read_small("/proc/self/mountinfo", 1048576)
+    for line in text.split(info, "\n") {
+        let f = text.split(line, " ")
+        if f.len < 10 || f[2] != majmin { continue }
+        for i in 0..f.len - 2 {
+            if f[i] == "-" { return base(f[i + 2]) }
+        }
+    }
+    ""
+}
+
+/// Qualify the filesystem holding path for mutation.
+pub fn root(path: str) -> Verdict {
+    var v = Verdict { kind: "", detail: "", error: "" }
+    if os_name() != "linux" {
+        v.kind = "development"
+        v.detail = "{os_name()} development root; durability not claimed"
+        return v
+    }
+    let st = fs_stat(path) else |_| { v.error = "qualify-stat"; return v }
+    let sf = fs_statfs(path) else |_| { v.error = "qualify-statfs"; return v }
+    let kind = sf[10]
+    if kind == 16914836 { v.error = "unqualified-filesystem tmpfs"; return v }
+    if kind == 2035054128 { v.error = "unqualified-filesystem overlay"; return v }
+    if kind != 61267 { v.error = "unqualified-filesystem type={kind}"; return v }
+    let majmin = "{major(st[9])}:{minor(st[9])}"
+    let name = kernel_name(majmin)
+    if name == "" { v.error = "unqualified-filesystem ext journal unproven (device {majmin})"; return v }
+    let journals = fs_read_dir("/proc/fs/jbd2") else |_| { List[str]() }
+    for j in journals {
+        if text.starts_with(j, "{name}-") {
+            v.kind = "journalled"
+            v.detail = "ext journal {j} on {majmin}"
+            return v
+        }
+    }
+    v.error = "unqualified-filesystem ext2 (no active journal on {name})"
+    v
+}
