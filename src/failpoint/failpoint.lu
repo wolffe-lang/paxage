@@ -1,0 +1,53 @@
+//! Named transition hooks. The shipped larder passes an empty spec, so every hook
+//! is a no-op there; only the test-only larder-failpoint executable arms one.
+
+use std.str as text
+
+/// An armed hook: NAME:ACTION with ACTION crash, eio, enospc or pause; or trace.
+pub struct Fail { name: str, action: str, trace: bool, fifo: str }
+
+/// The inert hook set the shipped executable uses.
+pub fn none() -> Fail { Fail { name: "", action: "", trace: false, fifo: "" } }
+
+/// Parse LARDER_FAILPOINT. An unknown action arms nothing and is reported by the caller.
+pub fn parse(spec: str, fifo: str) -> Fail {
+    if spec == "" { return none() }
+    if spec == "trace" { return Fail { name: "", action: "", trace: true, fifo } }
+    let parts = text.rsplit_once(spec, ":") else |_| { return none() }
+    let (name, action) = parts
+    if action != "crash" && action != "eio" && action != "enospc" && action != "pause" {
+        return none()
+    }
+    Fail { name, action, trace: false, fifo }
+}
+
+/// True when the spec named a known action or trace.
+pub fn valid(spec: str, f: Fail) -> bool { spec == "" || f.trace || f.action != "" }
+
+fn wait(f: Fail) {
+    let fd = fs_open_mode(f.fifo, 0) else |_| { return }
+    let _line = fs_read_chunk(fd, 64) else |_| { List[byte]() }
+    fs_close(fd) else |_| {}
+}
+
+/// Pass a named transition. Returns "" to continue, or the injected error's name.
+/// crash ends the process at once by a runtime trap (exit 134, no unwinding and no
+/// cleanup of any kind); os_exit would need the exec capability larder never declares.
+pub fn hit(f: Fail, point: str, detail: str) -> str {
+    if f.trace {
+        if detail == "" { eprint("FAILPOINT {point}") } else { eprint("FAILPOINT {point} {detail}") }
+        return ""
+    }
+    if f.name == "" || f.name != point { return "" }
+    if f.action == "crash" {
+        eprint("CRASH {point}")
+        assert(false, "failpoint crash")
+    }
+    if f.action == "eio" { return "io" }
+    if f.action == "enospc" { return "no-space" }
+    if f.action == "pause" {
+        eprint("PAUSED {point}")
+        wait(f)
+    }
+    ""
+}
