@@ -22,12 +22,12 @@ def container(command,mounts):
     args=[engine,'run','--rm','--network','none','--memory','2g','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
     if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
     for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
-    # A larder built on a NixOS host (hasu) asks for its loader and libraries under
+    # A paxage built on a NixOS host (hasu) asks for its loader and libraries under
     # /nix/store; mounting that read-only lets the same binary run here and changes no verdict.
     if Path('/nix/store').is_dir():args+=['-v','/nix/store:/nix/store:ro']
     cpus=os.environ.get('PAXAGE_CONTAINER_CPUS')
     if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
-    # The 2 GiB address-space cap is the archivers' and larder's, inside the container. podman
+    # The 2 GiB address-space cap is the archivers' and paxage's, inside the container. podman
     # (a Go program) is not capped: under the cap its runtime failed to map 4 MiB blocks
     # ("runtime: out of memory") on satoyama, with the image already warm.
     command=f'ulimit -v {CAP_KIB} && '+command
@@ -67,7 +67,7 @@ def main():
         container("tar --blocking-factor=1 --format=pax --owner=0 --group=0 --mtime=@0 --pax-option=delete=atime,delete=ctime -cf /work/gnu.tar -C /work/tree usr/file",[(work,'/work','rw')])
         container("bsdtar -b 1 --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd.tar -C /work/tree usr/file",[(work,'/work','rw')])
         # Positive BSD archive plus the negative-time contrast. Inspect the
-        # encoded numeric forms independently before invoking larder.
+        # encoded numeric forms independently before invoking paxage.
         os.utime(file,(0,0))
         container("bsdtar -b 1 --format=pax --uid 0 --gid 0 --uname '' --gname '' -cf /work/bsd-zero.tar -C /work/tree usr/file",[(work,'/work','rw')])
         for name in ['gnu','bsd','bsd-zero']:

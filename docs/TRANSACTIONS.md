@@ -35,7 +35,7 @@ on the open handle (`fchmod`, `fchown`) before the file has its name. wolf 0.2.3
 has no `renameat`, `readlinkat` or `fchownat` (wolf-lang#1084). Those three
 operations run with the working directory pinned: one-component `chdir` steps from
 the root, each step's `.` checked by device and inode against the held handle,
-then a one-component name. larder is single-threaded, so pinning the
+then a one-component name. paxage is single-threaded, so pinning the
 process-wide working directory is sound.
 
 ## X4 — The database

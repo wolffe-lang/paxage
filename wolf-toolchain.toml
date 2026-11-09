@@ -1,4 +1,4 @@
-# larder release archives, checked twice (GitHub API digest and a downloaded sha256) 2026-11-09.
+# paxage release archives, checked twice (GitHub API digest and a downloaded sha256) 2026-11-09.
 # Std has an explicit git pin and is staged in place of the bundled tree.
 [wolf]
 version = "0.2.38"

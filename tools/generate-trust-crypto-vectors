@@ -152,7 +152,7 @@ def main():
         target = args.output.resolve()
         project_target = Path(__file__).resolve().parent.parent / "target"
         require(target.suffix == ".lu" and target.is_relative_to(project_target),
-                "output must be inside larder/target and end in .lu")
+                "output must be inside paxage/target and end in .lu")
         source = emit(rfc_rows(args.rfc), vendor_rows(args.vendor))
         require(len(source.encode()) < 100_000, "generated source exceeds 100 KiB")
         target.parent.mkdir(parents=True, exist_ok=True)

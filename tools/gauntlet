@@ -21,7 +21,7 @@ step cli tools/check-e2e
 step names python3 -I tools/check-names
 if [ "$(uname -s)" = Linux ]; then
   step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
-  # podman runs uncapped; the step caps the archivers and larder inside the container (ulimit -v
+  # podman runs uncapped; the step caps the archivers and paxage inside the container (ulimit -v
   # 2 GiB). The warm step pulls and copies the image under its own bound first, for a cold store.
   step container-warm python3 -I tools/check-payload-container --warm
   step container python3 -I tools/check-payload-container
