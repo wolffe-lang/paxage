@@ -232,9 +232,25 @@ fn link_text(r: Root, d: Dir, name: str) -> Ident {
 
 /// Sync a held directory's entries to the disk.
 pub fn sync(d: Dir) -> str {
-    fs_sync(d.fd) else |_| { return "dir-sync {d.rel}" }
+    fs_sync(d.fd) else |_| { return because("dir-sync {d.rel}") }
     ""
 }
+
+/// msg with the host's reason when it is one an operator acts on, named as the injected
+/// failpoints name them: ENOSPC (28) is no-space and EIO (5) is io. Call it in the failing
+/// call's own else arm, before any other fs call: os_error() is the last fallible call's.
+pub fn because(msg: str) -> str {
+    let n = os_error()
+    if n == 28 { return "{msg}: no-space" }
+    if n == 5 { return "{msg}: io" }
+    msg
+}
+
+/// copy_fd's write failures start with "!" (never a digest), then the reason.
+pub fn copy_failed(h: str) -> bool { text.starts_with(h, "!") }
+
+/// ": no-space", ": io" or "" from a failed copy.
+pub fn copy_why(h: str) -> str { text.get(h, 1, h.len) else |_| { "" } }
 
 /// Digest exactly length bytes of a held regular file and require EOF after.
 pub fn digest_fd(fd: int, length: int) -> str {
@@ -363,7 +379,7 @@ pub fn copy_fd(input: int, out: int, length: int) -> str {
         if n > 65536 { n = 65536 }
         let got = payload.read_into(input, mut buffer, n) else |_| { return "" }
         if got == 0 { return "" }
-        fs_write_chunk(out, buffer) else |_| { return "" }
+        fs_write_chunk(out, buffer) else |_| { return because("!") }
         sha2.update256(mut st, buffer)
         remaining -= got
     }

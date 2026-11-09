@@ -842,12 +842,12 @@ fn empty_after(c: Ctx, w: Work, rel: str) -> bool {
 fn write_new(d: walk.Dir, name: str, bytes: List[byte], mode: int) -> str {
     let fd = fs_open_at(d.fd, name, 20, 384) else |e| match e {
         exists => { return "exists {walk.join(d.rel, name)}" },
-        _ => { return "create {walk.join(d.rel, name)}" },
+        _ => { return walk.because("create {walk.join(d.rel, name)}") },
     }
     var error = ""
-    fs_write_chunk(fd, bytes) else |_| { error = "write {walk.join(d.rel, name)}" }
+    fs_write_chunk(fd, bytes) else |_| { error = walk.because("write {walk.join(d.rel, name)}") }
     if error == "" { fs_set_mode_fd(fd, mode) else |_| { error = "mode {walk.join(d.rel, name)}" } }
-    if error == "" { fs_sync(fd) else |_| { error = "sync {walk.join(d.rel, name)}" } }
+    if error == "" { fs_sync(fd) else |_| { error = walk.because("sync {walk.join(d.rel, name)}") } }
     fs_close(fd) else |_| { error = "close {walk.join(d.rel, name)}" }
     error
 }
@@ -958,7 +958,7 @@ fn set_meta(c: Ctx, fd: int, w: intent.Want) -> str {
 
 fn copy_source(c: Ctx, src: Source, out: int) -> str {
     if src.rel == "" {
-        fs_write_chunk(out, src.bytes) else |_| { return "" }
+        fs_write_chunk(out, src.bytes) else |_| { return walk.because("!") }
         return sha2.to_hex(sha2.sum256(src.bytes))
     }
     let d = walk.dir(c.root, walk.parent_of(src.rel))
@@ -1004,7 +1004,7 @@ fn apply_one(c: Ctx, t: str, o: intent.Op, src: Source) -> str {
                 e = "path-race {o.path}"
             } else {
                 e = set_meta(c, fd, o.new)
-                if e == "" { fs_sync(fd) else |_| { e = "sync {o.path}" } }
+                if e == "" { fs_sync(fd) else |_| { e = walk.because("sync {o.path}") } }
                 fs_close(fd) else |_| {}
             }
         }
@@ -1015,7 +1015,7 @@ fn apply_one(c: Ctx, t: str, o: intent.Op, src: Source) -> str {
             e = "path-race {o.path}"
         } else {
             e = set_meta(c, fd, o.new)
-            if e == "" { fs_sync(fd) else |_| { e = "sync {o.path}" } }
+            if e == "" { fs_sync(fd) else |_| { e = walk.because("sync {o.path}") } }
             fs_close(fd) else |_| {}
         }
         e = step(c, "apply:{i}:renamed", "", e)
@@ -1031,9 +1031,13 @@ fn apply_one(c: Ctx, t: str, o: intent.Op, src: Source) -> str {
             e = "create {o.path}"
         } else {
             let h = copy_source(c, src, out)
-            if h != o.new.sha256 { e = "content {o.path}" }
+            if walk.copy_failed(h) {
+                e = "write {o.path}{walk.copy_why(h)}"
+            } else if h != o.new.sha256 {
+                e = "content {o.path}"
+            }
             if e == "" { e = set_meta(c, out, o.new) }
-            if e == "" { fs_sync(out) else |_| { e = "sync {o.path}" } }
+            if e == "" { fs_sync(out) else |_| { e = walk.because("sync {o.path}") } }
             fs_close(out) else |_| { e = "close {o.path}" }
         }
         e = step(c, "apply:{i}:temp", "", e)
@@ -1155,8 +1159,12 @@ fn backup_one(c: Ctx, t: str, o: intent.Op) -> str {
     }
     var e = ""
     let h = walk.copy_fd(input, out, o.old.length)
-    if h != o.old.sha256 { e = "live-changed {o.path}" }
-    if e == "" { fs_sync(out) else |_| { e = "backup-sync {o.index}" } }
+    if walk.copy_failed(h) {
+        e = "backup-write {o.index}{walk.copy_why(h)}"
+    } else if h != o.old.sha256 {
+        e = "live-changed {o.path}"
+    }
+    if e == "" { fs_sync(out) else |_| { e = walk.because("backup-sync {o.index}") } }
     fs_close(out) else |_| { e = "backup-close {o.index}" }
     fs_close(input) else |_| {}
     walk.close(bd)
@@ -1275,7 +1283,7 @@ fn restore(c: Ctx, t: str, o: intent.Op) -> str {
                 e = "rescue-unknown-state {o.path}"
             } else {
                 e = set_meta(c, fd, w)
-                if e == "" { fs_sync(fd) else |_| { e = "sync {o.path}" } }
+                if e == "" { fs_sync(fd) else |_| { e = walk.because("sync {o.path}") } }
                 fs_close(fd) else |_| {}
             }
         }
@@ -1296,11 +1304,14 @@ fn restore(c: Ctx, t: str, o: intent.Op) -> str {
             if input < 0 || out < 0 {
                 e = "rescue-missing-backup {o.path}"
             } else {
-                if walk.copy_fd(input, out, w.length) != w.sha256 {
+                let h = walk.copy_fd(input, out, w.length)
+                if walk.copy_failed(h) {
+                    e = "restore-write {o.path}{walk.copy_why(h)}"
+                } else if h != w.sha256 {
                     e = "rescue-missing-backup {o.path}"
                 }
                 if e == "" { e = set_meta(c, out, w) }
-                if e == "" { fs_sync(out) else |_| { e = "sync {o.path}" } }
+                if e == "" { fs_sync(out) else |_| { e = walk.because("sync {o.path}") } }
             }
             if input >= 0 { fs_close(input) else |_| {} }
             if out >= 0 { fs_close(out) else |_| {} }
