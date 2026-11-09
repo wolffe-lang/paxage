@@ -10,11 +10,12 @@ sprints/pm/01-the-format/pm01-the-format-and-harness.md.
 - Clean room: never read implementation source of a package manager, version
   comparator, resolver, solver, compressor, archiver, signature/TLS/HTTP library.
   Specifications/docs only; std SHA-256 is reused, not reimplemented.
-- Wolf 0.2.36, lupin 0.1.58, bundled std pinned in wolf-toolchain.toml.
+- Wolf 0.2.38, lupin 0.1.60, std pinned in wolf-toolchain.toml.
 - `TMPDIR` must be lane-local, never /tmp or /var/folders. Fetch first with
   tools/fetch-toolchain; build/check with tools/gauntlet from a committed copy.
-- Runtime capabilities are env and fs for reading arguments and literal files;
-  no root/cache/database mutation, no signing, fetching or process execution.
+- Runtime capabilities are env and fs. Root mutation happens only through the
+  transaction verbs over a `--root` synthetic root (docs/TRANSACTIONS.md); no
+  process execution (failpoint crashes are traps, never os_exit).
 - Tests are first class. Add fixture CLI e2e and unit rows with every rule.
   Search/checker share data/version order only, never feasibility predicates.
 - No attribution/co-author trailers, labels, merge, tag or release by lanes.
