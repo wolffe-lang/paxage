@@ -997,7 +997,7 @@ fn apply_one(c: Ctx, t: str, o: intent.Op, src: Source) -> str {
         walk.close(pd)
         return "live-changed {o.path}"
     }
-    let tmp = ".larder-{t}-{i}"
+    let tmp = ".paxage-{t}-{i}"
     if o.action == "mkdir" {
         e = mkdir_in(pd, name)
         if e == "" {
@@ -1254,8 +1254,8 @@ fn remove_temps(c: Ctx, t: str, o: intent.Op) -> str {
         if walk.missing(pd) { return "" }
         return pd.error
     }
-    var e = remove_name(pd, ".larder-{t}-{o.index}")
-    if e == "" { e = remove_name(pd, ".larder-{t}-u{o.index}") }
+    var e = remove_name(pd, ".paxage-{t}-{o.index}")
+    if e == "" { e = remove_name(pd, ".paxage-{t}-u{o.index}") }
     if e == "" { e = walk.sync(pd) }
     walk.close(pd)
     e
@@ -1266,7 +1266,7 @@ fn restore(c: Ctx, t: str, o: intent.Op) -> str {
     if pd.error != "" { return "rescue-unknown-state {o.path} ({pd.error})" }
     let name = walk.base_of(o.path)
     let live = walk.look(c.root, pd, name, false)
-    let tmp = ".larder-{t}-u{o.index}"
+    let tmp = ".paxage-{t}-u{o.index}"
     var e = ""
     let w = o.old
     if w.kind == "absent" {
@@ -1331,7 +1331,7 @@ fn relink(c: Ctx, t: str, o: intent.Op) -> str {
     if pd.error != "" { return "rescue-unknown-state {o.path} ({pd.error})" }
     let sd = walk.dir(c.root, walk.parent_of(o.old.target))
     if sd.error != "" { walk.close(pd); return "rescue-unknown-state {o.old.target}" }
-    let tmp = ".larder-{t}-u{o.index}"
+    let tmp = ".paxage-{t}-u{o.index}"
     remove_name(pd, tmp)
     var e = ""
     fs_link_at(sd.fd, walk.base_of(o.old.target), pd.fd, tmp, false) else |_| {

@@ -38,7 +38,7 @@ else
   echo 'SKIP rss reason=Linux-only capped large-file measurement; never on the Mac'
 fi
 if [ "$(uname -s)" = Linux ]; then
-  unqualified=$(mktemp -d /dev/shm/larder-unqualified.XXXXXX)
+  unqualified=$(mktemp -d /dev/shm/paxage-unqualified.XXXXXX)
   step transactions env LARDER_UNQUALIFIED_ROOT="$unqualified" python3 -I tools/check-transactions
   rm -rf "$unqualified"
 else

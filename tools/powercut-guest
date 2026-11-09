@@ -25,7 +25,7 @@ import sys
 import time
 
 HERE = Path(__file__).resolve().parent
-LARDER = HERE.parent
+PAXAGE = HERE.parent
 P = Path('/mnt/p')
 MOUNT_OPTS = 'data=ordered,noauto_da_alloc,noatime'
 
@@ -314,10 +314,10 @@ def matrix(fs, dev):
     mkfs(fs, dev)
     if mount(fs, dev, '/mnt/m').returncode != 0:
         raise SystemExit(f'FAIL vm-matrix-{fs}-mount')
-    checkout = Path('/mnt/m/larder')
+    checkout = Path('/mnt/m/paxage')
     (checkout / 'target').mkdir(parents=True)
-    run('cp', '-a', LARDER / 'tools', checkout / 'tools')
-    run('cp', '-a', LARDER / 'target/bin', checkout / 'target/bin')
+    run('cp', '-a', PAXAGE / 'tools', checkout / 'tools')
+    run('cp', '-a', PAXAGE / 'target/bin', checkout / 'target/bin')
     unq = P / 'unqualified'
     unq.mkdir()
     env = dict(os.environ, LARDER_UNQUALIFIED_ROOT=str(unq))
@@ -400,7 +400,7 @@ def recover(fs, img, rel, want, old, new, preen):
         verify = ct.pxg('verify', '--root', root)
         pending = [x.name for x in (root / 'var/lib/paxage/transactions').iterdir()] \
             if (root / 'var/lib/paxage/transactions').is_dir() else ['(no transactions dir)']
-        temps = [str(q.relative_to(root)) for q in root.rglob('.larder-t*')]
+        temps = [str(q.relative_to(root)) for q in root.rglob('.paxage-t*')]
     finally:
         umount(m)
     p = mount(fs, img, m, loop=True)
@@ -461,7 +461,7 @@ def phase_check(job):
 def main():
     job = json.loads(Path(sys.argv[1]).read_text())
     say(f'GUEST start phase={job["phase"]} kernel={os.uname().release}')
-    bins = {name: hashlib.sha256((LARDER / 'target/bin' / name).read_bytes()).hexdigest()
+    bins = {name: hashlib.sha256((PAXAGE / 'target/bin' / name).read_bytes()).hexdigest()
             for name in ('paxage', 'paxage-failpoint')}
     say('GUEST binaries ' + json.dumps(bins, sort_keys=True))
     try:

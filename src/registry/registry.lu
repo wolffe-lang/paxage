@@ -15,7 +15,7 @@ pub fn account(name: str) -> Account {
             name,
             uid: 901,
             gid: 901,
-            gecos: "larder test daemon",
+            gecos: "paxage test daemon",
             home: "/var/spool/pm04",
             shell: "/usr/sbin/nologin",
             error: "",

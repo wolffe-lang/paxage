@@ -86,7 +86,7 @@ in order, each followed by its named hook (X8):
 4. **apply:<i>:walk**, **:temp**, **:renamed**, **apply:<i>**: one hook set per
    operation, in order. Operations run:
    - mkdir shallowest-first, then directory metadata changes;
-   - file and symlink puts: a same-directory temporary `.larder-t<N>-<i>`,
+   - file and symlink puts: a same-directory temporary `.paxage-t<N>-<i>`,
      content checked against the planned SHA-256, owner then mode by handle,
      fsync, rename over the name (X3), fsync of the parent;
    - hard links, as a temporary link renamed into place;

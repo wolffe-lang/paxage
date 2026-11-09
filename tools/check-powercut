@@ -499,7 +499,7 @@ mount -t sysfs sys /sys 2>/dev/null
 mount -t devtmpfs dev /dev 2>/dev/null
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/mnt/p TMPDIR=/mnt/p/tmp LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
 mkdir -p /mnt/p/tmp
-python3 -I /mnt/p/larder/tools/powercut-guest /mnt/p/job.json
+python3 -I /mnt/p/paxage/tools/powercut-guest /mnt/p/job.json
 echo "GUEST exit $?"
 echo o > /proc/sysrq-trigger
 sleep 30
@@ -517,9 +517,9 @@ def payload(d, job, bins, extra=()):
         add_bytes('job.json', json.dumps(job).encode())
         for f in sorted((ROOT / 'tools').iterdir()):
             if f.is_file():
-                t.add(f, f'larder/tools/{f.name}')
+                t.add(f, f'paxage/tools/{f.name}')
         for n in ('paxage', 'paxage-failpoint'):
-            t.add(bins / n, f'larder/target/bin/{n}')
+            t.add(bins / n, f'paxage/target/bin/{n}')
         for arc, src in extra:
             t.add(src, arc)
     return path

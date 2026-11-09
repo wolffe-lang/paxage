@@ -25,7 +25,7 @@ case $route in
   root)
     exec python3 -I tools/check-transactions ;;
   sudo)
-    shm=$(mktemp -d /dev/shm/larder-unqualified.XXXXXX)
+    shm=$(mktemp -d /dev/shm/paxage-unqualified.XXXXXX)
     trap 'sudo -n rm -rf "$shm" "$ROOT/target/transactions"' EXIT
     sudo -n env PATH="$PATH" LARDER_UNQUALIFIED_ROOT="$shm" python3 -I tools/check-transactions
     exit $? ;;

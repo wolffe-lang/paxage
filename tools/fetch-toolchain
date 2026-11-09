@@ -35,7 +35,7 @@ if [ -f .wolf-bin/STAMP ] && [ "$(cat .wolf-bin/STAMP)" = "$want_stamp" ] && [ -
     exit 0
 fi
 
-tmp=$(mktemp -d "${TMPDIR:?set TMPDIR under your lane}/larder-toolchain.XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:?set TMPDIR under your lane}/paxage-toolchain.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 rm -rf .wolf-bin
 mkdir -p .wolf-bin

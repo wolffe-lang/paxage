@@ -42,7 +42,7 @@ fn want_fields(w: Want) -> str {
 
 /// Canonical bytes of an intent, trailer included.
 pub fn render(i: Intent) -> List[byte] {
-    var body = "larder-intent\t1\ntransaction\t{i.transaction}\nfrom\t{i.from}\nto\t{i.to}\ndatabase\t{i.database}\nops\t{i.ops.len}\n"
+    var body = "paxage-intent\t1\ntransaction\t{i.transaction}\nfrom\t{i.from}\nto\t{i.to}\ndatabase\t{i.database}\nops\t{i.ops.len}\n"
     for op in i.ops {
         var backup = 0
         if op.backup { backup = 1 }
@@ -100,7 +100,7 @@ pub fn parse(bytes: List[byte]) -> Intent {
     let bb = body.bytes()
     if sha2.to_hex(sha2.sum256(bb)) != expect { return malformed("digest") }
     var out = Intent { transaction: "", from: -1, to: -1, database: "", ops: List[Op](), error: "" }
-    if lines[0] != "larder-intent\t1" { return malformed("header") }
+    if lines[0] != "paxage-intent\t1" { return malformed("header") }
     let keys = ["transaction", "from", "to", "database", "ops"]
     var values = List[str]()
     for k in 0..keys.len {
