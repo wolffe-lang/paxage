@@ -847,7 +847,9 @@ fn write_new(d: walk.Dir, name: str, bytes: List[byte], mode: int) -> str {
     var error = ""
     fs_write_chunk(fd, bytes) else |_| { error = walk.because("write {walk.join(d.rel, name)}") }
     if error == "" { fs_set_mode_fd(fd, mode) else |_| { error = "mode {walk.join(d.rel, name)}" } }
-    if error == "" { fs_sync(fd) else |_| { error = walk.because("sync {walk.join(d.rel, name)}") } }
+    if error == "" {
+        fs_sync(fd) else |_| { error = walk.because("sync {walk.join(d.rel, name)}") }
+    }
     fs_close(fd) else |_| { error = "close {walk.join(d.rel, name)}" }
     error
 }

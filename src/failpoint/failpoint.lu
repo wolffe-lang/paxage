@@ -30,7 +30,7 @@ pub fn marked(f: Fail, path: str) -> Fail {
 
 /// True when the spec named a known action or trace, and a mark has its target.
 pub fn valid(spec: str, f: Fail) -> bool {
-    spec == "" || f.trace || (f.action != "" && (f.action != "mark" || f.mark != ""))
+    spec == "" || f.trace || f.action != "" && (f.action != "mark" || f.mark != "")
 }
 
 /// One 512-byte record at offset 0, synced: a block device takes no O_APPEND write, and
