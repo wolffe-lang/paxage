@@ -1,6 +1,6 @@
 //! member: false
 //! Test-only: the root verbs with LARDER_FAILPOINT armed (R-pm04-4). Never shipped
-//! as larder; the shipped executable passes failpoint.none().
+//! as paxage; the shipped executable passes failpoint.none().
 
 use root_cli
 use failpoint

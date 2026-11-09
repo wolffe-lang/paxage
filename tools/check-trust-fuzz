@@ -161,7 +161,7 @@ def main():
     require(os.environ.get('CI') != 'true' or args.count >= 100000, 'CI-fuzz-count')
     print(f'FUZZ seed={args.seed} offset={args.offset} count={args.count} workers=4 input-timeout=5s cap={limit}', flush=True)
     args.work.mkdir(mode=0o700)
-    binary = ROOT / 'target/bin/larder'; probe = ROOT / 'target/bin/trust-fuzz-probe'
+    binary = ROOT / 'target/bin/paxage'; probe = ROOT / 'target/bin/trust-fuzz-probe'
     now = json.loads((args.fixtures / 'cases.json').read_bytes())['now']
     baseline = args.fixtures / 'baseline'
     newer = args.fixtures / 'unknown-key-ignored'

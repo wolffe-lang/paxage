@@ -112,7 +112,7 @@ fn parse(a: List[str]) -> Opts {
 fn usage(message: str) -> int {
     eprint("larder: {message}")
     eprint(
-        "Usage: larder (lrd) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
+        "Usage: paxage (pxg) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
     )
     2
 }
@@ -206,7 +206,7 @@ fn take_lock(c: txn.Ctx) -> Open {
     if busy {
         fs_close(fd) else |_| {}
         out.code = 7
-        out.error = "locked: another larder holds {txn.state()}/lock"
+        out.error = "locked: another paxage holds {txn.state()}/lock"
         return out
     }
     out.lock = fd
@@ -595,7 +595,7 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         return finish_open(
             o,
             8,
-            "recovery-needed: {waiting} pending; run lrd rescue --root {c.root.path}",
+            "recovery-needed: {waiting} pending; run pxg rescue --root {c.root.path}",
         )
     }
     let v = qualify.root(c.root.path)

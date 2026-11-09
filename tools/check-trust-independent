@@ -126,7 +126,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bounded', action='store_true', help='omit large input rows on uncapped hosts')
     parser.add_argument('--fixtures', type=Path, default=ROOT / 'tests/trust/independent')
-    parser.add_argument('--binary', type=Path, default=ROOT / 'target/bin/larder')
+    parser.add_argument('--binary', type=Path, default=ROOT / 'target/bin/paxage')
     parser.add_argument('--work', type=Path, default=ROOT / 'target/trust-independent')
     args = parser.parse_args()
     if not args.bounded:

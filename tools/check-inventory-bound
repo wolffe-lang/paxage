@@ -4,7 +4,7 @@ from pathlib import Path
 import importlib.machinery, json, os, subprocess, sys, tempfile
 ROOT=Path(__file__).resolve().parents[1]
 v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
-binary=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/larder'
+binary=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/paxage'
 assert sys.platform.startswith('linux'),'F6-inventory-bound is Linux-only'
 try:
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='inventory-') as temp:

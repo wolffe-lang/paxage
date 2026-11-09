@@ -11,9 +11,9 @@ def _named_failure(kind, value, traceback):
 if __name__ == '__main__': sys.excepthook = _named_failure
 
 ROOT=Path(__file__).resolve().parents[1]
-BINARY=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/larder'
-LINK=BINARY.with_name('lrd')
-assert LINK.is_symlink() and LINK.resolve()==BINARY, 'C1-lrd-is-link'
+BINARY=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/paxage'
+LINK=BINARY.with_name('pxg')
+assert LINK.is_symlink() and LINK.resolve()==BINARY, 'C1-pxg-is-link'
 COUNT=0
 
 def run(args,code=0,out=None,err=None,binary=BINARY):
@@ -25,10 +25,10 @@ def run(args,code=0,out=None,err=None,binary=BINARY):
     if err is not None: assert p.stderr==err.encode(), (args,'stderr',p.stderr,err)
     return p
 
-usage='Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nRoot: init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S | install --root DIR SPEC... | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR\n'
+usage='Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nRoot: init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S | install --root DIR SPEC... | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR\n'
 for binary in [BINARY,LINK]:
-    run(['version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
-    run(['--version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
+    run(['version'],out='paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
+    run(['--version'],out='paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
     run(['--help'],out=usage,err='',binary=binary)
     # C2: sync stays refused by name; the root verbs never touch the live root or a missing one.
     run(['sync','--root','/do-not-touch'],6,out='',err='larder: sync refused: upgrade is the one refresh-and-upgrade operation\n',binary=binary)
@@ -108,5 +108,5 @@ with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
     run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='larder: bad-hold\n')
     path.write_text(basic)
     run(['resolve','--snapshot',temp,'--want','app~=1-1'],2)
-print(f'CLI fixture cases={COUNT}; larder and lrd; no SKIPs')
+print(f'CLI fixture cases={COUNT}; paxage and pxg; no SKIPs')
 print('PASS cli-fixture-e2e exit=0')

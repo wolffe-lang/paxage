@@ -29,8 +29,8 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / 'tools'
-BIN = ROOT / 'target/bin/larder'
-FPBIN = ROOT / 'target/bin/larder-failpoint'
+BIN = ROOT / 'target/bin/paxage'
+FPBIN = ROOT / 'target/bin/paxage-failpoint'
 WORK = ROOT / 'target/powercut'
 RECORDER = TOOLS / 'nbd-recorder'
 SYNTH = TOOLS / 'powercut-synth'
@@ -470,7 +470,7 @@ RELAYED = []
 
 
 def guest_build():
-    """larder and larder-failpoint built in the guest's own release (R-pm04b-3), same commit and toolchain."""
+    """paxage and paxage-failpoint built in the guest's own release (R-pm04b-3), same commit and toolchain."""
     out = WORK / 'guest-bin'
     src = WORK / 'guest-src'
     out.mkdir(parents=True)
@@ -484,9 +484,9 @@ def guest_build():
     args = [engine, 'run', '--rm', '--network', 'none', '--memory', os.environ.get('LARDER_CONTAINER_MEMORY', '8g'),
             '-v', f'{src.resolve()}:/w', '-v', f'{toolchain}:/w/.wolf-bin:ro', '-v', f'{out.resolve()}:/out', image,
             'bash', '-c', f'cd /w && {pin}tools/build > /out/build.log 2>&1 && '
-                          'cp target/bin/larder target/bin/larder-failpoint /out/']
+                          'cp target/bin/paxage target/bin/paxage-failpoint /out/']
     p = subprocess.run(args, capture_output=True, text=True, timeout=1800)
-    built = {n: sha256_file(out / n) for n in ('larder', 'larder-failpoint') if (out / n).exists()}
+    built = {n: sha256_file(out / n) for n in ('paxage', 'paxage-failpoint') if (out / n).exists()}
     tail = (out / 'build.log').read_text()[-400:] if (out / 'build.log').exists() else ''
     check(p.returncode == 0 and len(built) == 2, 'vm-guest-build', f'rc={p.returncode} {p.stderr[-300:]!r} {tail!r}')
     print(f'powercut: guest binaries {json.dumps(built, sort_keys=True)}', flush=True)
@@ -518,7 +518,7 @@ def payload(d, job, bins, extra=()):
         for f in sorted((ROOT / 'tools').iterdir()):
             if f.is_file():
                 t.add(f, f'larder/tools/{f.name}')
-        for n in ('larder', 'larder-failpoint'):
+        for n in ('paxage', 'paxage-failpoint'):
             t.add(bins / n, f'larder/target/bin/{n}')
         for arc, src in extra:
             t.add(src, arc)

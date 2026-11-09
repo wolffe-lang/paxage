@@ -2,10 +2,10 @@
 
 ## C1 — Names and working verbs
 
-One binary, `larder`; `lrd` is a symbolic link with identical behavior.
+One binary, `paxage`; `pxg` is a symbolic link with identical behavior.
 Diagnostics start `larder:` regardless of invocation name. Usage names both.
 
-- `version`: `larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)`.
+- `version`: `paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)`.
 - `check-manifest FILE`: strict F2/F3 validation, exact-byte std SHA-256 and
   byte length. This does not authenticate a signer or a payload.
 - `compare V1 V2`: V2 versions, normalized result -1, 0 or 1.
@@ -238,7 +238,7 @@ undone t<N>`. It refuses, exit 9, with `rescue-unknown-state PATH`,
 
 ## C16 — The test-only failpoint executable
 
-`target/bin/larder-failpoint` accepts only the root verbs and reads
+`target/bin/paxage-failpoint` accepts only the root verbs and reads
 `LARDER_FAILPOINT` (X8). It is built for the transaction rows and never installed;
-`larder` and `lrd` carry no failpoint input.
+`paxage` and `pxg` carry no failpoint input.
 

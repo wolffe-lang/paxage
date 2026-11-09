@@ -1,5 +1,5 @@
 pkg {
-    name: "larder",
+    name: "paxage",
     version: "0.1.0",
     edition: "1",
     capabilities: [env, fs],

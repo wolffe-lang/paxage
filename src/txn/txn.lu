@@ -1416,7 +1416,7 @@ fn rollback(c: Ctx, t: str, to: int, durable: bool, error: str) -> Done {
         e = discard(c, t, to, "rescue:")
     }
     if e != "" {
-        return Done { generation: -1, error: "{error}; rollback refused: {e}; run lrd rescue" }
+        return Done { generation: -1, error: "{error}; rollback refused: {e}; run pxg rescue" }
     }
     Done { generation: -1, error: "{error}; rolled back" }
 }
@@ -1554,7 +1554,7 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
         walk.close(sdir)
         return Done {
             generation: to,
-            error: "commit-renamed: {renamed}; committed generation {to}; run lrd rescue to finish",
+            error: "commit-renamed: {renamed}; committed generation {to}; run pxg rescue to finish",
         }
     }
     e = walk.sync(sdir)
@@ -1563,14 +1563,14 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     if e != "" {
         return Done {
             generation: to,
-            error: "{e}; committed generation {to}; run lrd rescue to finish",
+            error: "{e}; committed generation {to}; run pxg rescue to finish",
         }
     }
     e = cleanup(c, t, "")
     if e != "" {
         return Done {
             generation: to,
-            error: "{e}; committed generation {to}; run lrd rescue to finish",
+            error: "{e}; committed generation {to}; run pxg rescue to finish",
         }
     }
     e = step(c, "done", "", "")

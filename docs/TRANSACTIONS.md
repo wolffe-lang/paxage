@@ -162,7 +162,7 @@ A package names registry entries (`src/registry`, R-pm04-9), never ids or paths:
 
 ## X8 — Failpoints
 
-The shipped `larder` passes an inert hook set. The test-only `larder-failpoint`
+The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
 (built beside it, never installed) reads `LARDER_FAILPOINT` (R-pm04-4):
 
 - `trace` prints `FAILPOINT <name> [detail]` for every hook passed.

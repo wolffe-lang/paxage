@@ -1,5 +1,5 @@
-//! Named transition hooks. The shipped larder passes an empty spec, so every hook
-//! is a no-op there; only the test-only larder-failpoint executable arms one.
+//! Named transition hooks. The shipped paxage passes an empty spec, so every hook
+//! is a no-op there; only the test-only paxage-failpoint executable arms one.
 
 use std.str as text
 
@@ -63,7 +63,7 @@ fn wait(f: Fail) -> bool {
 
 /// Pass a named transition. Returns "" to continue, or the injected error's name.
 /// crash ends the process at once by a runtime trap (exit 134, no unwinding and no
-/// cleanup of any kind); os_exit would need the exec capability larder never declares.
+/// cleanup of any kind); os_exit would need the exec capability paxage never declares.
 pub fn hit(f: Fail, point: str, detail: str) -> str {
     if f.action == "mark" {
         record(f, point, detail)

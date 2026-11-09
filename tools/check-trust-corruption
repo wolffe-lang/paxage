@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / 'target/bin/larder'
+BIN = ROOT / 'target/bin/paxage'
 WORK = ROOT / 'target/trust-corruption'
 NOW = '2026-11-03T00:00:00Z'
 GUIDANCE = 're-bootstrap into a new, empty state directory from a caller-supplied pinned root'

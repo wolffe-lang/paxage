@@ -144,7 +144,7 @@ def resume(proc, fifo, word='go'):
 
 
 def marked(verb_args, markdev):
-    return ct.lrd(*verb_args, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': markdev})
+    return ct.pxg(*verb_args, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': markdev})
 
 
 def scenario_line(**kw):
@@ -153,7 +153,7 @@ def scenario_line(**kw):
 
 def trace_names(roots, base, args):
     probe = roots.copy(base, 'trace')
-    p = ct.lrd(*args(probe), binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = ct.pxg(*args(probe), binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'trace'})
     return [name for name, _ in ct.trace_points(p)]
 
 
@@ -195,7 +195,7 @@ def phase_run(job):
     old = ct.tree_digest(stuck)
     names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
     cut = [n for n in names if n.startswith('apply:')][-1]
-    q = ct.lrd('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    q = ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
     emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-undo-crash', ct.describe(q))
     _, after, _ = recorded('rescue-undo', stuck, ['rescue', '--root', stuck], markdev, fs, old=old)
     emit(after == old, f'powercut-{fs}-rescue-undo-restores-old', f'after={after[:12]} old={old[:12]}')
@@ -205,7 +205,7 @@ def phase_run(job):
     _, upgraded, _ = recorded('upgrade', base, ['upgrade', '--root', base, '--now', NOW], markdev, fs)
     done = roots.ready('pc-rescue-finish', 'alpha=1-1')
     old = ct.tree_digest(done)
-    q = ct.lrd('upgrade', '--root', done, '--now', NOW, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'commit:crash'})
+    q = ct.pxg('upgrade', '--root', done, '--now', NOW, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'commit:crash'})
     emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-finish-crash', ct.describe(q))
     _, finished, _ = recorded('rescue-finish', done, ['rescue', '--root', done], markdev, fs, old=old)
     emit(finished == upgraded, f'powercut-{fs}-rescue-finish-completes',
@@ -219,7 +219,7 @@ def phase_run(job):
     old = ct.tree_digest(base)
     owner, fifo, line = paused(base, hold, 'install', '--root', base, 'alpha', '--now', NOW)
     start = time.monotonic()
-    second = ct.lrd('install', '--root', base, 'lone', '--now', NOW)
+    second = ct.pxg('install', '--root', base, 'lone', '--now', NOW)
     secs = time.monotonic() - start
     emit(line.startswith('PAUSED') and second.returncode == 7 and secs < 5, f'vm-concurrent-{fs}-contention',
          f'held at {hold}: owner={line!r} second={ct.describe(second)} secs={secs:.2f}')
@@ -278,9 +278,9 @@ def enospc(job, repo, dev):
         row = f'vm-enospc-{fs}-upgrade-{step}'
         emit(line.startswith('PAUSED') and p.returncode == 1 and 'no-space' in p.stderr, row,
              f'paused={line!r} {ct.describe(p)}')
-        first = ct.lrd('rescue', '--root', root)
+        first = ct.pxg('rescue', '--root', root)
         one = ct.tree_digest(root)
-        second = ct.lrd('rescue', '--root', root)
+        second = ct.pxg('rescue', '--root', root)
         two = ct.tree_digest(root)
         emit(first.returncode == 0 and second.returncode == 0 and one == two == old, f'{row}-recovered',
              f'first={ct.describe(first)} same={one == two} old={one == old}')
@@ -289,7 +289,7 @@ def enospc(job, repo, dev):
         old = ct.tree_digest(root)
         filler = Path('/mnt/e/filler')
         fill(str(filler), leave=48 << 10)
-        p = ct.lrd('upgrade', '--root', root, '--now', NOW)
+        p = ct.pxg('upgrade', '--root', root, '--now', NOW)
         filler.unlink()
         left = list((Path(root) / 'var/lib/larder/transactions').iterdir())
         emit(p.returncode == 1 and 'no-space: need' in p.stderr and not left and ct.tree_digest(root) == old,
@@ -356,7 +356,7 @@ def phase_eio(job):
         old = ct.tree_digest(stuck)
         names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
         cut = [n for n in names if n.startswith('apply:')][-1]
-        ct.lrd('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+        ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
         root, args = stuck, ['rescue', '--root', stuck]
     else:
         repo.publish(ct.universe(upgraded=True))
@@ -393,11 +393,11 @@ def recover(fs, img, rel, want, old, new, preen):
         root = Path(m) / rel
         if not root.is_dir():
             return False, f'root {rel} missing'
-        first = ct.lrd('rescue', '--root', root)
+        first = ct.pxg('rescue', '--root', root)
         one = ct.tree_digest(root)
-        second = ct.lrd('rescue', '--root', root)
+        second = ct.pxg('rescue', '--root', root)
         two = ct.tree_digest(root)
-        verify = ct.lrd('verify', '--root', root)
+        verify = ct.pxg('verify', '--root', root)
         pending = [x.name for x in (root / 'var/lib/larder/transactions').iterdir()] \
             if (root / 'var/lib/larder/transactions').is_dir() else ['(no transactions dir)']
         temps = [str(q.relative_to(root)) for q in root.rglob('.larder-t*')]
@@ -462,7 +462,7 @@ def main():
     job = json.loads(Path(sys.argv[1]).read_text())
     say(f'GUEST start phase={job["phase"]} kernel={os.uname().release}')
     bins = {name: hashlib.sha256((LARDER / 'target/bin' / name).read_bytes()).hexdigest()
-            for name in ('larder', 'larder-failpoint')}
+            for name in ('paxage', 'paxage-failpoint')}
     say('GUEST binaries ' + json.dumps(bins, sort_keys=True))
     try:
         {'run': phase_run, 'eio': phase_eio, 'check': phase_check}[job['phase']](job)

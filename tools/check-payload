@@ -14,7 +14,7 @@ def _named_failure(kind, value, traceback):
 if __name__ == '__main__': sys.excepthook = _named_failure
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / 'target/bin/larder'
+BINARY = ROOT / 'target/bin/paxage'
 PROBE = ROOT / 'target/bin/payload-probe'
 
 def field(h, off, width, raw):
@@ -124,7 +124,7 @@ def vectors(d):
     cases.append(('bad-path',extended(pax('path',b'../'+b'x'*300))))
     positives=[valid,extended(pax('path',long)),extended(pax('path','usr/é'.encode())),extended(pax('linkpath','é'.encode()),header(b'usr/link',b'2',0,0o777)),extended(pax('mtime',b'-1.25')),extended(pax('atime',b'0')+pax('ctime',b'1')),
        archive((header(b'usr/f',b'0',0,0o644),b''),(header(b'usr/h',b'1',0,0o644,b'usr/f'),b''))]
-    for binary in [BINARY,BINARY.with_name('lrd')]:
+    for binary in [BINARY,BINARY.with_name('pxg')]:
         for i,(error,raw) in enumerate(cases):
             path=d/'vector.tar';path.write_bytes(raw);verify(path,error,binary)
         for raw in positives:
@@ -179,7 +179,7 @@ def _roundtrip(d):
     expected_tree=tree_signature(source)
     outputs=[]
     for n in range(2):
-        binary=BINARY if n==0 else BINARY.with_name('lrd')
+        binary=BINARY if n==0 else BINARY.with_name('pxg')
         out=d/f'out{n}';out.mkdir()
         invoke(['pack',source,ROOT/'tests/manifests/valid.manifest',out,'--epoch',0],binary=binary)
         path=out/'sample-1-1.payload.tar';manifest=out/'sample-1-1.manifest'
@@ -316,7 +316,7 @@ def edges(d):
     into=d/'restricted-stage';into.mkdir(mode=0o700)
     invoke(stage_args(path,m,'/'),1,'stage-root-is-root')
     invoke(stage_args(path,m,into));assert (into/'file').stat().st_mode&0o777==0o400
-    for binary in [BINARY,BINARY.with_name('lrd')]:
+    for binary in [BINARY,BINARY.with_name('pxg')]:
         invoke(['list-payload',path,'--length',path.stat().st_size,'--json'],binary=binary)
         invoke(['pack',source,template,out,'--epoch','bad'],1,'pack-epoch',binary=binary)
         invoke(['stage'],2,binary=binary)

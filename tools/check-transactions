@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """X-clause transaction rows over the real CLI (pm04, docs/TRANSACTIONS.md).
 
-Every row drives target/bin/larder (or the test-only larder-failpoint) against a
+Every row drives target/bin/paxage (or the test-only paxage-failpoint) against a
 synthetic root under target/transactions; nothing outside that directory is
 written, and a sentinel tree outside every root is digested before and after.
 Run as container root for the ownership rows, as a plain user for the logical
@@ -20,8 +20,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / 'target/bin/larder'
-FPBIN = ROOT / 'target/bin/larder-failpoint'
+BIN = ROOT / 'target/bin/paxage'
+FPBIN = ROOT / 'target/bin/paxage-failpoint'
 WORK = ROOT / 'target/transactions'
 NOW = '2026-11-09T00:00:00Z'
 ARCH, SLOT = 'x86_64', 'default'
@@ -76,7 +76,7 @@ def check(ok, row, detail=''):
     return emit(bool(ok), row, detail)
 
 
-def lrd(*args, binary=None, env=None, timeout=120, fixture=False):
+def pxg(*args, binary=None, env=None, timeout=120, fixture=False):
     exe = binary or BIN
     if not Path(exe).exists():
         return subprocess.CompletedProcess([str(exe)], 127, '', f'missing executable {exe}')
@@ -265,7 +265,7 @@ class Package:
                 for dirpath, dirnames, filenames in os.walk(top):
                     for n in dirnames + filenames:
                         os.lchown(os.path.join(dirpath, n), FIXTURE_UID, FIXTURE_GID)
-        p = lrd('pack', src, tpath, out, '--epoch', '100', fixture=True)
+        p = pxg('pack', src, tpath, out, '--epoch', '100', fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-pack-{self.name}-{self.version} {describe(p)}')
         return out / f'{self.name}-{self.version}.manifest', buildinfo
@@ -310,16 +310,16 @@ class Repo:
     def setup(self):
         if PRIVILEGED:
             try:
-                reach = lrd('version', fixture=True)
+                reach = pxg('version', fixture=True)
             except PermissionError as e:
                 raise SystemExit(f'FAIL fixture-identity-reach uid={FIXTURE_UID} cannot exec {BIN}: {e}')
             if reach.returncode != 0:
                 raise SystemExit(f'FAIL fixture-identity-reach uid={FIXTURE_UID} {describe(reach)}')
             print(f'transactions: fixture published as uid={FIXTURE_UID} gid={FIXTURE_GID}', flush=True)
-        p = lrd('repo', 'keygen', '--keys', self.keys, '--now', NOW, fixture=True)
+        p = pxg('repo', 'keygen', '--keys', self.keys, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-keygen {describe(p)}')
-        p = lrd('repo', 'init', '--repo', self.url, '--keys', self.keys, '--now', NOW, fixture=True)
+        p = pxg('repo', 'init', '--repo', self.url, '--keys', self.keys, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-repo-init {describe(p)}')
         shutil.copyfile(self.repo / 'metadata/1.root.json', self.pinned)
@@ -333,7 +333,7 @@ class Repo:
                 self.built[key] = pkg.build(self.work / 'packages')
             manifest, buildinfo = self.built[key]
             args += ['--manifest', manifest, '--buildinfo', buildinfo]
-        p = lrd('repo', 'publish', '--repo', self.url, '--keys', self.keys, '--version', str(self.version),
+        p = pxg('repo', 'publish', '--repo', self.url, '--keys', self.keys, '--version', str(self.version),
                 *args, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-publish-{self.version} {describe(p)}')
@@ -364,7 +364,7 @@ class Roots:
 
     def init(self, label):
         root = self.fresh(label)
-        p = lrd('init', '--root', root, '--repo', self.repo.url, '--pinned-root', self.repo.pinned,
+        p = pxg('init', '--root', root, '--repo', self.repo.url, '--pinned-root', self.repo.pinned,
                 '--arch', ARCH, '--slot', SLOT, '--now', NOW)
         return root, p
 
@@ -373,7 +373,7 @@ class Roots:
         if p.returncode != 0:
             raise_setup(label, 'init', p)
         for spec in installs:
-            q = lrd('install', '--root', root, *spec.split(), '--now', NOW)
+            q = pxg('install', '--root', root, *spec.split(), '--now', NOW)
             if q.returncode != 0:
                 raise_setup(label, f'install {spec}', q)
         return root
@@ -390,7 +390,7 @@ def raise_setup(row, what, p):
 
 
 def status(root):
-    p = lrd('status', '--root', root, '--json')
+    p = pxg('status', '--root', root, '--json')
     if p.returncode != 0:
         return None
     try:
@@ -430,14 +430,14 @@ def init_root(r):
     s = status(root)
     check(s is not None and s.get('generation') == 0 and s.get('packages') == [] and s.get('pending') == '',
           'status-generation-zero', json.dumps(s))
-    again = lrd('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
+    again = pxg('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
                 '--arch', ARCH, '--slot', SLOT, '--now', NOW)
     refused(again, 'init-refuses-existing-state', 1, 'state-exists')
 
 
 @row('live-root-refused')
 def live_root(r):
-    p = lrd('install', '--root', '/', 'alpha', '--now', NOW)
+    p = pxg('install', '--root', '/', 'alpha', '--now', NOW)
     refused(p, 'live-root-refused', 1, 'live-root-is-pm05')
 
 
@@ -446,8 +446,8 @@ def lock_inode(r):
     root = r.ready('lock-inode')
     lock = root / 'var/lib/larder/lock'
     before = os.lstat(lock)
-    ok(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-inode-install')
-    ok(lrd('remove', '--root', root, 'lone'), 'lock-inode-remove')
+    ok(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-inode-install')
+    ok(pxg('remove', '--root', root, 'lone'), 'lock-inode-remove')
     after = os.lstat(lock)
     check((before.st_dev, before.st_ino) == (after.st_dev, after.st_ino) and after.st_size == 0,
           'lock-persistent-inode', f'{before.st_ino} -> {after.st_ino} size={after.st_size}')
@@ -484,11 +484,11 @@ def lock_contention(r):
     proc, fifo, line = paused(root, 'lock', 'install', '--root', root, 'lone', '--now', NOW)
     check(line == 'PAUSED lock', 'lock-contention-paused', line)
     started = time.monotonic()
-    p = lrd('install', '--root', root, 'beta', '--now', NOW)
+    p = pxg('install', '--root', root, 'beta', '--now', NOW)
     elapsed = time.monotonic() - started
     refused(p, 'lock-contention', 7, 'locked')
     check(elapsed < 5, 'lock-contention-nonblocking', f'{elapsed:.2f}s')
-    refused(lrd('rescue', '--root', root), 'lock-contention-rescue', 7, 'locked')
+    refused(pxg('rescue', '--root', root), 'lock-contention-rescue', 7, 'locked')
     check(status(root) is not None, 'lock-contention-status-read-only')
     ok(resume(proc, fifo), 'lock-contention-holder-completes')
     check('lone' in installed(root), 'lock-contention-holder-result')
@@ -504,7 +504,7 @@ def lock_owner_exit(r):
     # The holder dies by its own trap; the test signals nothing (RULES 5).
     died = resume(proc, fifo, 'crash')
     check(died.returncode == CRASH_EXIT, 'lock-owner-exit-holder-died', describe(died))
-    ok(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-owner-exit')
+    ok(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-owner-exit')
     check(not any(p.name.startswith('pid') for p in (root / 'var/lib/larder').iterdir()), 'lock-no-pid-file')
 
 
@@ -514,7 +514,7 @@ def lock_symlink(r):
     lock = root / 'var/lib/larder/lock'
     lock.unlink()
     os.symlink(r.outside / 'lock-target', lock)
-    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-symlink-refused', 1, 'lock-inode')
+    refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-symlink-refused', 1, 'lock-inode')
     check(not (r.outside / 'lock-target').exists(), 'lock-symlink-target-untouched')
 
 
@@ -522,7 +522,7 @@ def lock_symlink(r):
 def lock_missing(r):
     root = r.ready('lock-missing')
     (root / 'var/lib/larder/lock').unlink()
-    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-missing-refused', 1, 'lock-missing')
+    refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-missing-refused', 1, 'lock-missing')
     check(not (root / 'var/lib/larder/lock').exists(), 'lock-missing-not-recreated')
 
 
@@ -530,7 +530,7 @@ def lock_missing(r):
 def install_explicit(r):
     root = r.ready('install')
     before = outside_digest(r)
-    p = lrd('install', '--root', root, 'alpha', '--now', NOW)
+    p = pxg('install', '--root', root, 'alpha', '--now', NOW)
     ok(p, 'install-explicit', last='install ok generation=1')
     check(installed(root) == {'alpha': ('1-1', 'explicit')}, 'install-explicit-database', json.dumps(status(root)))
     check((root / 'usr/bin/alpha').read_bytes() == b'alpha 1\n'
@@ -542,14 +542,14 @@ def install_explicit(r):
         check(all(os.lstat(root / f).st_uid == 0 for f in ('usr/bin/alpha', 'usr/share/alpha/data')),
               'install-owner-applied')
     check(outside_digest(r) == before, 'install-outside-untouched')
-    ok(lrd('verify', '--root', root), 'verify-clean', last='verify ok')
+    ok(pxg('verify', '--root', root), 'verify-clean', last='verify ok')
     check(not list((root / 'var/lib/larder/transactions').iterdir()), 'install-no-transaction-left')
 
 
 @row('install-dependency-reason')
 def install_dependency(r):
     root = r.ready('install-dependency')
-    ok(lrd('install', '--root', root, 'beta', '--now', NOW), 'install-dependency-reason-run')
+    ok(pxg('install', '--root', root, 'beta', '--now', NOW), 'install-dependency-reason-run')
     check(installed(root) == {'alpha': ('1-1', 'dependency'), 'beta': ('1-1', 'explicit')},
           'install-dependency-reason', json.dumps(status(root)))
     check((root / 'usr/share').is_dir(), 'install-shared-directory')
@@ -559,7 +559,7 @@ def install_dependency(r):
 def install_conflict(r):
     root = r.ready('install-conflict', 'alpha')
     before = tree_digest(root)
-    refused(lrd('install', '--root', root, 'omega', '--now', NOW), 'install-file-conflict', 1,
+    refused(pxg('install', '--root', root, 'omega', '--now', NOW), 'install-file-conflict', 1,
             'file-conflict usr/bin/alpha owner=alpha')
     check(tree_digest(root) == before, 'install-file-conflict-no-writes')
 
@@ -570,7 +570,7 @@ def install_collision(r):
     (root / 'usr/share/lone').mkdir(parents=True)
     (root / 'usr/share/lone/lone').write_bytes(b'mine\n')
     before = tree_digest(root)
-    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'install-unowned-collision', 1,
+    refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'install-unowned-collision', 1,
             'unowned-collision usr/share/lone/lone')
     check(tree_digest(root) == before, 'install-unowned-collision-no-writes')
 
@@ -596,7 +596,7 @@ def install_account_conflict(r):
     (root / 'etc').mkdir(exist_ok=True)
     (root / 'etc/passwd').write_text('pm04-daemon:x:555:555::/:/bin/false\n')
     before = tree_digest(root)
-    refused(lrd('install', '--root', root, 'alpha', '--now', NOW), 'install-account-conflict', 1,
+    refused(pxg('install', '--root', root, 'alpha', '--now', NOW), 'install-account-conflict', 1,
             'account-conflict pm04-daemon')
     check(tree_digest(root) == before, 'install-account-conflict-no-writes')
 
@@ -605,7 +605,7 @@ def install_account_conflict(r):
 def install_noop(r):
     root = r.ready('install-noop', 'alpha')
     before = tree_digest(root)
-    ok(lrd('install', '--root', root, 'alpha', '--now', NOW), 'install-noop', last='install ok nothing to do')
+    ok(pxg('install', '--root', root, 'alpha', '--now', NOW), 'install-noop', last='install ok nothing to do')
     check(tree_digest(root) == before, 'install-noop-no-writes')
 
 
@@ -613,7 +613,7 @@ def install_noop(r):
 def dry_run(r):
     root = r.ready('dry-run')
     before = tree_digest(root)
-    p = lrd('install', '--root', root, 'beta', '--now', NOW, '--dry-run')
+    p = pxg('install', '--root', root, 'beta', '--now', NOW, '--dry-run')
     ok(p, 'dry-run-plan')
     check('install alpha' in p.stdout and 'install beta' in p.stdout, 'dry-run-lists-closure', p.stdout)
     check(tree_digest(root) == before, 'dry-run-no-writes')
@@ -636,7 +636,7 @@ def upgraded_root(r, label, local_conf=None, delete_conf=False, proposal=False, 
 def upgrade(r):
     root = upgraded_root(r, 'upgrade')
     try:
-        ok(lrd('upgrade', '--root', root, '--now', NOW), 'upgrade-replace-add-drop-run', last='upgrade ok generation=2')
+        ok(pxg('upgrade', '--root', root, '--now', NOW), 'upgrade-replace-add-drop-run', last='upgrade ok generation=2')
         check((root / 'usr/bin/alpha').read_bytes() == b'alpha 2\n' and (root / 'usr/share/alpha/new').exists()
               and not (root / 'usr/share/alpha/old').exists()
               and os.lstat(root / 'usr/share/alpha/data').st_ino == os.lstat(root / 'usr/share/alpha/data.link').st_ino,
@@ -652,7 +652,7 @@ def upgrade_modified(r):
     root = upgraded_root(r, 'upgrade-modified')
     try:
         (root / 'usr/share/alpha/data').write_bytes(b'edited\n')
-        p = lrd('upgrade', '--root', root, '--now', NOW)
+        p = pxg('upgrade', '--root', root, '--now', NOW)
         ok(p, 'upgrade-replaces-modified-run')
         check((root / 'usr/share/alpha/data').read_bytes() == b'data 2\n'
               and 'replace-modified usr/share/alpha/data' in p.stdout, 'upgrade-replaces-modified', p.stdout)
@@ -665,7 +665,7 @@ def config_kept(r):
     # alpha 1-2 changes the program and keeps the packaged config bytes (N == B).
     root = upgraded_root(r, 'config-kept', local_conf=b'mine\n', alphas=['1-2', '1-1'])
     try:
-        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-upstream-unchanged-kept-run')
+        ok(pxg('upgrade', '--root', root, '--now', NOW), 'config-upstream-unchanged-kept-run')
         check((root / 'usr/bin/alpha').read_bytes() == b'alpha 1.2\n'
               and (root / 'etc/alpha.conf').read_bytes() == b'mine\n'
               and not (root / 'etc/alpha.conf.larder-new').exists(), 'config-upstream-unchanged-kept')
@@ -677,7 +677,7 @@ def config_kept(r):
 def config_proposal(r):
     root = upgraded_root(r, 'config-proposal', local_conf=b'mine\n')
     try:
-        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-both-changed-run')
+        ok(pxg('upgrade', '--root', root, '--now', NOW), 'config-both-changed-run')
         check((root / 'etc/alpha.conf').read_bytes() == b'mine\n'
               and (root / 'etc/alpha.conf.larder-new').read_bytes() == b'setting=2\n', 'config-both-changed-proposal')
         s = status(root) or {}
@@ -691,7 +691,7 @@ def config_proposal(r):
 def config_deleted(r):
     root = upgraded_root(r, 'config-deleted', delete_conf=True)
     try:
-        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-locally-deleted-run')
+        ok(pxg('upgrade', '--root', root, '--now', NOW), 'config-locally-deleted-run')
         check(not (root / 'etc/alpha.conf').exists(), 'config-locally-deleted-stays')
     finally:
         r.repo.publish(universe())
@@ -702,7 +702,7 @@ def config_proposal_exists(r):
     root = upgraded_root(r, 'config-proposal-exists', local_conf=b'mine\n', proposal=True)
     try:
         before = tree_digest(root)
-        refused(lrd('upgrade', '--root', root, '--now', NOW), 'config-proposal-exists', 1,
+        refused(pxg('upgrade', '--root', root, '--now', NOW), 'config-proposal-exists', 1,
                 'proposal-exists etc/alpha.conf.larder-new')
         check(tree_digest(root) == before, 'config-proposal-exists-no-writes')
     finally:
@@ -713,7 +713,7 @@ def config_proposal_exists(r):
 def remove_owned(r):
     root = r.ready('remove-owned', 'alpha', 'lone')
     (root / 'usr/share/alpha/user-file').write_bytes(b'not packaged\n')
-    ok(lrd('remove', '--root', root, 'alpha'), 'remove-owned-only-run', last='remove ok generation=3')
+    ok(pxg('remove', '--root', root, 'alpha'), 'remove-owned-only-run', last='remove ok generation=3')
     check(not (root / 'usr/bin/alpha').exists() and not (root / 'usr/bin/al').exists()
           and (root / 'usr/share/alpha/user-file').exists() and (root / 'usr/share/lone/lone').exists()
           and (root / 'usr/share').is_dir(), 'remove-owned-only')
@@ -726,14 +726,14 @@ def remove_residual(r):
     root = r.ready('remove-residual', 'alpha')
     (root / 'usr/share/alpha/data').write_bytes(b'edited\n')
     (root / 'etc/alpha.conf').write_bytes(b'mine\n')
-    ok(lrd('remove', '--root', root, 'alpha'), 'remove-modified-run')
+    ok(pxg('remove', '--root', root, 'alpha'), 'remove-modified-run')
     s = status(root) or {}
     residuals = {x.get('path') for x in s.get('residuals', [])}
     check((root / 'usr/share/alpha/data').read_bytes() == b'edited\n' and 'usr/share/alpha/data' in residuals,
           'remove-modified-residual', json.dumps(s))
     check((root / 'etc/alpha.conf').read_bytes() == b'mine\n' and 'etc/alpha.conf' in residuals,
           'remove-config-residual')
-    p = lrd('remove', '--root', root, '--purge', 'alpha')
+    p = pxg('remove', '--root', root, '--purge', 'alpha')
     ok(p, 'remove-purge-run')
     check(not (root / 'etc/alpha.conf').exists() and 'purge etc/alpha.conf' in p.stdout, 'remove-purge', p.stdout)
 
@@ -742,7 +742,7 @@ def remove_residual(r):
 def remove_required(r):
     root = r.ready('remove-required', 'beta')
     before = tree_digest(root)
-    refused(lrd('remove', '--root', root, 'alpha'), 'remove-required-refused', 1, 'required-by beta')
+    refused(pxg('remove', '--root', root, 'alpha'), 'remove-required-refused', 1, 'required-by beta')
     check(tree_digest(root) == before, 'remove-required-no-writes')
 
 
@@ -751,13 +751,13 @@ def orphan_cycle(r):
     root = r.ready('orphan-cycle', 'app')
     check(installed(root) == {'app': ('1-1', 'explicit'), 'gamma': ('1-1', 'dependency'),
                               'delta': ('1-1', 'dependency')}, 'orphan-cycle-setup', json.dumps(status(root)))
-    ok(lrd('remove', '--root', root, 'app'), 'orphan-cycle-remove-root')
+    ok(pxg('remove', '--root', root, 'app'), 'orphan-cycle-remove-root')
     before = tree_digest(root)
-    p = lrd('autoremove', '--root', root)
+    p = pxg('autoremove', '--root', root)
     ok(p, 'orphan-cycle-preview-run')
     check('orphan delta' in p.stdout and 'orphan gamma' in p.stdout and tree_digest(root) == before,
           'orphan-cycle-preview', p.stdout)
-    ok(lrd('autoremove', '--root', root, '--yes'), 'orphan-cycle-collected-run')
+    ok(pxg('autoremove', '--root', root, '--yes'), 'orphan-cycle-collected-run')
     check(installed(root) == {}, 'orphan-cycle-collected', json.dumps(status(root)))
     s = status(root) or {}
     check(s.get('generation') == 3, 'orphan-cycle-one-generation', json.dumps(s))
@@ -767,7 +767,7 @@ def orphan_cycle(r):
 def verify_drift(r):
     root = r.ready('verify-drift', 'alpha')
     (root / 'usr/bin/alpha').write_bytes(b'tampered\n')
-    refused(lrd('verify', '--root', root), 'verify-drift', 1, 'drift usr/bin/alpha')
+    refused(pxg('verify', '--root', root), 'verify-drift', 1, 'drift usr/bin/alpha')
 
 
 # ---------------------------------------------------------------- recovery
@@ -788,7 +788,7 @@ def scenario_base(r, verb):
 
 def run_verb(root, verb, binary=None, env=None):
     args = SCENARIOS[verb][1]
-    return lrd(args[0], '--root', root, *args[1:], binary=binary, env=env)
+    return pxg(args[0], '--root', root, *args[1:], binary=binary, env=env)
 
 
 def references(r, verb):
@@ -822,9 +822,9 @@ REQUIRED_PHASES = ['lock', 'capacity', 'stage', 'intent-written', 'intent', 'gen
 
 
 def recovered_twice(r, root, row, expect):
-    first = lrd('rescue', '--root', root)
+    first = pxg('rescue', '--root', root)
     one = tree_digest(root)
-    second = lrd('rescue', '--root', root)
+    second = pxg('rescue', '--root', root)
     two = tree_digest(root)
     good = first.returncode == 0 and second.returncode == 0 and one == two and one == expect
     detail = '' if good else f'first={describe(first)} second={describe(second)} same={one == two} expect={one == expect}'
@@ -891,12 +891,12 @@ def crash_rescue(r):
     stuck = r.copy(base, 'rescue-base')
     run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
     probe = r.copy(stuck, 'rescue-trace')
-    p = lrd('rescue', '--root', probe, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = pxg('rescue', '--root', probe, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
     rescue_names = [name for name, _ in trace_points(p, 'rescue:')]
     check(any(n.startswith('rescue:undo:') for n in rescue_names), 'crash-rescue-hooked', repr(rescue_names))
     for name in rescue_names:
         root = r.copy(stuck, 'crash-rescue')
-        q = lrd('rescue', '--root', root, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
+        q = pxg('rescue', '--root', root, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
         try:
             check(q.returncode == CRASH_EXIT, f'crash-rescue-{name}-cut', describe(q))
             recovered_twice(r, root, f'crash-rescue-{name}', old)
@@ -940,7 +940,7 @@ def injected(r):
 @row('rescue-entry')
 def rescue_entry(r):
     root = r.ready('rescue-entry', 'alpha')
-    p = lrd('rescue', '--root', root)
+    p = pxg('rescue', '--root', root)
     ok(p, 'rescue-nothing-to-do', last='rescue: nothing to do')
     if not FPBIN.exists():
         emit(False, 'rescue-unknown-state', f'missing {FPBIN}')
@@ -950,25 +950,25 @@ def rescue_entry(r):
     run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
     s = status(stuck) or {}
     check(s.get('pending', '').startswith('t'), 'status-recovery-needed', json.dumps(s))
-    refused(lrd('install', '--root', stuck, 'lone', '--now', NOW), 'mutation-refused-recovery-needed', 8,
+    refused(pxg('install', '--root', stuck, 'lone', '--now', NOW), 'mutation-refused-recovery-needed', 8,
             'recovery-needed')
     tampered = r.copy(stuck, 'rescue-tampered')
     (tampered / 'usr/bin').mkdir(parents=True, exist_ok=True)
     (tampered / 'usr/bin/alpha').write_bytes(b'neither\n')
     before = tree_digest(tampered)
-    refused(lrd('rescue', '--root', tampered), 'rescue-unknown-state', 9, 'rescue-unknown-state')
+    refused(pxg('rescue', '--root', tampered), 'rescue-unknown-state', 9, 'rescue-unknown-state')
     check(tree_digest(tampered) == before, 'rescue-unknown-state-no-writes')
     gone = r.copy(stuck, 'rescue-missing-backup')
     backups = sorted((gone / 'var/lib/larder/transactions').glob('t*/backup/*'))
     if backups:
         backups[0].unlink()
-    refused(lrd('rescue', '--root', gone), 'rescue-missing-backup', 9, 'rescue-missing-backup')
+    refused(pxg('rescue', '--root', gone), 'rescue-missing-backup', 9, 'rescue-missing-backup')
     bad = r.copy(stuck, 'rescue-malformed')
     intents = sorted((bad / 'var/lib/larder/transactions').glob('t*/intent'))
     if intents:
         data = intents[0].read_bytes()
         intents[0].write_bytes(data[:-10] + b'x' * 10)
-    refused(lrd('rescue', '--root', bad), 'rescue-malformed-intent', 9, 'rescue-malformed-intent')
+    refused(pxg('rescue', '--root', bad), 'rescue-malformed-intent', 9, 'rescue-malformed-intent')
 
 
 @row('race-ancestors')
@@ -978,7 +978,7 @@ def races(r):
     base = r.ready('race-base')
     old = tree_digest(base)
     probe = r.copy(base, 'race-trace')
-    p = lrd('install', '--root', probe, 'alpha', '--now', NOW, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = pxg('install', '--root', probe, 'alpha', '--now', NOW, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
     points = trace_points(p)
     target = 'usr/share/alpha/data'
     walks = [n for n, info in points if n.endswith(':walk') and f'path={target}' in info.split()]
@@ -999,7 +999,7 @@ def races(r):
                 result = resume(proc, fifo)
                 refused(result, label, 1, 'path-race')
                 check(outside_digest(r) == pre, f'{label}-outside-untouched')
-                refused(lrd('rescue', '--root', root), f'{label}-rescue-refuses-while-swapped', 9,
+                refused(pxg('rescue', '--root', root), f'{label}-rescue-refuses-while-swapped', 9,
                         'rescue-unknown-state')
                 os.unlink(real)
                 if aside.exists():
@@ -1036,7 +1036,7 @@ def unqualified(r):
         return
     root = Path(target) / 'root'
     root.mkdir()
-    p = lrd('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
+    p = pxg('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
             '--arch', ARCH, '--slot', SLOT, '--now', NOW)
     refused(p, 'fs-unqualified-refused', 1, 'unqualified-filesystem')
 

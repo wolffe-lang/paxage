@@ -82,4 +82,4 @@ else
   echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container'
   echo 'SKIP trust-fuzz reason=Linux-only capped 100000 mutations; never on the Mac'
 fi
-step trust-local-replay-limit python3 -I tools/witness-trust-replay "$PWD/target/bin/larder"
+step trust-local-replay-limit python3 -I tools/witness-trust-replay "$PWD/target/bin/paxage"
