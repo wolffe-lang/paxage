@@ -22,7 +22,16 @@ use std.x.crypto.sha2 as sha2
 pub struct Ctx { root: walk.Root, fail: failpoint.Fail, privileged: bool }
 
 /// One F5 file record of a manifest.
-pub struct Rec { path: str, kind: str, mode: int, owner: int, group: int, length: int, sha256: str, target: str }
+pub struct Rec {
+    path: str,
+    kind: str,
+    mode: int,
+    owner: int,
+    group: int,
+    length: int,
+    sha256: str,
+    target: str,
+}
 
 /// One declared action.
 pub struct Action { kind: str, name: str }
@@ -119,9 +128,14 @@ pub fn decode(bytes: List[byte], reason: str) -> Pkg {
             target: schema.string(d, c, "target"),
         })
     }
-    for c in literal.children(d, literal.field(d, 0, "configs")) { (mut p.configs).push(d.nodes[c].text) }
+    for c in literal.children(d, literal.field(d, 0, "configs")) {
+        (mut p.configs).push(d.nodes[c].text)
+    }
     for c in literal.children(d, literal.field(d, 0, "actions")) {
-        (mut p.actions).push(Action { kind: schema.string(d, c, "kind"), name: schema.string(d, c, "name") })
+        (mut p.actions).push(Action {
+            kind: schema.string(d, c, "kind"),
+            name: schema.string(d, c, "name"),
+        })
     }
     p
 }
@@ -215,7 +229,15 @@ fn dir_want(mode: int, uid: int, gid: int) -> intent.Want {
 }
 
 fn file_want(bytes: List[byte], mode: int, uid: int, gid: int) -> intent.Want {
-    intent.Want { kind: "file", mode, uid, gid, length: bytes.len, sha256: sha2.to_hex(sha2.sum256(bytes)), target: "" }
+    intent.Want {
+        kind: "file",
+        mode,
+        uid,
+        gid,
+        length: bytes.len,
+        sha256: sha2.to_hex(sha2.sum256(bytes)),
+        target: "",
+    }
 }
 
 fn planned_dir(w: Work, path: str) -> bool {
@@ -258,7 +280,14 @@ fn lines_of(bytes: List[byte]) -> List[str] {
 
 struct Edited { bytes: List[byte], changed: bool, error: str }
 
-fn account_edit(current: List[byte], line: str, name: str, id: int, idfield: int, kind: str) -> Edited {
+fn account_edit(
+    current: List[byte],
+    line: str,
+    name: str,
+    id: int,
+    idfield: int,
+    kind: str,
+) -> Edited {
     var out = Edited { bytes: copy current, changed: false, error: "" }
     for l in lines_of(current) {
         let f = text.split(l, ":")
@@ -267,7 +296,10 @@ fn account_edit(current: List[byte], line: str, name: str, id: int, idfield: int
             if f[idfield] != "{id}" { out.error = "{kind}-conflict {name}" }
             return out
         }
-        if f[idfield] == "{id}" { out.error = "{kind}-id-conflict {name} {id} used by {f[0]}"; return out }
+        if f[idfield] == "{id}" {
+            out.error = "{kind}-id-conflict {name} {id} used by {f[0]}"
+            return out
+        }
     }
     var b = copy current
     if b.len > 0 && b[b.len - 1] != 10 as byte { (mut b).push(10 as byte) }
@@ -327,9 +359,23 @@ fn plan_accounts(c: Ctx, mut w: Work, old: db.Db, mut next: db.Db, adds: List[Pk
             if known { continue }
             let acct = registry.account(a.name)
             if acct.error != "" { w.error = acct.error; return }
-            let pe = account_edit(passwd, "{acct.name}:x:{acct.uid}:{acct.gid}:{acct.gecos}:{acct.home}:{acct.shell}", acct.name, acct.uid, 2, "account")
+            let pe = account_edit(
+                passwd,
+                "{acct.name}:x:{acct.uid}:{acct.gid}:{acct.gecos}:{acct.home}:{acct.shell}",
+                acct.name,
+                acct.uid,
+                2,
+                "account",
+            )
             if pe.error != "" { w.error = pe.error; return }
-            let ge = account_edit(group, "{acct.name}:x:{acct.gid}:", acct.name, acct.gid, 2, "group")
+            let ge = account_edit(
+                group,
+                "{acct.name}:x:{acct.gid}:",
+                acct.name,
+                acct.gid,
+                2,
+                "group",
+            )
             if ge.error != "" { w.error = ge.error; return }
             if pe.changed { passwd = pe.bytes; pw = true }
             if ge.changed { group = ge.bytes; gr = true }
@@ -337,7 +383,8 @@ fn plan_accounts(c: Ctx, mut w: Work, old: db.Db, mut next: db.Db, adds: List[Pk
                 let se = account_edit(shadow, "{acct.name}:!:::::::", acct.name, -2, 0, "shadow")
                 if se.changed { shadow = se.bytes; sh = true }
             }
-            (mut next.accounts).push(db.Account { name: acct.name, uid: acct.uid, gid: acct.gid, package: p.name })
+            (mut next.accounts).push(db.
+                Account { name: acct.name, uid: acct.uid, gid: acct.gid, package: p.name })
         }
     }
     if pw || gr { ensure_parents(c, mut w, mut next.directories, "etc/passwd", "") }
@@ -456,7 +503,8 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
         let unchanged = at >= 0 && olds[at].digest == p.digest
         for cfg in p.configs {
             if unchanged {
-                (mut baselines).push(db.Baseline { path: cfg, package: p.name, sha256: baseline(old, cfg) })
+                (mut baselines).push(db.
+                    Baseline { path: cfg, package: p.name, sha256: baseline(old, cfg) })
             }
         }
         if unchanged {
@@ -475,7 +523,10 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                 }
             }
             let prior = old_files[r.path] else -1
-            if r.kind != "dir" && prior >= 0 && olds[prior].name != p.name && find_pkg(news, olds[prior].name) >= 0 {
+            if r.kind != "dir" &&
+                prior >= 0 &&
+                olds[prior].name != p.name &&
+                find_pkg(news, olds[prior].name) >= 0 {
                 out.error = "file-conflict {r.path} owner={olds[prior].name}"
                 return out
             }
@@ -511,10 +562,14 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                     (mut w.links).push(op("link", r.path, intent.nothing(), want, false))
                 } else {
                     (mut w.puts).push(op("put", r.path, intent.nothing(), want, false))
-                    (mut w.psrc).push(Source { rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}", bytes: List[byte]() })
+                    (mut w.psrc).push(Source {
+                        rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}",
+                        bytes: List[byte](),
+                    })
                 }
                 if is_config(p, r.path) {
-                    (mut baselines).push(db.Baseline { path: r.path, package: p.name, sha256: r.sha256 })
+                    (mut baselines).push(db.
+                        Baseline { path: r.path, package: p.name, sha256: r.sha256 })
                 }
                 continue
             }
@@ -523,8 +578,12 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
             let prev_rec = copy prev.recs[rec_index(prev, r.path)]
             var old_want = want_of_live(live)
             var backup = live.kind == "file"
-            if prev_rec.kind == "hardlink" && matches(live, want_of(prev, prev_rec), logical) {
-                old_want = want_of(prev, prev_rec)
+            if prev_rec.kind == "hardlink" &&
+                live.kind == "file" &&
+                same_inode(c.root, r.path, prev_rec.target) {
+                // Still a second name of its source: undo relinks it, whatever the shared content.
+                old_want.kind = "link"
+                old_want.target = prev_rec.target
                 backup = false
             }
             if is_config(p, r.path) {
@@ -536,7 +595,10 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                 if l == b {
                     if n != b {
                         (mut w.puts).push(op("put", r.path, old_want, want, backup))
-                        (mut w.psrc).push(Source { rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}", bytes: List[byte]() })
+                        (mut w.psrc).push(Source {
+                            rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}",
+                            bytes: List[byte](),
+                        })
                     }
                     continue
                 }
@@ -555,22 +617,31 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                 var pold = intent.nothing()
                 if plive.kind == "file" { pold = want_of_live(plive) }
                 (mut w.puts).push(op("put", ppath, pold, want, plive.kind == "file"))
-                (mut w.psrc).push(Source { rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}", bytes: List[byte]() })
+                (mut w.psrc).push(Source {
+                    rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}",
+                    bytes: List[byte](),
+                })
                 (mut proposals).push(db.Proposal { path: ppath, package: p.name, sha256: n })
                 (mut out.summary).push("proposal {ppath}")
                 continue
             }
             if matches(live, want, logical) && want.kind != "link" { continue }
+            if live.kind != "absent" && !matches(live, want_of(prev, prev_rec), logical) {
+                (mut out.summary).push("replace-modified {r.path}")
+            }
             if want.kind == "link" {
                 if matches(live, want, logical) && same_inode(c.root, r.path, r.target) {
                     var target_changes = false
                     for x in w.puts { if x.path == r.target { target_changes = true } }
                     if !target_changes { continue }
                 }
-                (mut w.links).push(op("link", r.path, old_want, want, false))
+                (mut w.links).push(op("link", r.path, old_want, want, backup))
             } else {
                 (mut w.puts).push(op("put", r.path, old_want, want, backup))
-                (mut w.psrc).push(Source { rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}", bytes: List[byte]() })
+                (mut w.psrc).push(Source {
+                    rel: "{tx_rel(next.transaction)}/stage/{p.name}/{r.path}",
+                    bytes: List[byte](),
+                })
             }
         }
         for pr in old.proposals {
@@ -619,13 +690,16 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
         if r.kind == "dir" {
             if live.kind != "dir" { continue }
             if empty_after(c, w, r.path) {
-                (mut w.rmdirs).push(op("rmdir", r.path, want_of_live(live), intent.nothing(), false))
+                (mut w.
+                    rmdirs).push(op("rmdir", r.path, want_of_live(live), intent.nothing(), false))
             }
             continue
         }
         let w_old = want_of(q, r)
         if is_config(q, r.path) {
-            if live.kind == "file" && live.sha256 == baseline(old, r.path) && matches(live, w_old, logical) {
+            if live.kind == "file" &&
+                live.sha256 == baseline(old, r.path) &&
+                matches(live, w_old, logical) {
                 (mut w.deletes).push(op("delete", r.path, w_old, intent.nothing(), true))
             } else {
                 (mut residuals).push(db.Residual { path: r.path, package: pname })
@@ -635,9 +709,12 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
         }
         if matches(live, w_old, logical) {
             if w_old.kind == "link" && !same_inode(c.root, r.path, r.target) {
-                (mut w.deletes).push(op("delete", r.path, want_of_live(live), intent.nothing(), true))
+                (mut w.
+                    deletes).push(op("delete", r.path, want_of_live(live), intent.nothing(), true))
             } else {
-                (mut w.deletes).push(op("delete", r.path, w_old, intent.nothing(), w_old.kind == "file"))
+                (mut w.deletes).push(
+                    op("delete", r.path, w_old, intent.nothing(), w_old.kind == "file"),
+                )
             }
         } else {
             (mut residuals).push(db.Residual { path: r.path, package: pname })
@@ -665,7 +742,9 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
             for q in olds { if q.name == res.package && is_config(q, res.path) { cfg = true } }
             for b in old.baselines { if b.path == res.path { cfg = true } }
             if live.kind == "file" && (cfg || text.starts_with(res.path, "etc/")) {
-                (mut w.deletes).push(op("delete", res.path, want_of_live(live), intent.nothing(), true))
+                (mut w.deletes).push(
+                    op("delete", res.path, want_of_live(live), intent.nothing(), true),
+                )
                 (mut out.summary).push("purge {res.path}")
                 continue
             }
@@ -692,7 +771,9 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
     }
     list.reverse(mut kept_dirs)
     for o in kept_dirs { (mut next.directories).push(copy o) }
-    for pe in old.pending { if find_pkg(news, pe.package) >= 0 { (mut next.pending).push(copy pe) } }
+    for pe in old.pending {
+        if find_pkg(news, pe.package) >= 0 { (mut next.pending).push(copy pe) }
+    }
     plan_accounts(c, mut w, old, mut next, adds)
     if w.error != "" { out.error = w.error; return out }
     plan_directories(c, mut w, old, mut next, adds)
@@ -826,7 +907,14 @@ pub fn load(c: Ctx, cur: db.Current) -> db.Db {
 /// The current commit record.
 pub fn current(c: Ctx) -> db.Current {
     let bytes = read_rel(c, "{state()}/current", 4096)
-    if bytes.len == 0 { return db.Current { generation: -1, database: "", transaction: "", error: "current-invalid" } }
+    if bytes.len == 0 {
+        return db.Current {
+            generation: -1,
+            database: "",
+            transaction: "",
+            error: "current-invalid",
+        }
+    }
     db.parse_current(bytes)
 }
 
@@ -834,7 +922,11 @@ pub fn current(c: Ctx) -> db.Current {
 pub fn installed(c: Ctx, g: db.Db) -> List[Pkg] {
     var out = List[Pkg]()
     for p in g.packages {
-        let bytes = read_rel(c, "{state()}/generations/{g.generation}/manifests/{p.manifest}", 1048576)
+        let bytes = read_rel(
+            c,
+            "{state()}/generations/{g.generation}/manifests/{p.manifest}",
+            1048576,
+        )
         var pkg = decode(bytes, p.reason)
         if bytes.len == 0 || pkg.digest != p.manifest || pkg.name != p.name { pkg.name = "" }
         (mut out).push(pkg)
@@ -872,7 +964,11 @@ fn copy_source(c: Ctx, src: Source, out: int) -> str {
     let d = walk.dir(c.root, walk.parent_of(src.rel))
     if d.error != "" { return "" }
     let fd = fs_open_at(d.fd, walk.base_of(src.rel), 21, 0) else |_| { walk.close(d); return "" }
-    let s = fs_fstat_record(fd) else |_| { fs_close(fd) else |_| {}; walk.close(d); return "" }
+    let s = fs_fstat_record(fd) else |_| {
+        fs_close(fd) else |_| {}
+        walk.close(d)
+        return ""
+    }
     let h = walk.copy_fd(fd, out, s[1])
     fs_close(fd) else |_| {}
     walk.close(d)
@@ -948,7 +1044,9 @@ fn apply_one(c: Ctx, t: str, o: intent.Op, src: Source) -> str {
         if sd.error != "" {
             e = sd.error
         } else {
-            fs_link_at(sd.fd, walk.base_of(o.new.target), pd.fd, tmp, false) else |_| { e = "link {o.path}" }
+            fs_link_at(sd.fd, walk.base_of(o.new.target), pd.fd, tmp, false) else |_| {
+                e = "link {o.path}"
+            }
             walk.close(sd)
         }
         e = step(c, "apply:{i}:temp", "", e)
@@ -974,7 +1072,9 @@ fn validate(c: Ctx, ops: List[intent.Op]) -> str {
         let live = walk.look_path(c.root, o.path, true)
         if live.kind == "error" { return live.error }
         if !matches(live, o.new, logical) { return "validate {o.path}" }
-        if o.new.kind == "link" && !same_inode(c.root, o.path, o.new.target) { return "validate {o.path}" }
+        if o.new.kind == "link" && !same_inode(c.root, o.path, o.new.target) {
+            return "validate {o.path}"
+        }
     }
     ""
 }
@@ -988,7 +1088,9 @@ fn accounts_consistent(c: Ctx, next: db.Db) -> str {
         var grp = false
         for l in passwd {
             let f = text.split(l, ":")
-            if f.len >= 4 && f[0] == a.name && f[2] == "{a.uid}" && f[3] == "{a.gid}" { user = true }
+            if f.len >= 4 && f[0] == a.name && f[2] == "{a.uid}" && f[3] == "{a.gid}" {
+                user = true
+            }
         }
         for l in group {
             let f = text.split(l, ":")
@@ -1017,7 +1119,9 @@ fn stage_one(c: Ctx, t: str, p: Pkg) -> str {
     if s[9] != h[9] || s[10] != h[10] { return "path-race {rel}" }
     let fd = fs_open_mode(p.payload, 21) else |_| { return "stage-open {p.name}" }
     let st = fs_fstat(fd) else |_| { fs_close(fd) else |_| {}; return "stage-open {p.name}" }
-    if st[0] != 0 || st[1] != p.payload_length || walk.digest_fd(fd, p.payload_length) != p.payload_sha256 {
+    if st[0] != 0 ||
+        st[1] != p.payload_length ||
+        walk.digest_fd(fd, p.payload_length) != p.payload_sha256 {
         fs_close(fd) else |_| {}
         return "payload-hash {p.name}"
     }
@@ -1044,7 +1148,11 @@ fn backup_one(c: Ctx, t: str, o: intent.Op) -> str {
     walk.close(pd)
     if input < 0 { walk.close(bd); return "backup-open {o.path}" }
     let out = fs_open_at(bd.fd, "{o.index}", 20, 384) else |_| { -1 }
-    if out < 0 { fs_close(input) else |_| {}; walk.close(bd); return "backup-create {o.index}" }
+    if out < 0 {
+        fs_close(input) else |_| {}
+        walk.close(bd)
+        return "backup-create {o.index}"
+    }
     var e = ""
     let h = walk.copy_fd(input, out, o.old.length)
     if h != o.old.sha256 { e = "live-changed {o.path}" }
@@ -1137,7 +1245,9 @@ fn restore(c: Ctx, t: str, o: intent.Op) -> str {
     let w = o.old
     if w.kind == "absent" {
         if live.kind == "dir" {
-            fs_remove_dir_at(pd.fd, name) else |_| { e = "rescue-unknown-state {o.path} (directory not empty)" }
+            fs_remove_dir_at(pd.fd, name) else |_| {
+                e = "rescue-unknown-state {o.path} (directory not empty)"
+            }
         } else if live.kind != "absent" {
             fs_remove_at(pd.fd, name) else |_| { e = "remove {o.path}" }
         }
@@ -1170,7 +1280,9 @@ fn restore(c: Ctx, t: str, o: intent.Op) -> str {
             if input < 0 || out < 0 {
                 e = "rescue-missing-backup {o.path}"
             } else {
-                if walk.copy_fd(input, out, w.length) != w.sha256 { e = "rescue-missing-backup {o.path}" }
+                if walk.copy_fd(input, out, w.length) != w.sha256 {
+                    e = "rescue-missing-backup {o.path}"
+                }
                 if e == "" { e = set_meta(c, out, w) }
                 if e == "" { fs_sync(out) else |_| { e = "sync {o.path}" } }
             }
@@ -1193,7 +1305,9 @@ fn relink(c: Ctx, t: str, o: intent.Op) -> str {
     let tmp = ".larder-{t}-u{o.index}"
     remove_name(pd, tmp)
     var e = ""
-    fs_link_at(sd.fd, walk.base_of(o.old.target), pd.fd, tmp, false) else |_| { e = "link {o.path}" }
+    fs_link_at(sd.fd, walk.base_of(o.old.target), pd.fd, tmp, false) else |_| {
+        e = "link {o.path}"
+    }
     walk.close(sd)
     if e == "" { e = walk.rename(c.root, pd, tmp, walk.base_of(o.path)) }
     if e == "" { e = walk.sync(pd) }
@@ -1272,14 +1386,43 @@ fn rollback(c: Ctx, t: str, to: int, durable: bool, error: str) -> Done {
     } else {
         e = discard(c, t, to, "rescue:")
     }
-    if e != "" { return Done { generation: -1, error: "{error}; rollback refused: {e}; run lrd rescue" } }
+    if e != "" {
+        return Done { generation: -1, error: "{error}; rollback refused: {e}; run lrd rescue" }
+    }
     Done { generation: -1, error: "{error}; rolled back" }
+}
+
+/// Space and inodes for backups, staged payloads, new files and the records, with
+/// 1 MiB of headroom; refused before the first durable step (pm00 R-pm00-10).
+fn capacity(c: Ctx, p: Plan) -> str {
+    var bytes = 1048576
+    var inodes = 16
+    for o in p.ops {
+        if o.backup { bytes += o.old.length; inodes += 1 }
+        if o.action == "put" || o.action == "mkdir" || o.action == "link" {
+            bytes += o.new.length
+            inodes += 1
+        }
+    }
+    for pkg in p.stage { bytes += pkg.payload_length; inodes += pkg.recs.len + 1 }
+    let sf = fs_statfs(c.root.path) else |_| { return "no-space: statfs refused" }
+    let available = sf[5] * sf[2]
+    if sf[0] / 32 % 2 == 1 && bytes > available {
+        return "no-space: need {bytes} bytes, {available} available"
+    }
+    if sf[0] / 128 % 2 == 1 && inodes > sf[7] {
+        return "no-space: need {inodes} inodes, {sf[7]} free"
+    }
+    ""
 }
 
 /// Take every durable step of section 2 for plan p from generation from.
 pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     let to = from + 1
     let t = "t{to}"
+    var room = capacity(c, p)
+    room = step(c, "capacity", "", room)
+    if room != "" { return Done { generation: -1, error: room } }
     let all = walk.dir(c.root, "{state()}/transactions")
     if all.error != "" { return Done { generation: -1, error: all.error } }
     var e = mkdir_in(all, t)
@@ -1368,7 +1511,8 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     e = step(c, "generation", "", e)
     if e != "" { return rollback(c, t, to, true, e) }
     // The commit decision.
-    let record = db.render_current(db.Current { generation: to, database: it.database, transaction: t, error: "" })
+    let record = db.render_current(db.
+        Current { generation: to, database: it.database, transaction: t, error: "" })
     let sdir = walk.dir(c.root, state())
     if sdir.error != "" { return rollback(c, t, to, true, sdir.error) }
     e = write_new(sdir, "current.{t}", record.bytes(), 384)
@@ -1379,14 +1523,27 @@ pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     let renamed = hook(c, "commit-renamed", "")
     if renamed != "" {
         walk.close(sdir)
-        return Done { generation: to, error: "commit-renamed: {renamed}; committed generation {to}; run lrd rescue to finish" }
+        return Done {
+            generation: to,
+            error: "commit-renamed: {renamed}; committed generation {to}; run lrd rescue to finish",
+        }
     }
     e = walk.sync(sdir)
     walk.close(sdir)
     e = step(c, "commit", "", e)
-    if e != "" { return Done { generation: to, error: "{e}; committed generation {to}; run lrd rescue to finish" } }
+    if e != "" {
+        return Done {
+            generation: to,
+            error: "{e}; committed generation {to}; run lrd rescue to finish",
+        }
+    }
     e = cleanup(c, t, "")
-    if e != "" { return Done { generation: to, error: "{e}; committed generation {to}; run lrd rescue to finish" } }
+    if e != "" {
+        return Done {
+            generation: to,
+            error: "{e}; committed generation {to}; run lrd rescue to finish",
+        }
+    }
     e = step(c, "done", "", "")
     if e != "" { return Done { generation: to, error: "{e}; committed generation {to}" } }
     Done { generation: to, error: "" }
