@@ -951,7 +951,8 @@ def state_race(r):
 def unqualified(r):
     target = os.environ.get('LARDER_UNQUALIFIED_ROOT', '')
     if not target:
-        print('SKIP fs-unqualified-refused reason=no tmpfs root offered (set LARDER_UNQUALIFIED_ROOT; the container take mounts one)')
+        # The gauntlet prints the column-0 SKIP for this row; inside a step it would read as a nested SKIP.
+        print('  skipped fs-unqualified-refused: no LARDER_UNQUALIFIED_ROOT (the container take mounts a tmpfs)')
         return
     root = Path(target) / 'root'
     root.mkdir()
