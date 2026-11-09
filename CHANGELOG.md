@@ -28,3 +28,18 @@
   crash at every hook, a crash during rescue, injected EIO and ENOSPC, ancestor
   races, lock contention and owner death. The check is that the root reaches the
   old or the new generation, recovered twice identically.
+- Add the power-cut witness (pm04b, TRANSACTIONS X11). An NBD recorder logs the
+  guest's block writes and flushes, and crash states are synthesized at and
+  between every durable step, with torn sectors. On ext4 and ext3 in a KVM
+  guest, each state must recover to the old or the new generation, twice
+  identically and fsck-clean. The witness also covers real EIO and ENOSPC, two
+  writers, the ext2 refusal and the transaction rows run in the guest.
+- Undo removes the intent first, durably. A power cut during an undo's cleanup
+  could leave the backups gone and the intent in place, and the next rescue then
+  refused `rescue-missing-backup`.
+- A real full disk or I/O error names its reason (`no-space`, `io`). Before
+  this, a failed copy read as `live-changed`, `content` or
+  `rescue-missing-backup`.
+- `fetch-toolchain` retries a release download with a growing backoff, for up
+  to 10 minutes. The container step warms its image, uncapped, before the capped
+  run.

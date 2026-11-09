@@ -129,6 +129,9 @@ read-only. Only `rescue` acts (R-pm04-3):
     target, recorded directory metadata, or by removal);
   - relinks hard links to their restored sources;
   - verifies every path is old again;
+  - removes the intent first, with t<N> fsynced (`rescue:cleanup:intent`), so a
+    power cut from here on leaves a t<N> without an intent, which rescue
+    discards;
   - removes the uncommitted generation, `current.t<N>` and t<N>.
 
   It prints `rescue: undone t<N>`.
@@ -168,6 +171,10 @@ The shipped `larder` passes an inert hook set. The test-only `larder-failpoint`
 - `NAME:eio` and `NAME:enospc` fail the step at NAME with `io` or `no-space`.
 - `NAME:pause` prints `PAUSED NAME` and waits on `LARDER_FAILPOINT_FIFO`. The
   word `crash` there traps.
+- `mark` writes one 512-byte record, `MARK <name> [detail]`, at offset 0 of
+  `LARDER_FAILPOINT_MARK` at every hook. It fsyncs the record and prints it on
+  stderr. On a block device served by the power-cut recorder (X11), each record
+  is logged in order with the data writes.
 
 ## X9 — Ownership, configuration and removal
 
@@ -216,3 +223,59 @@ The same check covers:
 - injected EIO and ENOSPC;
 - ancestor swaps at each walk and temp step;
 - concurrent writers and lock-owner death.
+
+A failed write or sync names the host's reason when an operator can act on it:
+`write PATH: no-space`, `sync PATH: io`, `backup-write <i>: no-space`, and
+`restore-write PATH: no-space` from an undo. The injected rows name the same
+words.
+
+## X11 — The power-cut witness
+
+`tools/check-powercut --vm` runs on Linux with KVM and the staged Ubuntu 24.04
+guest. It cuts the power at every durable step and checks what the disk holds.
+
+- **The recorder.** `tools/nbd-recorder` is written from the NBD protocol
+  specification. The guest's data disk is its export, and the mark device is a
+  second export. Every request on both is logged in arrival order: each write's
+  offset, length and bytes, each flush, and the FUA flag.
+- **Crash states.** For a cut at a log position, `tools/powercut-synth` keeps:
+  - every write a flush before the cut covers, and every FUA write;
+  - a chosen subset of the rest, each write whole or torn after a whole number
+    of 512-byte sectors.
+
+  The marks split each scenario into one window per step. Each window yields
+  these states:
+  - `before`: the durable state at the previous mark;
+  - `after`: the durable state at this step's mark;
+  - `after-all`: everything the step wrote;
+  - `flushes`: the state at each flush inside the window;
+  - `subsets`: four seeded subsets of one epoch's unflushed writes.
+- **Scenarios.** Each runs on ext4 and on ext3, both mounted
+  `data=ordered,noauto_da_alloc`:
+  - install, upgrade and remove;
+  - a rescue that undoes a crashed remove;
+  - a rescue that finishes a committed upgrade;
+  - two writers, cut while the owner holds the lock.
+- **The check.** The guest rebuilds every state on a loop device, which replays
+  the journal. It then runs `rescue` twice, remounts, and runs `e2fsck -fn`. A
+  state passes when:
+  - both rescues exit 0 and the second says `nothing to do`;
+  - the three digests agree;
+  - `verify` passes;
+  - no transaction or temporary remains;
+  - fsck is clean;
+  - the digest is the old one in every window through `commit-written`, the new
+    one from `commit`'s own state on, and either in between.
+- **EIO.** The recorder fails the first write, then in a separate run the first
+  flush, after the mark that precedes `backup:0`, `intent-written`,
+  `apply:0:temp`, `generation` or `commit-written` in an upgrade, and
+  `rescue:undo:0` in a rescue. The verb must exit nonzero, naming the error. The
+  disk, preened as a boot would, must recover to the old tree twice.
+- **ENOSPC.** A 32 MiB disk is filled while the upgrade pauses at `backup:0`,
+  `apply:0:temp` or `generation`. The upgrade must exit 1 naming `no-space`. With
+  the filler gone, rescue twice must give the old tree. The capacity check
+  refuses a nearly full disk before any write.
+- **Qualification.** ext2, and ext4 without a journal, refuse
+  `unqualified-filesystem`.
+- **The matrix.** `tools/check-transactions --all` runs as root in the guest on
+  each filesystem.
