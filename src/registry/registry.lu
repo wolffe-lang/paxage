@@ -1,0 +1,39 @@
+//! The compiled action registry (X7, R-pm04-9). Account ids are allocated here
+//! centrally and never reused; a package names an entry, never an id or a path.
+//! Test entries only until a signed registry target exists.
+
+/// A declared system account and its primary group.
+pub struct Account { name: str, uid: int, gid: int, gecos: str, home: str, shell: str, error: str }
+
+/// An owned directory an action creates.
+pub struct Directory { name: str, path: str, mode: int, uid: int, gid: int, error: str }
+
+/// The account registered under name, or error unknown-action.
+pub fn account(name: str) -> Account {
+    if name == "pm04-daemon" {
+        return Account {
+            name,
+            uid: 901,
+            gid: 901,
+            gecos: "larder test daemon",
+            home: "/var/spool/pm04",
+            shell: "/usr/sbin/nologin",
+            error: "",
+        }
+    }
+    Account { name, uid: 0, gid: 0, gecos: "", home: "", shell: "", error: "unknown-action account {name}" }
+}
+
+/// The directory registered under name, or error unknown-action.
+pub fn directory(name: str) -> Directory {
+    if name == "pm04-spool" {
+        return Directory { name, path: "var/spool/pm04", mode: 488, uid: 901, gid: 901, error: "" }
+    }
+    Directory { name, path: "", mode: 0, uid: 0, gid: 0, error: "unknown-action directory {name}" }
+}
+
+/// Whether a cache rebuild named name is registered. Caches are recorded pending, never run.
+pub fn cache(name: str) -> str {
+    if name == "pm04-index" { return "" }
+    "unknown-action cache {name}"
+}
