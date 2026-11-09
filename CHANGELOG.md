@@ -5,7 +5,7 @@
 - Specify immutable package targets, strict literals, recipes and version v1.
 - Add standalone bounded manifest parser and exact-byte std SHA-256.
 - Add complete bounded resolver and independent checker for immutable snapshots.
-- Add read-only larder / lrd CLI with pm04 mutation refusals.
+- Add read-only paxage / pxg CLI with pm04 mutation refusals.
 - Gate formatting, build, unit properties and CLI fixtures on Linux x86-64 and
   macOS arm64.
 - Add canonical restricted pax packing, strict streaming payload inspection and
@@ -43,3 +43,8 @@
 - `fetch-toolchain` retries a release download with a growing backoff, for up
   to 10 minutes. The container step warms its image, uncapped, before the capped
   run.
+- Rename the package manager paxage (`pxg`), formerly larder (`lrd`), on 2026-11-09.
+  The executables, the `paxage:` prefix, `ROOT/var/lib/paxage/`, `ROOT/var/cache/paxage/`,
+  the reserved `/etc/paxage/`, `.paxage-new`, the intent header, the `.pxg` data files
+  and the `PAXAGE_*` variables follow. No former name is accepted as an alias, and
+  nothing migrates: nothing was ever installed under the former paths.
