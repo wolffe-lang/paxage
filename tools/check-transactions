@@ -29,9 +29,28 @@ ZERO = '0' * 64
 CRASH_EXIT = 134  # the failpoint crash is a runtime trap (assert), never an exit call
 EXCLUDED = ('var/lib/larder/trust', 'var/cache/larder')
 PRIVILEGED = os.geteuid() == 0
-# pm03 refuses test-only signing as root, so a privileged take publishes its
-# fixture repository as this unprivileged uid and uses root only for root verbs.
-FIXTURE_UID = int(os.environ.get('LARDER_FIXTURE_UID', '65534'))
+
+
+def fixture_identity():
+    """The unprivileged identity that publishes the fixture repository in a root take
+    (pm03 refuses test-only signing as root; root runs only the root verbs). It is the
+    checkout's owner, who can always reach the checkout: a GitHub runner keeps it under a
+    0750 home that nobody else may search, so a fixed uid like 65534 cannot exec the
+    binary there. A root-owned checkout (the container take's copy) falls back to sudo's
+    caller, then to 65534. LARDER_FIXTURE_UID overrides."""
+    if os.environ.get('LARDER_FIXTURE_UID', '').isdigit():
+        uid = int(os.environ['LARDER_FIXTURE_UID'])
+        return uid, uid
+    st = ROOT.stat()
+    if st.st_uid != 0:
+        return st.st_uid, st.st_gid
+    sudo_uid, sudo_gid = os.environ.get('SUDO_UID', ''), os.environ.get('SUDO_GID', '')
+    if sudo_uid.isdigit() and int(sudo_uid) != 0:
+        return int(sudo_uid), int(sudo_gid) if sudo_gid.isdigit() else int(sudo_uid)
+    return 65534, 65534
+
+
+FIXTURE_UID, FIXTURE_GID = fixture_identity()
 
 FAILED = []
 KEEP_GOING = False
@@ -77,14 +96,14 @@ def no_core():
 def as_fixture():
     no_core()
     os.setgroups([])
-    os.setgid(FIXTURE_UID)
+    os.setgid(FIXTURE_GID)
     os.setuid(FIXTURE_UID)
 
 
 def fixture_dir(path):
     path.mkdir(parents=True, mode=0o700)
     if PRIVILEGED:
-        os.chown(path, FIXTURE_UID, FIXTURE_UID)
+        os.chown(path, FIXTURE_UID, FIXTURE_GID)
     return path
 
 
@@ -242,10 +261,10 @@ class Package:
         tpath.write_text(template)
         if PRIVILEGED:
             for top in (src, out, buildinfo, tpath):
-                os.lchown(top, FIXTURE_UID, FIXTURE_UID)
+                os.lchown(top, FIXTURE_UID, FIXTURE_GID)
                 for dirpath, dirnames, filenames in os.walk(top):
                     for n in dirnames + filenames:
-                        os.lchown(os.path.join(dirpath, n), FIXTURE_UID, FIXTURE_UID)
+                        os.lchown(os.path.join(dirpath, n), FIXTURE_UID, FIXTURE_GID)
         p = lrd('pack', src, tpath, out, '--epoch', '100', fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-pack-{self.name}-{self.version} {describe(p)}')
@@ -289,6 +308,14 @@ class Repo:
         self.built = {}
 
     def setup(self):
+        if PRIVILEGED:
+            try:
+                reach = lrd('version', fixture=True)
+            except PermissionError as e:
+                raise SystemExit(f'FAIL fixture-identity-reach uid={FIXTURE_UID} cannot exec {BIN}: {e}')
+            if reach.returncode != 0:
+                raise SystemExit(f'FAIL fixture-identity-reach uid={FIXTURE_UID} {describe(reach)}')
+            print(f'transactions: fixture published as uid={FIXTURE_UID} gid={FIXTURE_GID}', flush=True)
         p = lrd('repo', 'keygen', '--keys', self.keys, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-keygen {describe(p)}')
