@@ -1,0 +1,997 @@
+#!/usr/bin/env python3
+"""X-clause transaction rows over the real CLI (pm04, docs/TRANSACTIONS.md).
+
+Every row drives target/bin/larder (or the test-only larder-failpoint) against a
+synthetic root under target/transactions; nothing outside that directory is
+written, and a sentinel tree outside every root is digested before and after.
+Run as container root for the ownership rows, as a plain user for the logical
+rows. --all keeps going after a FAIL so a red take names every red row.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / 'target/bin/larder'
+FPBIN = ROOT / 'target/bin/larder-failpoint'
+WORK = ROOT / 'target/transactions'
+NOW = '2026-11-09T00:00:00Z'
+ARCH, SLOT = 'x86_64', 'default'
+ZERO = '0' * 64
+CRASH_EXIT = 99
+EXCLUDED = ('var/lib/larder/trust', 'var/cache/larder')
+PRIVILEGED = os.geteuid() == 0
+
+FAILED = []
+KEEP_GOING = False
+
+
+class RowFailed(Exception):
+    pass
+
+
+def emit(ok, row, detail=''):
+    if ok:
+        print(f'PASS {row}', flush=True)
+        return True
+    line = f'FAIL {row}' + (f' {detail}' if detail else '')
+    print(line, flush=True)
+    FAILED.append(row)
+    if not KEEP_GOING:
+        raise SystemExit(1)
+    raise RowFailed(row)
+
+
+def check(ok, row, detail=''):
+    return emit(bool(ok), row, detail)
+
+
+def lrd(*args, binary=None, env=None, timeout=120):
+    exe = binary or BIN
+    if not Path(exe).exists():
+        return subprocess.CompletedProcess([str(exe)], 127, '', f'missing executable {exe}')
+    full_env = dict(os.environ)
+    full_env.pop('LARDER_FAILPOINT', None)
+    if env:
+        full_env.update(env)
+    return subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True,
+                          timeout=timeout, env=full_env)
+
+
+def describe(p):
+    return f'exit={p.returncode} stdout={p.stdout[-400:]!r} stderr={p.stderr[-400:]!r}'
+
+
+def ok(p, row, last=None):
+    good = p.returncode == 0
+    if good and last is not None:
+        good = p.stdout.splitlines()[-1:] == [last]
+    return check(good, row, '' if good else describe(p))
+
+
+def refused(p, row, code, needle):
+    good = p.returncode == code and needle in p.stderr
+    return check(good, row, '' if good else f'want exit={code} {needle!r}; ' + describe(p))
+
+
+# ---------------------------------------------------------------- tree digests
+
+def entries(root):
+    root = Path(root)
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        rel_dir = os.path.relpath(dirpath, root)
+        for name in sorted(dirnames + filenames):
+            rel = name if rel_dir == '.' else f'{rel_dir}/{name}'
+            if any(rel == e or rel.startswith(e + '/') for e in EXCLUDED):
+                continue
+            out.append(rel)
+        dirnames[:] = [d for d in dirnames
+                       if not any((d if rel_dir == '.' else f'{rel_dir}/{d}') == e for e in EXCLUDED)]
+    return sorted(out, key=lambda s: s.encode())
+
+
+def tree_digest(root):
+    """Section 5's digest: path, type, mode, owner, length, content or target,
+    hardlink class. Times are excluded; trust/ and the cache are excluded."""
+    root = Path(root)
+    h = hashlib.sha256()
+    first = {}
+    for rel in entries(root):
+        p = root / rel
+        st = os.lstat(p)
+        if stat.S_ISDIR(st.st_mode):
+            kind, body = 'dir', ''
+        elif stat.S_ISLNK(st.st_mode):
+            kind, body = 'symlink', os.readlink(p)
+        elif stat.S_ISREG(st.st_mode):
+            kind, body = 'file', hashlib.sha256(p.read_bytes()).hexdigest()
+        else:
+            kind, body = 'other', ''
+        link = ''
+        if kind == 'file' and st.st_nlink > 1:
+            link = first.setdefault((st.st_dev, st.st_ino), rel)
+        owner = f'{st.st_uid}:{st.st_gid}' if PRIVILEGED else 'logical'
+        h.update(f'{rel}\0{kind}\0{stat.S_IMODE(st.st_mode):o}\0{owner}\0{st.st_size}\0{body}\0{link}\n'.encode())
+    return h.hexdigest()
+
+
+def clone(src, dst):
+    """Copy a root preserving types, modes, owners (when privileged) and hardlinks."""
+    src, dst = Path(src), Path(dst)
+    seen = {}
+    dst.mkdir()
+    shutil.copymode(src, dst)
+    for rel in entries(src) + [e for e in _excluded_entries(src)]:
+        s, d = src / rel, dst / rel
+        st = os.lstat(s)
+        if stat.S_ISDIR(st.st_mode):
+            d.mkdir()
+        elif stat.S_ISLNK(st.st_mode):
+            os.symlink(os.readlink(s), d)
+        elif stat.S_ISREG(st.st_mode):
+            key = (st.st_dev, st.st_ino)
+            if st.st_nlink > 1 and key in seen:
+                os.link(seen[key], d)
+                continue
+            shutil.copyfile(s, d, follow_symlinks=False)
+            seen[key] = d
+        if PRIVILEGED:
+            os.lchown(d, st.st_uid, st.st_gid)
+        if not stat.S_ISLNK(st.st_mode):
+            os.chmod(d, stat.S_IMODE(st.st_mode))
+    for rel in reversed(entries(src)):
+        s, d = src / rel, dst / rel
+        if os.path.isdir(s) and not os.path.islink(s):
+            os.chmod(d, stat.S_IMODE(os.lstat(s).st_mode))
+
+
+def _excluded_entries(root):
+    out = []
+    for e in EXCLUDED:
+        base = Path(root) / e
+        if not base.exists():
+            continue
+        out.append(e)
+        for dirpath, dirnames, filenames in os.walk(base):
+            for name in sorted(dirnames + filenames):
+                out.append(os.path.relpath(os.path.join(dirpath, name), root))
+    return sorted(set(out), key=lambda s: (s.count('/'), s.encode()))
+
+
+# ---------------------------------------------------------------- fixtures
+
+def dep(name, op='any', version=''):
+    return f'dep {{ name: "{name}", op: "{op}", version: "{version}", arch: "{ARCH}", slot: "{SLOT}" }}'
+
+
+class Package:
+    def __init__(self, name, version, files, requires=(), configs=(), actions=(), provides=()):
+        self.name, self.version = name, version
+        self.files = files            # path -> ('file', mode, bytes) | ('dir', mode) | ('symlink', target) | ('hardlink', path)
+        self.requires, self.configs, self.actions, self.provides = requires, configs, actions, provides
+
+    def build(self, work):
+        src = work / f'src-{self.name}-{self.version}'
+        out = work / f'pack-{self.name}-{self.version}'
+        src.mkdir(parents=True)
+        out.mkdir()
+        dirs = sorted({str(Path(p).parent) for p in self.files if str(Path(p).parent) != '.'} |
+                      {p for p, v in self.files.items() if v[0] == 'dir'}, key=lambda s: (s.count('/'), s))
+        for d in dirs:
+            (src / d).mkdir(parents=True, exist_ok=True)
+        for p, v in sorted(self.files.items()):
+            if v[0] == 'file':
+                (src / p).write_bytes(v[2])
+                os.chmod(src / p, v[1])
+        for p, v in sorted(self.files.items()):
+            if v[0] == 'symlink':
+                os.symlink(v[1], src / p)
+            elif v[0] == 'hardlink':
+                os.link(src / v[1], src / p)
+        for d in sorted(dirs, key=lambda s: -s.count('/')):
+            mode = self.files.get(d, ('dir', 0o755))[1]
+            os.chmod(src / d, mode)
+        buildinfo = work / f'{self.name}-{self.version}.buildinfo'
+        buildinfo.write_text(f'buildinfo {{ test_only: true, name: "{self.name}", version: "{self.version}" }}\n')
+        records = ', '.join(
+            f'file {{ path: "{c}", type: "file", mode: 420, owner: 0, group: 0, length: 0, sha256: "{ZERO}", target: "" }}'
+            for c in self.configs)
+        provides = ', '.join(f'provide {{ name: "{n}", version: "{v}" }}' for n, v in self.provides)
+        actions = ', '.join(f'action {{ kind: "{k}", name: "{n}", version: 1 }}' for k, n in self.actions)
+        configs = ', '.join(f'"{c}"' for c in self.configs)
+        template = (
+            f'manifest {{ schema: 1, features: [], name: "{self.name}", version: "{self.version}", '
+            f'arch: "{ARCH}", slot: "{SLOT}", license: "GPL-3.0-or-later", '
+            f'sources: [source {{ name: "source", sha256: "{ZERO}", length: 0 }}], '
+            f'buildinfo: "{hashlib.sha256(buildinfo.read_bytes()).hexdigest()}", installed_bytes: 0, '
+            f'installed_inodes: 0, requires: [{", ".join(self.requires)}], optional: [], '
+            f'provides: [{provides}], conflicts: [], replaces: [], files: [{records}], '
+            f'configs: [{configs}], actions: [{actions}] }}\n')
+        tpath = work / f'{self.name}-{self.version}.template'
+        tpath.write_text(template)
+        p = lrd('pack', src, tpath, out, '--epoch', '100')
+        if p.returncode != 0:
+            raise SystemExit(f'FAIL fixture-pack-{self.name}-{self.version} {describe(p)}')
+        return out / f'{self.name}-{self.version}.manifest', buildinfo
+
+
+def alpha(version):
+    one = version in ('1-1', '1-2')
+    files = {
+        'usr': ('dir', 0o755), 'usr/bin': ('dir', 0o755), 'usr/share': ('dir', 0o755),
+        'usr/share/alpha': ('dir', 0o755), 'etc': ('dir', 0o755),
+        'usr/bin/alpha': ('file', 0o755, {'1-1': b'alpha 1\n', '1-2': b'alpha 1.2\n'}.get(version, b'alpha 2\n')),
+        'usr/bin/al': ('symlink', 'alpha'),
+        'usr/share/alpha/data': ('file', 0o644, b'data 1\n' if one else b'data 2\n'),
+        'usr/share/alpha/data.link': ('hardlink', 'usr/share/alpha/data'),
+        'etc/alpha.conf': ('file', 0o644, b'setting=1\n' if one else b'setting=2\n'),
+    }
+    if version == '1-1':
+        files['usr/share/alpha/old'] = ('file', 0o644, b'old\n')
+    else:
+        files['usr/share/alpha/new'] = ('file', 0o644, b'new\n')
+    return Package('alpha', version, files, configs=['etc/alpha.conf'],
+                   actions=[('account', 'pm04-daemon'), ('directory', 'pm04-spool'), ('cache', 'pm04-index')])
+
+
+def simple(name, version='1-1', requires=(), path=None, body=None):
+    path = path or f'usr/share/{name}/{name}'
+    files = {'usr': ('dir', 0o755), 'usr/share': ('dir', 0o755), str(Path(path).parent): ('dir', 0o755),
+             path: ('file', 0o644, body or f'{name} {version}\n'.encode())}
+    return Package(name, version, files, requires=requires)
+
+
+class Repo:
+    def __init__(self, work):
+        self.work = work
+        self.keys = work / 'test-only-keys'
+        self.repo = work / 'repo'
+        self.url = self.repo.as_uri()
+        self.pinned = work / 'pinned-root.json'
+        self.version = 0
+        self.built = {}
+
+    def setup(self):
+        p = lrd('repo', 'keygen', '--keys', self.keys, '--now', NOW)
+        if p.returncode != 0:
+            raise SystemExit(f'FAIL fixture-keygen {describe(p)}')
+        p = lrd('repo', 'init', '--repo', self.url, '--keys', self.keys, '--now', NOW)
+        if p.returncode != 0:
+            raise SystemExit(f'FAIL fixture-repo-init {describe(p)}')
+        shutil.copyfile(self.repo / 'metadata/1.root.json', self.pinned)
+
+    def publish(self, packages):
+        self.version += 1
+        args = []
+        for pkg in packages:
+            key = (pkg.name, pkg.version)
+            if key not in self.built:
+                self.built[key] = pkg.build(self.work / 'packages')
+            manifest, buildinfo = self.built[key]
+            args += ['--manifest', manifest, '--buildinfo', buildinfo]
+        p = lrd('repo', 'publish', '--repo', self.url, '--keys', self.keys, '--version', str(self.version),
+                *args, '--now', NOW)
+        if p.returncode != 0:
+            raise SystemExit(f'FAIL fixture-publish-{self.version} {describe(p)}')
+
+
+def universe(upgraded=False, alphas=None):
+    alphas = alphas or (['2-1', '1-1'] if upgraded else ['1-1'])
+    pkgs = [alpha(v) for v in alphas] + [simple('beta', requires=[dep('alpha')]),
+            simple('omega', path='usr/bin/alpha', body=b'omega\n'),
+            simple('app', requires=[dep('gamma')]), simple('gamma', requires=[dep('delta')]),
+            simple('delta', requires=[dep('gamma')]), simple('lone')]
+    return pkgs
+
+
+# ---------------------------------------------------------------- roots
+
+class Roots:
+    def __init__(self, repo):
+        self.repo = repo
+        self.count = 0
+        self.outside = WORK / 'outside'
+
+    def fresh(self, label):
+        self.count += 1
+        root = WORK / 'roots' / f'{self.count:04d}-{label}'
+        root.mkdir(parents=True, mode=0o755)
+        return root
+
+    def init(self, label):
+        root = self.fresh(label)
+        p = lrd('init', '--root', root, '--repo', self.repo.url, '--pinned-root', self.repo.pinned,
+                '--arch', ARCH, '--slot', SLOT, '--now', NOW)
+        return root, p
+
+    def ready(self, label, *installs):
+        root, p = self.init(label)
+        if p.returncode != 0:
+            raise_setup(label, 'init', p)
+        for spec in installs:
+            q = lrd('install', '--root', root, *spec.split(), '--now', NOW)
+            if q.returncode != 0:
+                raise_setup(label, f'install {spec}', q)
+        return root
+
+    def copy(self, base, label):
+        self.count += 1
+        dst = WORK / 'roots' / f'{self.count:04d}-{label}'
+        clone(base, dst)
+        return dst
+
+
+def raise_setup(row, what, p):
+    emit(False, row, f'setup {what}: {describe(p)}')
+
+
+def status(root):
+    p = lrd('status', '--root', root, '--json')
+    if p.returncode != 0:
+        return None
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        return None
+
+
+def installed(root):
+    s = status(root) or {}
+    return {pkg['name']: (pkg['version'], pkg['reason']) for pkg in s.get('packages', [])}
+
+
+def outside_digest(roots):
+    return tree_digest(roots.outside)
+
+
+# ---------------------------------------------------------------- rows
+
+ROWS = []
+
+
+def row(name):
+    def wrap(fn):
+        ROWS.append((name, fn))
+        return fn
+    return wrap
+
+
+@row('init-root')
+def init_root(r):
+    root, p = r.init('init-root')
+    ok(p, 'init-root', last='init ok')
+    state = root / 'var/lib/larder'
+    check(stat.S_IMODE(os.lstat(state).st_mode) == 0o700 and (state / 'lock').is_file()
+          and (state / 'current').is_file(), 'init-root-layout')
+    s = status(root)
+    check(s is not None and s.get('generation') == 0 and s.get('packages') == [] and s.get('pending') == '',
+          'status-generation-zero', json.dumps(s))
+    again = lrd('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
+                '--arch', ARCH, '--slot', SLOT, '--now', NOW)
+    refused(again, 'init-refuses-existing-state', 1, 'state-exists')
+
+
+@row('live-root-refused')
+def live_root(r):
+    p = lrd('install', '--root', '/', 'alpha', '--now', NOW)
+    refused(p, 'live-root-refused', 1, 'live-root-is-pm05')
+
+
+@row('lock-persistent-inode')
+def lock_inode(r):
+    root = r.ready('lock-inode')
+    lock = root / 'var/lib/larder/lock'
+    before = os.lstat(lock)
+    ok(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-inode-install')
+    ok(lrd('remove', '--root', root, 'lone'), 'lock-inode-remove')
+    after = os.lstat(lock)
+    check((before.st_dev, before.st_ino) == (after.st_dev, after.st_ino) and after.st_size == 0,
+          'lock-persistent-inode', f'{before.st_ino} -> {after.st_ino} size={after.st_size}')
+
+
+def paused(root, failpoint, *args):
+    fifo = WORK / f'fifo-{os.getpid()}-{time.monotonic_ns()}'
+    os.mkfifo(fifo, 0o600)
+    env = dict(os.environ, LARDER_FAILPOINT=f'{failpoint}:pause', LARDER_FAILPOINT_FIFO=str(fifo))
+    proc = subprocess.Popen([str(FPBIN), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+    deadline = time.monotonic() + 30
+    line = ''
+    while time.monotonic() < deadline:
+        line = proc.stderr.readline()
+        if line.startswith('PAUSED ') or not line:
+            break
+    return proc, fifo, line.strip()
+
+
+def resume(proc, fifo):
+    with open(fifo, 'w') as f:
+        f.write('go\n')
+    out, err = proc.communicate(timeout=120)
+    os.unlink(fifo)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+@row('lock-contention')
+def lock_contention(r):
+    root = r.ready('lock-contention')
+    if not FPBIN.exists():
+        emit(False, 'lock-contention', f'missing {FPBIN}')
+    proc, fifo, line = paused(root, 'lock', 'install', '--root', root, 'lone', '--now', NOW)
+    check(line == 'PAUSED lock', 'lock-contention-paused', line)
+    started = time.monotonic()
+    p = lrd('install', '--root', root, 'beta', '--now', NOW)
+    elapsed = time.monotonic() - started
+    refused(p, 'lock-contention', 7, 'locked')
+    check(elapsed < 5, 'lock-contention-nonblocking', f'{elapsed:.2f}s')
+    refused(lrd('rescue', '--root', root), 'lock-contention-rescue', 7, 'locked')
+    check(status(root) is not None, 'lock-contention-status-read-only')
+    ok(resume(proc, fifo), 'lock-contention-holder-completes')
+    check('lone' in installed(root), 'lock-contention-holder-result')
+
+
+@row('lock-owner-exit')
+def lock_owner_exit(r):
+    root = r.ready('lock-owner-exit')
+    if not FPBIN.exists():
+        emit(False, 'lock-owner-exit', f'missing {FPBIN}')
+    proc, fifo, line = paused(root, 'lock', 'install', '--root', root, 'lone', '--now', NOW)
+    check(line == 'PAUSED lock', 'lock-owner-exit-paused', line)
+    proc.send_signal(signal.SIGKILL)
+    proc.wait(timeout=30)
+    os.unlink(fifo)
+    ok(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-owner-exit')
+    check(not any(p.name.startswith('pid') for p in (root / 'var/lib/larder').iterdir()), 'lock-no-pid-file')
+
+
+@row('lock-symlink-refused')
+def lock_symlink(r):
+    root = r.ready('lock-symlink')
+    lock = root / 'var/lib/larder/lock'
+    lock.unlink()
+    os.symlink(r.outside / 'lock-target', lock)
+    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-symlink-refused', 1, 'lock-inode')
+    check(not (r.outside / 'lock-target').exists(), 'lock-symlink-target-untouched')
+
+
+@row('lock-missing-refused')
+def lock_missing(r):
+    root = r.ready('lock-missing')
+    (root / 'var/lib/larder/lock').unlink()
+    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-missing-refused', 1, 'lock-missing')
+    check(not (root / 'var/lib/larder/lock').exists(), 'lock-missing-not-recreated')
+
+
+@row('install-explicit')
+def install_explicit(r):
+    root = r.ready('install')
+    before = outside_digest(r)
+    p = lrd('install', '--root', root, 'alpha', '--now', NOW)
+    ok(p, 'install-explicit', last='install ok generation=1')
+    check(installed(root) == {'alpha': ('1-1', 'explicit')}, 'install-explicit-database', json.dumps(status(root)))
+    check((root / 'usr/bin/alpha').read_bytes() == b'alpha 1\n'
+          and stat.S_IMODE(os.lstat(root / 'usr/bin/alpha').st_mode) == 0o755
+          and os.readlink(root / 'usr/bin/al') == 'alpha'
+          and os.lstat(root / 'usr/share/alpha/data').st_ino == os.lstat(root / 'usr/share/alpha/data.link').st_ino,
+          'install-tree-identity')
+    if PRIVILEGED:
+        check(all(os.lstat(root / f).st_uid == 0 for f in ('usr/bin/alpha', 'usr/share/alpha/data')),
+              'install-owner-applied')
+    check(outside_digest(r) == before, 'install-outside-untouched')
+    ok(lrd('verify', '--root', root), 'verify-clean', last='verify ok')
+    check(not list((root / 'var/lib/larder/transactions').iterdir()), 'install-no-transaction-left')
+
+
+@row('install-dependency-reason')
+def install_dependency(r):
+    root = r.ready('install-dependency')
+    ok(lrd('install', '--root', root, 'beta', '--now', NOW), 'install-dependency-reason-run')
+    check(installed(root) == {'alpha': ('1-1', 'dependency'), 'beta': ('1-1', 'explicit')},
+          'install-dependency-reason', json.dumps(status(root)))
+    check((root / 'usr/share').is_dir(), 'install-shared-directory')
+
+
+@row('install-file-conflict')
+def install_conflict(r):
+    root = r.ready('install-conflict', 'alpha')
+    before = tree_digest(root)
+    refused(lrd('install', '--root', root, 'omega', '--now', NOW), 'install-file-conflict', 1,
+            'file-conflict usr/bin/alpha owner=alpha')
+    check(tree_digest(root) == before, 'install-file-conflict-no-writes')
+
+
+@row('install-unowned-collision')
+def install_collision(r):
+    root = r.ready('install-collision')
+    (root / 'usr/share/lone').mkdir(parents=True)
+    (root / 'usr/share/lone/lone').write_bytes(b'mine\n')
+    before = tree_digest(root)
+    refused(lrd('install', '--root', root, 'lone', '--now', NOW), 'install-unowned-collision', 1,
+            'unowned-collision usr/share/lone/lone')
+    check(tree_digest(root) == before, 'install-unowned-collision-no-writes')
+
+
+@row('install-account')
+def install_account(r):
+    root = r.ready('install-account', 'alpha')
+    passwd = (root / 'etc/passwd').read_text().splitlines()
+    group = (root / 'etc/group').read_text().splitlines()
+    check(any(l.startswith('pm04-daemon:x:901:901:') for l in passwd)
+          and any(l.startswith('pm04-daemon:x:901:') for l in group), 'install-account', repr((passwd, group)))
+    spool = root / 'var/spool/pm04'
+    check(spool.is_dir() and stat.S_IMODE(os.lstat(spool).st_mode) == 0o750
+          and (not PRIVILEGED or os.lstat(spool).st_uid == 901), 'install-directory-action')
+    s = status(root) or {}
+    check(any(a.get('name') == 'pm04-index' for a in s.get('pending_actions', [])), 'install-cache-pending',
+          json.dumps(s))
+
+
+@row('install-account-conflict')
+def install_account_conflict(r):
+    root = r.ready('install-account-conflict')
+    (root / 'etc').mkdir(exist_ok=True)
+    (root / 'etc/passwd').write_text('pm04-daemon:x:555:555::/:/bin/false\n')
+    before = tree_digest(root)
+    refused(lrd('install', '--root', root, 'alpha', '--now', NOW), 'install-account-conflict', 1,
+            'account-conflict pm04-daemon')
+    check(tree_digest(root) == before, 'install-account-conflict-no-writes')
+
+
+@row('install-noop')
+def install_noop(r):
+    root = r.ready('install-noop', 'alpha')
+    before = tree_digest(root)
+    ok(lrd('install', '--root', root, 'alpha', '--now', NOW), 'install-noop', last='install ok nothing to do')
+    check(tree_digest(root) == before, 'install-noop-no-writes')
+
+
+@row('dry-run-no-writes')
+def dry_run(r):
+    root = r.ready('dry-run')
+    before = tree_digest(root)
+    p = lrd('install', '--root', root, 'beta', '--now', NOW, '--dry-run')
+    ok(p, 'dry-run-plan')
+    check('install alpha' in p.stdout and 'install beta' in p.stdout, 'dry-run-lists-closure', p.stdout)
+    check(tree_digest(root) == before, 'dry-run-no-writes')
+
+
+def upgraded_root(r, label, local_conf=None, delete_conf=False, proposal=False, alphas=None):
+    root = r.ready(label, 'alpha')
+    conf = root / 'etc/alpha.conf'
+    if local_conf is not None:
+        conf.write_bytes(local_conf)
+    if delete_conf:
+        conf.unlink()
+    if proposal:
+        (root / 'etc/alpha.conf.larder-new').write_bytes(b'mine\n')
+    r.repo.publish(universe(upgraded=True, alphas=alphas))
+    return root
+
+
+@row('upgrade-replace-add-drop')
+def upgrade(r):
+    root = upgraded_root(r, 'upgrade')
+    try:
+        ok(lrd('upgrade', '--root', root, '--now', NOW), 'upgrade-replace-add-drop-run', last='upgrade ok generation=2')
+        check((root / 'usr/bin/alpha').read_bytes() == b'alpha 2\n' and (root / 'usr/share/alpha/new').exists()
+              and not (root / 'usr/share/alpha/old').exists()
+              and os.lstat(root / 'usr/share/alpha/data').st_ino == os.lstat(root / 'usr/share/alpha/data.link').st_ino,
+              'upgrade-replace-add-drop')
+        check(installed(root) == {'alpha': ('2-1', 'explicit')}, 'upgrade-database')
+        check((root / 'etc/alpha.conf').read_bytes() == b'setting=2\n', 'config-local-unchanged-replaced')
+    finally:
+        r.repo.publish(universe())
+
+
+@row('config-upstream-unchanged-kept')
+def config_kept(r):
+    # alpha 1-2 changes the program and keeps the packaged config bytes (N == B).
+    root = upgraded_root(r, 'config-kept', local_conf=b'mine\n', alphas=['1-2', '1-1'])
+    try:
+        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-upstream-unchanged-kept-run')
+        check((root / 'usr/bin/alpha').read_bytes() == b'alpha 1.2\n'
+              and (root / 'etc/alpha.conf').read_bytes() == b'mine\n'
+              and not (root / 'etc/alpha.conf.larder-new').exists(), 'config-upstream-unchanged-kept')
+    finally:
+        r.repo.publish(universe())
+
+
+@row('config-both-changed-proposal')
+def config_proposal(r):
+    root = upgraded_root(r, 'config-proposal', local_conf=b'mine\n')
+    try:
+        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-both-changed-run')
+        check((root / 'etc/alpha.conf').read_bytes() == b'mine\n'
+              and (root / 'etc/alpha.conf.larder-new').read_bytes() == b'setting=2\n', 'config-both-changed-proposal')
+        s = status(root) or {}
+        check(any(x.get('path') == 'etc/alpha.conf.larder-new' for x in s.get('proposals', [])),
+              'config-proposal-recorded', json.dumps(s))
+    finally:
+        r.repo.publish(universe())
+
+
+@row('config-locally-deleted-stays')
+def config_deleted(r):
+    root = upgraded_root(r, 'config-deleted', delete_conf=True)
+    try:
+        ok(lrd('upgrade', '--root', root, '--now', NOW), 'config-locally-deleted-run')
+        check(not (root / 'etc/alpha.conf').exists(), 'config-locally-deleted-stays')
+    finally:
+        r.repo.publish(universe())
+
+
+@row('config-proposal-exists')
+def config_proposal_exists(r):
+    root = upgraded_root(r, 'config-proposal-exists', local_conf=b'mine\n', proposal=True)
+    try:
+        before = tree_digest(root)
+        refused(lrd('upgrade', '--root', root, '--now', NOW), 'config-proposal-exists', 1,
+                'proposal-exists etc/alpha.conf.larder-new')
+        check(tree_digest(root) == before, 'config-proposal-exists-no-writes')
+    finally:
+        r.repo.publish(universe())
+
+
+@row('remove-owned-only')
+def remove_owned(r):
+    root = r.ready('remove-owned', 'alpha', 'lone')
+    (root / 'usr/share/alpha/user-file').write_bytes(b'not packaged\n')
+    ok(lrd('remove', '--root', root, 'alpha'), 'remove-owned-only-run', last='remove ok generation=3')
+    check(not (root / 'usr/bin/alpha').exists() and not (root / 'usr/bin/al').exists()
+          and (root / 'usr/share/alpha/user-file').exists() and (root / 'usr/share/lone/lone').exists()
+          and (root / 'usr/share').is_dir(), 'remove-owned-only')
+    check(installed(root) == {'lone': ('1-1', 'explicit')}, 'remove-database')
+    check('pm04-daemon:x:901' in (root / 'etc/passwd').read_text(), 'remove-account-retained')
+
+
+@row('remove-modified-residual')
+def remove_residual(r):
+    root = r.ready('remove-residual', 'alpha')
+    (root / 'usr/share/alpha/data').write_bytes(b'edited\n')
+    (root / 'etc/alpha.conf').write_bytes(b'mine\n')
+    ok(lrd('remove', '--root', root, 'alpha'), 'remove-modified-run')
+    s = status(root) or {}
+    residuals = {x.get('path') for x in s.get('residuals', [])}
+    check((root / 'usr/share/alpha/data').read_bytes() == b'edited\n' and 'usr/share/alpha/data' in residuals,
+          'remove-modified-residual', json.dumps(s))
+    check((root / 'etc/alpha.conf').read_bytes() == b'mine\n' and 'etc/alpha.conf' in residuals,
+          'remove-config-residual')
+    p = lrd('remove', '--root', root, '--purge', 'alpha')
+    ok(p, 'remove-purge-run')
+    check(not (root / 'etc/alpha.conf').exists() and 'purge etc/alpha.conf' in p.stdout, 'remove-purge', p.stdout)
+
+
+@row('remove-required-refused')
+def remove_required(r):
+    root = r.ready('remove-required', 'beta')
+    before = tree_digest(root)
+    refused(lrd('remove', '--root', root, 'alpha'), 'remove-required-refused', 1, 'required-by beta')
+    check(tree_digest(root) == before, 'remove-required-no-writes')
+
+
+@row('orphan-cycle')
+def orphan_cycle(r):
+    root = r.ready('orphan-cycle', 'app')
+    check(installed(root) == {'app': ('1-1', 'explicit'), 'gamma': ('1-1', 'dependency'),
+                              'delta': ('1-1', 'dependency')}, 'orphan-cycle-setup', json.dumps(status(root)))
+    ok(lrd('remove', '--root', root, 'app'), 'orphan-cycle-remove-root')
+    before = tree_digest(root)
+    p = lrd('autoremove', '--root', root)
+    ok(p, 'orphan-cycle-preview-run')
+    check('orphan delta' in p.stdout and 'orphan gamma' in p.stdout and tree_digest(root) == before,
+          'orphan-cycle-preview', p.stdout)
+    ok(lrd('autoremove', '--root', root, '--yes'), 'orphan-cycle-collected-run')
+    check(installed(root) == {}, 'orphan-cycle-collected', json.dumps(status(root)))
+    s = status(root) or {}
+    check(s.get('generation') == 3, 'orphan-cycle-one-generation', json.dumps(s))
+
+
+@row('verify-drift')
+def verify_drift(r):
+    root = r.ready('verify-drift', 'alpha')
+    (root / 'usr/bin/alpha').write_bytes(b'tampered\n')
+    refused(lrd('verify', '--root', root), 'verify-drift', 1, 'drift usr/bin/alpha')
+
+
+# ---------------------------------------------------------------- recovery
+
+SCENARIOS = {
+    'install': (lambda r, label: r.ready(label), ['install', 'alpha', '--now', NOW]),
+    'upgrade': (None, ['upgrade', '--now', NOW]),
+    'remove': (lambda r, label: r.ready(label, 'alpha'), ['remove', 'alpha']),
+}
+
+
+def scenario_base(r, verb):
+    if verb == 'upgrade':
+        root = r.ready('base-upgrade', 'alpha')
+        return root
+    return SCENARIOS[verb][0](r, f'base-{verb}')
+
+
+def run_verb(root, verb, binary=None, env=None):
+    args = SCENARIOS[verb][1]
+    return lrd(args[0], '--root', root, *args[1:], binary=binary, env=env)
+
+
+def references(r, verb):
+    base = scenario_base(r, verb)
+    old = tree_digest(base)
+    done = r.copy(base, f'ref-new-{verb}')
+    p = run_verb(done, verb)
+    if p.returncode != 0:
+        raise_setup(f'crash-{verb}', 'reference run', p)
+    return base, old, tree_digest(done)
+
+
+def trace_points(p, prefix=''):
+    """FAILPOINT <name> [detail...] lines, in order; the name is what a cut arms."""
+    out = []
+    for line in p.stderr.splitlines():
+        if line.startswith('FAILPOINT ' + prefix):
+            parts = line.split(' ', 2)
+            out.append((parts[1], parts[2] if len(parts) > 2 else ''))
+    return out
+
+
+def failpoints(r, base, verb):
+    root = r.copy(base, f'trace-{verb}')
+    p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    return p, [name for name, _ in trace_points(p)]
+
+
+REQUIRED_PHASES = ['lock', 'stage', 'intent-written', 'intent', 'generation', 'commit-written',
+                   'commit-renamed', 'commit', 'done']
+
+
+def recovered_twice(r, root, row, expect):
+    first = lrd('rescue', '--root', root)
+    one = tree_digest(root)
+    second = lrd('rescue', '--root', root)
+    two = tree_digest(root)
+    good = first.returncode == 0 and second.returncode == 0 and one == two and one == expect
+    detail = '' if good else f'first={describe(first)} second={describe(second)} same={one == two} expect={one == expect}'
+    check(good, row, detail)
+    check(second.stdout.strip().endswith('rescue: nothing to do'), f'{row}-second-is-noop', second.stdout)
+
+
+def crash_matrix(r, verb):
+    if not FPBIN.exists():
+        emit(False, f'crash-{verb}', f'missing {FPBIN}')
+    base, old, new = references(r, verb)
+    trace, names = failpoints(r, base, verb)
+    ok(trace, f'crash-{verb}-trace')
+    missing = [n for n in REQUIRED_PHASES if n not in names]
+    if verb != 'install':
+        missing += [] if any(n.startswith('backup:') for n in names) else ['backup:<i>']
+    missing += [] if any(n.startswith('apply:') for n in names) else ['apply:<i>']
+    check(not missing, f'crash-{verb}-every-transition-hooked', f'missing={missing}')
+    committed = False
+    for name in names:
+        if name == 'commit-renamed':
+            committed = True
+        root = r.copy(base, f'crash-{verb}')
+        p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
+        row_name = f'crash-{verb}-{name}'
+        try:
+            check(p.returncode == CRASH_EXIT, f'{row_name}-cut', describe(p))
+            pending = (status(root) or {}).get('pending', '')
+            if pending:
+                refused(run_verb(r.copy(root, 'probe'), 'install'), f'{row_name}-mutation-refused', 8,
+                        'recovery-needed')
+            recovered_twice(r, root, row_name, new if committed else old)
+        except RowFailed:
+            continue
+    return base, names
+
+
+@row('crash-install')
+def crash_install(r):
+    crash_matrix(r, 'install')
+
+
+@row('crash-upgrade')
+def crash_upgrade(r):
+    r.repo.publish(universe(upgraded=True))
+    try:
+        crash_matrix(r, 'upgrade')
+    finally:
+        r.repo.publish(universe())
+
+
+@row('crash-remove')
+def crash_remove(r):
+    crash_matrix(r, 'remove')
+
+
+@row('crash-rescue')
+def crash_rescue(r):
+    if not FPBIN.exists():
+        emit(False, 'crash-rescue', f'missing {FPBIN}')
+    base, old, _new = references(r, 'remove')
+    _, names = failpoints(r, base, 'remove')
+    cut = [n for n in names if n.startswith('apply:')][-1]
+    stuck = r.copy(base, 'rescue-base')
+    run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    probe = r.copy(stuck, 'rescue-trace')
+    p = lrd('rescue', '--root', probe, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    rescue_names = [name for name, _ in trace_points(p, 'rescue:')]
+    check(any(n.startswith('rescue:undo:') for n in rescue_names), 'crash-rescue-hooked', repr(rescue_names))
+    for name in rescue_names:
+        root = r.copy(stuck, 'crash-rescue')
+        q = lrd('rescue', '--root', root, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
+        try:
+            check(q.returncode == CRASH_EXIT, f'crash-rescue-{name}-cut', describe(q))
+            recovered_twice(r, root, f'crash-rescue-{name}', old)
+        except RowFailed:
+            continue
+
+
+@row('injected-errors')
+def injected(r):
+    if not FPBIN.exists():
+        emit(False, 'injected-errors', f'missing {FPBIN}')
+    base, old, new = references(r, 'remove')
+    _, names = failpoints(r, base, 'remove')
+    picks = [n for n in names if n.split(':')[0] in ('backup', 'intent-written', 'generation', 'commit-written')]
+    picks += [n for n in names if n.endswith(':temp')][:1] + [n for n in names if n.endswith(':renamed')][:1]
+    for kind in ('eio', 'enospc'):
+        for name in picks:
+            root = r.copy(base, f'{kind}')
+            p = run_verb(root, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:{kind}'})
+            row_name = f'{kind}-{name}'
+            try:
+                check(p.returncode == 1 and ('io' if kind == 'eio' else 'no-space') in p.stderr,
+                      f'{row_name}-refused', describe(p))
+                recovered_twice(r, root, row_name, old)
+            except RowFailed:
+                continue
+
+
+@row('rescue-entry')
+def rescue_entry(r):
+    root = r.ready('rescue-entry', 'alpha')
+    p = lrd('rescue', '--root', root)
+    ok(p, 'rescue-nothing-to-do', last='rescue: nothing to do')
+    if not FPBIN.exists():
+        emit(False, 'rescue-unknown-state', f'missing {FPBIN}')
+    _, names = failpoints(r, root, 'remove')
+    cut = [n for n in names if n.startswith('apply:') and n.count(':') == 1][-1]
+    stuck = r.copy(root, 'rescue-stuck')
+    run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    s = status(stuck) or {}
+    check(s.get('pending', '').startswith('t'), 'status-recovery-needed', json.dumps(s))
+    refused(lrd('install', '--root', stuck, 'lone', '--now', NOW), 'mutation-refused-recovery-needed', 8,
+            'recovery-needed')
+    tampered = r.copy(stuck, 'rescue-tampered')
+    (tampered / 'usr/bin').mkdir(parents=True, exist_ok=True)
+    (tampered / 'usr/bin/alpha').write_bytes(b'neither\n')
+    before = tree_digest(tampered)
+    refused(lrd('rescue', '--root', tampered), 'rescue-unknown-state', 9, 'rescue-unknown-state')
+    check(tree_digest(tampered) == before, 'rescue-unknown-state-no-writes')
+    gone = r.copy(stuck, 'rescue-missing-backup')
+    backups = sorted((gone / 'var/lib/larder/transactions').glob('t*/backup/*'))
+    if backups:
+        backups[0].unlink()
+    refused(lrd('rescue', '--root', gone), 'rescue-missing-backup', 9, 'rescue-missing-backup')
+    bad = r.copy(stuck, 'rescue-malformed')
+    intents = sorted((bad / 'var/lib/larder/transactions').glob('t*/intent'))
+    if intents:
+        data = intents[0].read_bytes()
+        intents[0].write_bytes(data[:-10] + b'x' * 10)
+    refused(lrd('rescue', '--root', bad), 'rescue-malformed-intent', 9, 'rescue-malformed-intent')
+
+
+@row('race-ancestors')
+def races(r):
+    if not FPBIN.exists():
+        emit(False, 'race-ancestors', f'missing {FPBIN}')
+    base = r.ready('race-base')
+    old = tree_digest(base)
+    probe = r.copy(base, 'race-trace')
+    p = lrd('install', '--root', probe, 'alpha', '--now', NOW, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    points = trace_points(p)
+    target = 'usr/share/alpha/data'
+    walks = [n for n, info in points if n.endswith(':walk') and f'path={target}' in info.split()]
+    check(len(walks) == 1, 'race-ancestors-hooked', repr(points[:6]))
+    for point in walks + [w.replace(':walk', ':temp') for w in walks]:
+        for ancestor in ['usr', 'usr/share', 'usr/share/alpha']:
+            label = f'race-ancestor-{ancestor.replace("/", "-")}-{point.split(":")[-1]}'
+            root = r.copy(base, label)
+            pre = outside_digest(r)
+            proc, fifo, line = paused(root, point, 'install', '--root', root, 'alpha', '--now', NOW)
+            try:
+                check(line.startswith('PAUSED'), f'{label}-paused', line)
+                real = root / ancestor
+                aside = root.parent / f'{root.name}-aside'
+                if real.exists():
+                    os.rename(real, aside)
+                os.symlink(r.outside / 'sentinel', real)
+                result = resume(proc, fifo)
+                refused(result, label, 1, 'path-race')
+                check(outside_digest(r) == pre, f'{label}-outside-untouched')
+                refused(lrd('rescue', '--root', root), f'{label}-rescue-refuses-while-swapped', 9,
+                        'rescue-unknown-state')
+                os.unlink(real)
+                if aside.exists():
+                    os.rename(aside, real)
+                recovered_twice(r, root, f'{label}-restored', old)
+            except RowFailed:
+                continue
+
+
+@row('state-ancestor-race')
+def state_race(r):
+    if not FPBIN.exists():
+        emit(False, 'race-state-ancestor', f'missing {FPBIN}')
+    root = r.ready('state-race')
+    pre = outside_digest(r)
+    proc, fifo, line = paused(root, 'lock', 'install', '--root', root, 'lone', '--now', NOW)
+    check(line == 'PAUSED lock', 'race-state-ancestor-paused', line)
+    real = root / 'var/lib'
+    aside = root.parent / f'{root.name}-lib-aside'
+    os.rename(real, aside)
+    os.symlink(r.outside / 'sentinel', real)
+    refused(resume(proc, fifo), 'race-state-ancestor', 1, 'path-race')
+    check(outside_digest(r) == pre, 'race-state-ancestor-outside-untouched')
+    os.unlink(real)
+    os.rename(aside, real)
+
+
+@row('fs-unqualified-refused')
+def unqualified(r):
+    target = os.environ.get('LARDER_UNQUALIFIED_ROOT', '')
+    if not target:
+        print('SKIP fs-unqualified-refused reason=no tmpfs root offered (set LARDER_UNQUALIFIED_ROOT; the container take mounts one)')
+        return
+    root = Path(target) / 'root'
+    root.mkdir()
+    p = lrd('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned,
+            '--arch', ARCH, '--slot', SLOT, '--now', NOW)
+    refused(p, 'fs-unqualified-refused', 1, 'unqualified-filesystem')
+
+
+def main():
+    global KEEP_GOING
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--all', action='store_true', help='keep going after a FAIL')
+    ap.add_argument('--rows', default='', help='comma-separated row-group names')
+    args = ap.parse_args()
+    KEEP_GOING = args.all
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    (WORK / 'packages').mkdir(parents=True, mode=0o700)
+    repo = Repo(WORK)
+    repo.setup()
+    repo.publish(universe())
+    roots = Roots(repo)
+    roots.outside.mkdir()
+    (roots.outside / 'sentinel').mkdir()
+    (roots.outside / 'sentinel/keep').write_bytes(b'outside\n')
+    wanted = set(filter(None, args.rows.split(',')))
+    print(f'transactions: privileged={PRIVILEGED} platform={sys.platform}', flush=True)
+    for name, fn in ROWS:
+        if wanted and name not in wanted:
+            continue
+        try:
+            fn(roots)
+        except RowFailed:
+            continue
+    if FAILED:
+        print(f'transactions: {len(FAILED)} red rows', flush=True)
+        return 1
+    print('PASS transactions', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
