@@ -114,6 +114,24 @@ with "fixture unavailable", since no `paxage` existed to publish it.
   branch.
 - `CLAUDE.md` gained one line: a new note or prediction that must name the
   former name goes on check-census's record list by path.
+- **A prediction miss: the plant's third row did not go red by name.** The
+  first plant take (`60040e2` on `0fb7250`, the Mac,
+  `~/lanes/pm05a/evidence/plant-mac-60040e2.record.void-unnamed-row`, sha256
+  `dcd9a7e8…`) was red by name for `census-old-names` and
+  `names-proposal-suffix`, and the recorder refused it: "missing FAIL line for
+  config-both-changed-proposal". The run reached that row, and the row does
+  look at the suffix, but its check read the proposal's bytes directly. With
+  the proposal missing, `read_bytes()` raised `FileNotFoundError` inside the
+  check's own condition, so the row died as an anonymous traceback before it
+  could print its FAIL, and the uncaught exception also stopped `--all`, so
+  `config-proposal-exists` never ran. This was a pre-existing harness defect:
+  any regression that stopped writing a proposal would have gone red without a
+  row's name. `7e99453` fixes the runner: a row group whose check raises prints
+  `FAIL <group> crashed <exception>` and, under `--all`, the other rows run.
+  Checked before the retake on hasu light A at `7e99453`: every transaction row
+  passed, and on a scratch, never-pushed commit with the plant's hunk,
+  `config-both-changed-proposal` and `config-proposal-exists` each printed FAIL
+  by name. The plant was retaken once, on the head that carries the fix.
 
 ## Forbidden
 
@@ -151,7 +169,10 @@ red at the base, what must not change, the gate, the plant and the R-list.
 - Green: the Linux record with power cuts and the Mac record at the PR's head,
   named in the PR body.
 - Plant: `pm05a-plant-suffix`, one hunk in `src/txn/txn.lu` putting the former
-  suffix back; its record is named in the PR body.
+  suffix back, rebuilt on the final head; its record is named in the PR body.
+  The first take's record is void (above, "A prediction miss").
+- Superseded: `green-mac-0fb7250.record` and satoyama's
+  `green-linux-0fb7250.record`, valid at `0fb7250`, before `7e99453`.
 
 ## Done-when
 
