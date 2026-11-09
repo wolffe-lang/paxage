@@ -21,6 +21,9 @@ def container(command,mounts):
     args=[engine,'run','--rm','--network','none','--memory','2g','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
     if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
     for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
+    # A larder built on a NixOS host (hasu) asks for its loader and libraries under
+    # /nix/store; mounting that read-only lets the same binary run here and changes no verdict.
+    if Path('/nix/store').is_dir():args+=['-v','/nix/store:/nix/store:ro']
     cpus=os.environ.get('LARDER_CONTAINER_CPUS')
     if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
     args +=[IMAGE,'/usr/bin/bash','-c',command]
