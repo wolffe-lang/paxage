@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""An NBD server that logs every request in arrival order (pm04b's power-cut witness).
+
+Written from the NBD protocol specification (doc/proto.md, sha256
+4b4eda49c5b9b4bf1572eebbee8bcacf99ca3d910b102d7ecf525b90565592c4) and nothing else.
+It serves memory-backed exports over a unix socket:
+- the fixed newstyle handshake;
+- NBD_OPT_EXPORT_NAME, NBD_OPT_INFO, NBD_OPT_GO, NBD_OPT_LIST and NBD_OPT_ABORT;
+  any other option answers NBD_REP_ERR_UNSUP;
+- simple replies only;
+- READ, WRITE (FUA honoured), FLUSH and DISC; any other command answers NBD_EINVAL.
+One lock orders every request on every connection. The log is DIR/log.jsonl, one
+object per request, with each write's payload appended to DIR/blobs.bin. A write
+to the export named `mark` also records its first line as `mark`. Memory is the
+medium, so a reply already means "applied". The log's FLUSH and FUA records are
+what make a write durable in the crash-state model (tools/powercut-synth).
+
+--eio TEXT:CMD answers the first CMD (write or flush) on a non-mark export that
+comes after a mark record whose first words are TEXT's words with NBD_EIO, and
+does not apply it (R-pm04b-1). It is armed once.
+The server exits 0 after --connections connections have closed. It exits 2 on
+a protocol violation, and 3 when --timeout passes first.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+import struct
+import sys
+import threading
+import time
+
+NBDMAGIC = 0x4E42444D41474943
+IHAVEOPT = 0x49484156454F5054
+REPLY_MAGIC = 0x3E889045565A9
+REQUEST_MAGIC = 0x25609513
+SIMPLE_REPLY_MAGIC = 0x67446698
+
+FLAG_FIXED_NEWSTYLE = 1 << 0
+FLAG_NO_ZEROES = 1 << 1
+FLAG_C_FIXED_NEWSTYLE = 1 << 0
+FLAG_C_NO_ZEROES = 1 << 1
+
+FLAG_HAS_FLAGS = 1 << 0
+FLAG_SEND_FLUSH = 1 << 2
+FLAG_SEND_FUA = 1 << 3
+TRANSMISSION_FLAGS = FLAG_HAS_FLAGS | FLAG_SEND_FLUSH | FLAG_SEND_FUA
+
+OPT_EXPORT_NAME, OPT_ABORT, OPT_LIST, OPT_INFO, OPT_GO = 1, 2, 3, 6, 7
+REP_ACK, REP_SERVER, REP_INFO = 1, 2, 3
+REP_ERR_UNSUP = (1 << 31) + 1
+REP_ERR_INVALID = (1 << 31) + 3
+REP_ERR_UNKNOWN = (1 << 31) + 6
+INFO_EXPORT, INFO_BLOCK_SIZE = 0, 3
+
+CMD_READ, CMD_WRITE, CMD_DISC, CMD_FLUSH = 0, 1, 2, 3
+CMD_FLAG_FUA = 1 << 0
+EIO, EINVAL = 5, 22
+NAMES = {CMD_READ: 'read', CMD_WRITE: 'write', CMD_DISC: 'disc', CMD_FLUSH: 'flush'}
+MAX_OPTION = 1 << 16
+MAX_PAYLOAD = 32 << 20
+
+
+class Violation(Exception):
+    pass
+
+
+class Export:
+    def __init__(self, name, size, base):
+        self.name = name
+        self.data = bytearray(size)
+        if base:
+            raw = Path(base).read_bytes()
+            if len(raw) != size:
+                raise SystemExit(f'nbd-recorder: base {base} is {len(raw)} bytes, export {name} is {size}')
+            self.data[:] = raw
+
+
+class Recorder:
+    def __init__(self, logdir, exports, eio, connections):
+        self.lock = threading.Lock()
+        self.exports = exports
+        self.seq = 0
+        self.log = open(logdir / 'log.jsonl', 'w')
+        self.blobs = open(logdir / 'blobs.bin', 'wb')
+        self.blob_at = 0
+        self.eio = eio            # (text, cmd) or None
+        self.eio_armed = False
+        self.eio_spent = False
+        self.expected = connections
+        self.closed = 0
+        self.finished = threading.Event()
+        self.failure = None
+
+    def record(self, entry, payload=b''):
+        entry['seq'] = self.seq
+        self.seq += 1
+        if payload:
+            entry['blob'] = self.blob_at
+            entry['sha256'] = hashlib.sha256(payload).hexdigest()
+            self.blobs.write(payload)
+            self.blob_at += len(payload)
+        self.log.write(json.dumps(entry, sort_keys=True) + '\n')
+        # FLUSH means the log itself is where the record must be found after a reply.
+        if entry['cmd'] == 'flush':
+            self.blobs.flush()
+            self.log.flush()
+
+    def inject(self, export, cmd):
+        if self.eio is None or self.eio_spent or not self.eio_armed or export.name == 'mark':
+            return False
+        if cmd != self.eio[1]:
+            return False
+        self.eio_spent = True
+        return True
+
+    def done(self):
+        with self.lock:
+            self.closed += 1
+            if self.closed >= self.expected:
+                self.blobs.flush()
+                self.log.flush()
+                self.finished.set()
+
+
+def recv_exact(conn, n):
+    out = bytearray()
+    while len(out) < n:
+        chunk = conn.recv(n - len(out))
+        if not chunk:
+            raise EOFError
+        out += chunk
+    return bytes(out)
+
+
+def option_reply(conn, option, kind, data=b''):
+    conn.sendall(struct.pack('>QIII', REPLY_MAGIC, option, kind, len(data)) + data)
+
+
+def handshake(conn, rec):
+    conn.sendall(struct.pack('>QQH', NBDMAGIC, IHAVEOPT, FLAG_FIXED_NEWSTYLE | FLAG_NO_ZEROES))
+    (client,) = struct.unpack('>I', recv_exact(conn, 4))
+    if client & ~(FLAG_C_FIXED_NEWSTYLE | FLAG_C_NO_ZEROES):
+        raise Violation(f'unknown client flags {client:#x}')
+    no_zeroes = bool(client & FLAG_C_NO_ZEROES)
+    while True:
+        magic, option, length = struct.unpack('>QII', recv_exact(conn, 16))
+        if magic != IHAVEOPT:
+            raise Violation(f'option magic {magic:#x}')
+        if length > MAX_OPTION:
+            raise Violation(f'option {option} length {length}')
+        data = recv_exact(conn, length)
+        if option == OPT_EXPORT_NAME:
+            export = rec.exports.get(data.decode('utf-8', 'replace'))
+            if export is None:
+                return None  # the spec: an unwilling server terminates the session
+            conn.sendall(struct.pack('>QH', len(export.data), TRANSMISSION_FLAGS) + (b'' if no_zeroes else bytes(124)))
+            return export
+        if option == OPT_ABORT:
+            option_reply(conn, option, REP_ACK)
+            return None
+        if option == OPT_LIST:
+            if length:
+                option_reply(conn, option, REP_ERR_INVALID)
+                continue
+            for name in rec.exports:
+                raw = name.encode()
+                option_reply(conn, option, REP_SERVER, struct.pack('>I', len(raw)) + raw)
+            option_reply(conn, option, REP_ACK)
+            continue
+        if option in (OPT_INFO, OPT_GO):
+            if length < 6:
+                option_reply(conn, option, REP_ERR_INVALID)
+                continue
+            (name_len,) = struct.unpack('>I', data[:4])
+            if name_len > length - 6:
+                option_reply(conn, option, REP_ERR_INVALID)
+                continue
+            name = data[4:4 + name_len].decode('utf-8', 'replace')
+            (count,) = struct.unpack('>H', data[4 + name_len:6 + name_len])
+            if 6 + name_len + 2 * count != length:
+                option_reply(conn, option, REP_ERR_INVALID)
+                continue
+            asked = struct.unpack(f'>{count}H', data[6 + name_len:]) if count else ()
+            export = rec.exports.get(name)
+            if export is None:
+                option_reply(conn, option, REP_ERR_UNKNOWN)
+                continue
+            option_reply(conn, option, REP_INFO, struct.pack('>HQH', INFO_EXPORT, len(export.data), TRANSMISSION_FLAGS))
+            if INFO_BLOCK_SIZE in asked:
+                option_reply(conn, option, REP_INFO, struct.pack('>HIII', INFO_BLOCK_SIZE, 1, 4096, MAX_PAYLOAD))
+            option_reply(conn, option, REP_ACK)
+            if option == OPT_GO:
+                return export
+            continue
+        option_reply(conn, option, REP_ERR_UNSUP)
+
+
+def reply(conn, error, cookie, data=b''):
+    conn.sendall(struct.pack('>IIQ', SIMPLE_REPLY_MAGIC, error, cookie) + data)
+
+
+def transmission(conn, rec, export, cid):
+    while True:
+        magic, flags, kind, cookie, offset, length = struct.unpack('>IHHQQI', recv_exact(conn, 28))
+        if magic != REQUEST_MAGIC:
+            raise Violation(f'request magic {magic:#x}')
+        payload = b''
+        if kind == CMD_WRITE:
+            if length > MAX_PAYLOAD:
+                raise Violation(f'write of {length} bytes')
+            payload = recv_exact(conn, length)
+        fua = bool(flags & CMD_FLAG_FUA)
+        with rec.lock:
+            entry = {'export': export.name, 'conn': cid, 'cmd': NAMES.get(kind, str(kind)),
+                     'off': offset, 'len': length, 'fua': fua}
+            if kind == CMD_DISC:
+                rec.record(entry)
+                return
+            in_range = offset + length <= len(export.data)
+            if kind == CMD_READ:
+                if not in_range or length > MAX_PAYLOAD:
+                    entry['error'] = EINVAL
+                    rec.record(entry)
+                    reply(conn, EINVAL, cookie)
+                    continue
+                rec.record(entry)
+                reply(conn, 0, cookie, bytes(export.data[offset:offset + length]))
+                continue
+            if kind == CMD_WRITE:
+                if not in_range:
+                    entry['error'] = EINVAL
+                    rec.record(entry, payload)
+                    reply(conn, EINVAL, cookie)
+                    continue
+                if rec.inject(export, 'write'):
+                    entry['error'] = EIO
+                    rec.record(entry, payload)
+                    reply(conn, EIO, cookie)
+                    continue
+                export.data[offset:offset + length] = payload
+                if export.name == 'mark':
+                    entry['mark'] = payload.split(b'\n', 1)[0].rstrip(b'\0').decode('utf-8', 'replace')
+                    words = rec.eio[0].split() if rec.eio else []
+                    if words and entry['mark'].split()[:len(words)] == words and not rec.eio_spent:
+                        rec.eio_armed = True
+                rec.record(entry, payload)
+                reply(conn, 0, cookie)
+                continue
+            if kind == CMD_FLUSH:
+                if rec.inject(export, 'flush'):
+                    entry['error'] = EIO
+                    rec.record(entry)
+                    reply(conn, EIO, cookie)
+                    continue
+                rec.record(entry)
+                reply(conn, 0, cookie)
+                continue
+            entry['error'] = EINVAL
+            rec.record(entry)
+            reply(conn, EINVAL, cookie)
+
+
+def serve(conn, rec, cid):
+    try:
+        export = handshake(conn, rec)
+        if export is not None:
+            transmission(conn, rec, export, cid)
+    except EOFError:
+        pass
+    except (Violation, struct.error) as e:
+        rec.failure = f'connection {cid}: {e}'
+    finally:
+        conn.close()
+        rec.done()
+
+
+def parse_export(text):
+    parts = text.split(':')
+    if len(parts) not in (2, 3):
+        raise argparse.ArgumentTypeError(f'export {text!r} is NAME:SIZE[:BASE]')
+    name, size = parts[0], parts[1]
+    mult = {'K': 1 << 10, 'M': 1 << 20, 'G': 1 << 30}.get(size[-1:], 1)
+    number = int(size[:-1]) if mult != 1 else int(size)
+    return Export(name, number * mult, parts[2] if len(parts) == 3 else '')
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--socket', required=True)
+    ap.add_argument('--log', required=True, help='directory for log.jsonl and blobs.bin')
+    ap.add_argument('--export', action='append', required=True, type=parse_export, help='NAME:SIZE[:BASE]')
+    ap.add_argument('--connections', type=int, default=1, help='exit after this many have closed')
+    ap.add_argument('--eio', default='', help='MARKTEXT:write|flush')
+    ap.add_argument('--timeout', type=float, default=3600)
+    ap.add_argument('--ready', default='', help='a file written once the socket listens')
+    args = ap.parse_args()
+    if len(args.socket.encode()) >= 104:
+        raise SystemExit(f'nbd-recorder: socket path is {len(args.socket.encode())} bytes; keep it under 104')
+    eio = None
+    if args.eio:
+        text, _, cmd = args.eio.rpartition(':')
+        if cmd not in ('write', 'flush') or not text:
+            raise SystemExit(f'nbd-recorder: --eio {args.eio!r} is MARKTEXT:write|flush')
+        eio = (text, cmd)
+    logdir = Path(args.log)
+    logdir.mkdir(parents=True, exist_ok=True)
+    rec = Recorder(logdir, {e.name: e for e in args.export}, eio, args.connections)
+    if os.path.exists(args.socket):
+        os.unlink(args.socket)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(args.socket)
+    server.listen(8)
+    server.settimeout(0.5)
+    if args.ready:
+        Path(args.ready).write_text(f'{os.getpid()}\n')
+    deadline = time.monotonic() + args.timeout
+    cid = 0
+    while not rec.finished.is_set():
+        if time.monotonic() > deadline:
+            print(f'nbd-recorder: timeout after {args.timeout}s with {rec.closed} of {rec.expected} connections closed',
+                  file=sys.stderr)
+            return 3
+        try:
+            conn, _ = server.accept()
+        except socket.timeout:
+            continue
+        cid += 1
+        threading.Thread(target=serve, args=(conn, rec, cid), daemon=True).start()
+    server.close()
+    os.unlink(args.socket)
+    with rec.lock:
+        rec.log.close()
+        rec.blobs.close()
+    (logdir / 'DONE').write_text(f'requests={rec.seq} eio_spent={rec.eio_spent}\n')
+    if rec.failure:
+        print(f'nbd-recorder: {rec.failure}', file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
