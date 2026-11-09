@@ -1,0 +1,755 @@
+//! The root verbs (CLI C12-C17): init, status, verify, install, remove, upgrade,
+//! autoremove and rescue over a synthetic root. Mutation runs only under the
+//! root's persistent lock, after qualification, and never while a transaction
+//! is pending (R-pm04-3).
+
+use walk
+use txn
+use intent
+use database as db
+use failpoint
+use qualify
+use model
+use solver
+use checker
+use schema
+use literal
+use version
+use trust_metadata as meta
+use trust_state as state
+use trust_store as store
+use trust_io as io
+use trust_cache as cache
+use trust_client
+use trust_options
+use std.json as json
+use std.str as text
+use std.list as list
+
+struct Opts {
+    root: str,
+    repo: str,
+    pinned: str,
+    arch: str,
+    slot: str,
+    now: str,
+    dry_run: bool,
+    purge: bool,
+    yes: bool,
+    as_json: bool,
+    names: List[str],
+    error: str,
+}
+
+fn parse(a: List[str]) -> Opts {
+    var o = Opts {
+        root: "",
+        repo: "",
+        pinned: "",
+        arch: "",
+        slot: "",
+        now: "",
+        dry_run: false,
+        purge: false,
+        yes: false,
+        as_json: false,
+        names: List[str](),
+        error: "",
+    }
+    var i = 1
+    while i < a.len {
+        let f = a[i]
+        if f == "--dry-run" { o.dry_run = true; i += 1; continue }
+        if f == "--purge" { o.purge = true; i += 1; continue }
+        if f == "--yes" { o.yes = true; i += 1; continue }
+        if f == "--json" { o.as_json = true; i += 1; continue }
+        if text.starts_with(f, "--") {
+            if i + 1 >= a.len || a[i + 1] == "" { o.error = "missing value for {f}"; return o }
+            let v = a[i + 1]
+            if f == "--root" && o.root == "" {
+                o.root = v
+            } else if f == "--repo" && o.repo == "" {
+                o.repo = v
+            } else if f == "--pinned-root" && o.pinned == "" {
+                o.pinned = v
+            } else if f == "--arch" && o.arch == "" {
+                o.arch = v
+            } else if f == "--slot" && o.slot == "" {
+                o.slot = v
+            } else if f == "--now" && o.now == "" {
+                o.now = v
+            } else {
+                o.error = "unknown or repeated option {f}"
+                return o
+            }
+            i += 2
+            continue
+        }
+        (mut o.names).push(f)
+        i += 1
+    }
+    if o.root == "" { o.error = "--root DIR is required" }
+    if o.names.len > 128 { o.error = "at most 128 names" }
+    o
+}
+
+fn usage(message: str) -> int {
+    eprint("larder: {message}")
+    eprint("Usage: larder (lrd) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR")
+    2
+}
+
+fn fail(message: str) -> int { eprint("larder: {message}"); 1 }
+
+fn quote(s: str) -> str { json.stringify(json.from_str(s)) else |_| { "\"json-error\"" } }
+
+fn now_of(o: Opts) -> int {
+    if o.now != "" { return meta.utc(o.now) }
+    print("clock=system")
+    time_unix_ms() / 1000
+}
+
+/// An opened root: the context, its current generation and its decoded packages.
+struct Open {
+    c: txn.Ctx,
+    cur: db.Current,
+    g: db.Db,
+    pkgs: List[txn.Pkg],
+    lock: int,
+    code: int,
+    error: str,
+}
+
+fn trust_dir(c: txn.Ctx) -> str { "{c.root.path}/var/lib/larder/trust" }
+
+fn cache_dir(c: txn.Ctx) -> str { "{c.root.path}/var/cache/larder" }
+
+fn open_root(path: str, fp: failpoint.Fail) -> txn.Ctx {
+    var r = walk.open_root(path)
+    if r.error == "" && r.path == "/" { r.error = "live-root-is-pm05" }
+    let uid = os_euid() else |_| { -1 }
+    txn.Ctx { root: r, fail: fp, privileged: uid == 0 }
+}
+
+/// Take the persistent lock inode: never created here, never followed, never waited for.
+fn take_lock(c: txn.Ctx) -> Open {
+    var out = Open {
+        c: copy c,
+        cur: db.Current { generation: -1, database: "", transaction: "", error: "" },
+        g: db.empty("", "", "", ""),
+        pkgs: List[txn.Pkg](),
+        lock: -1,
+        code: 0,
+        error: "",
+    }
+    let sd = walk.dir(c.root, txn.state())
+    if sd.error != "" {
+        out.code = 1
+        if walk.missing(sd) { out.error = "no-state: {txn.state()} is not initialized" } else { out.error = sd.error }
+        return out
+    }
+    var missing = false
+    let fd = fs_open_at(sd.fd, "lock", 21, 0) else |e| match e {
+        not_found => { missing = true; -1 },
+        _ => { -1 },
+    }
+    walk.close(sd)
+    if missing { out.code = 1; out.error = "lock-missing: {txn.state()}/lock (made only by init)"; return out }
+    if fd < 0 { out.code = 1; out.error = "lock-inode: {txn.state()}/lock is not a regular file"; return out }
+    let rec = fs_fstat_record(fd) else |_| { fs_close(fd) else |_| {}; out.code = 1; out.error = "lock-inode"; return out }
+    if rec[0] != 0 { fs_close(fd) else |_| {}; out.code = 1; out.error = "lock-inode: {txn.state()}/lock is not a regular file"; return out }
+    var busy = false
+    fs_lock(fd, 2) else |e| match e {
+        busy => { busy = true },
+        _ => { busy = true },
+    }
+    if busy {
+        fs_close(fd) else |_| {}
+        out.code = 7
+        out.error = "locked: another larder holds {txn.state()}/lock"
+        return out
+    }
+    out.lock = fd
+    out
+}
+
+fn release(o: Open) {
+    if o.lock >= 0 { fs_close(o.lock) else |_| {} }
+    walk.close_root(o.c.root)
+}
+
+/// Load current, its generation and its packages; refuse a mode mismatch.
+fn load(mut o: Open) {
+    o.cur = txn.current(o.c)
+    if o.cur.error != "" { o.code = 1; o.error = o.cur.error; return }
+    o.g = txn.load(o.c, o.cur)
+    if o.g.error != "" { o.code = 1; o.error = o.g.error; return }
+    if o.g.ownership == "privileged" && !o.c.privileged || o.g.ownership == "logical" && o.c.privileged {
+        o.code = 1
+        o.error = "ownership-mode-mismatch: this root is {o.g.ownership}"
+        return
+    }
+    o.pkgs = txn.installed(o.c, o.g)
+    for p in o.pkgs { if p.name == "" { o.code = 1; o.error = "database-invalid manifest"; return } }
+}
+
+fn check_state(c: txn.Ctx) -> str {
+    let sd = walk.dir(c.root, txn.state())
+    if sd.error != "" { return sd.error }
+    let held = fs_fstat_record(sd.fd) else |_| { walk.close(sd); return "path-race {txn.state()}" }
+    walk.close(sd)
+    let byname = fs_lstat("{c.root.path}/{txn.state()}") else |_| { return "path-race {txn.state()}" }
+    if byname[9] != held[9] || byname[10] != held[10] || byname[0] != 1 { return "path-race {txn.state()}" }
+    ""
+}
+
+// ------------------------------------------------------------------ init
+
+fn mkdir_rel(c: txn.Ctx, rel: str, mode: int) -> str {
+    let pd = walk.dir(c.root, walk.parent_of(rel))
+    if pd.error != "" { return pd.error }
+    let name = walk.base_of(rel)
+    var e = ""
+    fs_create_dir_at(pd.fd, name, 448) else |er| match er {
+        exists => {},
+        _ => { e = "mkdir {rel}" },
+    }
+    if e == "" {
+        let fd = fs_open_at(pd.fd, name, 48, 0) else |_| { -1 }
+        if fd < 0 {
+            e = "path-race {rel}"
+        } else {
+            fs_set_mode_fd(fd, mode) else |_| { e = "mode {rel}" }
+            fs_close(fd) else |_| {}
+        }
+    }
+    if e == "" { e = walk.sync(pd) }
+    walk.close(pd)
+    e
+}
+
+fn create_rel(c: txn.Ctx, rel: str, bytes: List[byte], mode: int) -> str {
+    let pd = walk.dir(c.root, walk.parent_of(rel))
+    if pd.error != "" { return pd.error }
+    let fd = fs_open_at(pd.fd, walk.base_of(rel), 20, 384) else |_| { walk.close(pd); return "create {rel}" }
+    var e = ""
+    fs_write_chunk(fd, bytes) else |_| { e = "write {rel}" }
+    if e == "" { fs_set_mode_fd(fd, mode) else |_| { e = "mode {rel}" } }
+    if e == "" { fs_sync(fd) else |_| { e = "sync {rel}" } }
+    fs_close(fd) else |_| { e = "close {rel}" }
+    if e == "" { e = walk.sync(pd) }
+    walk.close(pd)
+    e
+}
+
+fn init(o: Opts) -> int {
+    if o.repo == "" || o.pinned == "" || o.arch == "" || o.slot == "" {
+        return usage("init needs --repo, --pinned-root, --arch and --slot")
+    }
+    if !schema.identity(o.arch) || !schema.identity(o.slot) { return fail("bad-identity") }
+    let now = now_of(o)
+    if now < 0 { return fail("metadata-time") }
+    let raw = trust_options.file_path(o.repo)
+    if raw == "" { return fail("unsupported-transport") }
+    let repo = fs_realpath(raw) else |_| { return fail("repository-file") }
+    let c = open_root(o.root, failpoint.none())
+    if c.root.error != "" { return fail(c.root.error) }
+    let v = qualify.root(c.root.path)
+    if v.error != "" { walk.close_root(c.root); return fail(v.error) }
+    let uid = os_euid() else |_| { -1 }
+    let top = fs_fstat_record(c.root.fd) else |_| { walk.close_root(c.root); return fail("root-stat") }
+    if !c.privileged && top[6] != uid { walk.close_root(c.root); return fail("root-owner: an unprivileged root must be the caller's") }
+    let existing = walk.look_path(c.root, txn.state(), false)
+    if existing.kind != "absent" { walk.close_root(c.root); return fail("state-exists: {txn.state()}") }
+    let input = io.read(o.pinned, 65536)
+    if input.error != "" { walk.close_root(c.root); return fail("pinned-root: {input.error}") }
+    let pinned = meta.parse(input.bytes, "root")
+    let verified = state.bootstrap_error(pinned, now)
+    if verified != "" { walk.close_root(c.root); return fail(verified) }
+    var ownership = "logical"
+    if c.privileged { ownership = "privileged" }
+    var e = ""
+    for d in ["var", "var/lib"] {
+        if e == "" && walk.look_path(c.root, d, false).kind == "absent" { e = mkdir_rel(c, d, 493) }
+    }
+    for d in [txn.state(), "{txn.state()}/generations", "{txn.state()}/generations/0", "{txn.state()}/generations/0/manifests", "{txn.state()}/transactions", "{txn.state()}/trust"] {
+        if e == "" { e = mkdir_rel(c, d, 448) }
+    }
+    if e == "" && walk.look_path(c.root, "var/cache", false).kind == "absent" { e = mkdir_rel(c, "var/cache", 493) }
+    for d in ["var/cache/larder", "var/cache/larder/.part", "var/cache/larder/objects", "var/cache/larder/objects/sha256"] {
+        if e == "" { e = mkdir_rel(c, d, 448) }
+    }
+    if e == "" { e = create_rel(c, "{txn.state()}/lock", List[byte](), 384) }
+    if e == "" {
+        var s = state.initial(pinned, now)
+        s.repository = repo
+        e = store.save(trust_dir(c), s, 0)
+    }
+    let g0 = db.empty(o.arch, o.slot, repo, ownership)
+    let bytes = db.render(g0).bytes()
+    if e == "" { e = create_rel(c, "{txn.state()}/generations/0/db.lrd", bytes, 420) }
+    let record = db.render_current(db.Current { generation: 0, database: meta.digest(bytes), transaction: "", error: "" })
+    if e == "" { e = create_rel(c, "{txn.state()}/current", record.bytes(), 384) }
+    walk.close_root(c.root)
+    if e != "" { return fail("init: {e}") }
+    print("init ok")
+    0
+}
+
+// ------------------------------------------------------------------ universe
+
+struct Universe { pkgs: List[txn.Pkg], entries: List[meta.Entry], error: str }
+
+fn universe(o: Open, now: int) -> Universe {
+    var u = Universe { pkgs: List[txn.Pkg](), entries: List[meta.Entry](), error: "" }
+    let c = o.c
+    let repo = o.g.repository
+    let guard = check_state(c)
+    if guard != "" { u.error = guard; return u }
+    let tlock = io.lock(trust_dir(c))
+    if tlock < 0 { u.error = "trust-locked"; return u }
+    var e = trust_client.update(repo, trust_dir(c), now)
+    let loaded = store.load(trust_dir(c))
+    fs_close(tlock) else |_| {}
+    if e != "" { u.error = "update: {e}"; return u }
+    if loaded.error != "" { u.error = loaded.error; return u }
+    let ready = state.ready(loaded.value, now)
+    if ready != "" { u.error = ready; return u }
+    let after = check_state(c)
+    if after != "" { u.error = after; return u }
+    u.entries = copy loaded.value.targets.entries
+    let clock = io.lock(cache_dir(c))
+    if clock < 0 { u.error = "cache-locked"; return u }
+    for t in loaded.value.targets.entries {
+        if t.kind != "manifest" { continue }
+        e = cache.fetch(repo, cache_dir(c), t)
+        if e != "" { break }
+        let input = io.read("{cache_dir(c)}/objects/sha256/{t.digest}", 1048576)
+        if input.error != "" || meta.digest(input.bytes) != t.digest { e = "manifest-hash {t.path}"; break }
+        let d = literal.parse(input.bytes)
+        if d.error != "" { e = "{t.path}: {d.error}"; break }
+        let valid = schema.manifest(d, 0)
+        if valid != "" { e = "{t.path}: {valid}"; break }
+        var p = txn.decode(input.bytes, "dependency")
+        if p.name != t.name || p.version != t.package_version || p.arch != t.arch { e = "target-identity {t.path}"; break }
+        var bound = false
+        for b in loaded.value.targets.entries {
+            if b.kind == "buildinfo" && b.name == t.name && b.package_version == t.package_version && b.arch == t.arch {
+                if schema.string(d, 0, "buildinfo") != b.digest { e = "buildinfo-hash {t.path}"; break }
+                e = cache.fetch(repo, cache_dir(c), b)
+                bound = true
+            }
+        }
+        if e != "" { break }
+        if !bound { e = "target-incomplete {t.path}"; break }
+        p.manifest_object = "{cache_dir(c)}/objects/sha256/{t.digest}"
+        (mut u.pkgs).push(p)
+    }
+    fs_close(clock) else |_| {}
+    if e != "" { u.error = e }
+    u
+}
+
+fn fetch_payload(c: txn.Ctx, repo: str, entries: List[meta.Entry], mut p: txn.Pkg) -> str {
+    let clock = io.lock(cache_dir(c))
+    if clock < 0 { return "cache-locked" }
+    var e = "target-incomplete {p.name}"
+    for t in entries {
+        if t.kind == "payload" && t.name == p.name && t.package_version == p.version && t.arch == p.arch {
+            e = cache.fetch(repo, cache_dir(c), t)
+            p.payload = "{cache_dir(c)}/objects/sha256/{t.digest}"
+            p.payload_length = t.length
+            p.payload_sha256 = t.digest
+        }
+    }
+    fs_close(clock) else |_| {}
+    e
+}
+
+// ------------------------------------------------------------------ resolution
+
+fn constraint(v: str, n: model.Need) -> bool {
+    if n.op == "any" { return true }
+    let c = version.compare(v, n.version)
+    if n.op == "=" { return c == 0 }
+    if n.op == "!=" { return c != 0 }
+    if n.op == "<" { return c < 0 }
+    if n.op == "<=" { return c <= 0 }
+    if n.op == ">" { return c > 0 }
+    n.op == ">=" && c >= 0
+}
+
+fn provides(p: model.Package, n: model.Need) -> bool {
+    if p.arch != n.arch || p.slot != n.slot { return false }
+    if p.name == n.name && constraint(p.version, n) { return true }
+    for f in p.provides { if f.name == n.name && constraint(f.version, n) { return true } }
+    false
+}
+
+fn spec(s: str, arch: str, slot: str) -> model.Need {
+    var n = model.Need { name: s, op: "any", version: "", arch, slot }
+    let b = s.bytes()
+    for i in 0..b.len {
+        let ch = b[i] as int
+        if ch == 61 || ch == 33 || ch == 60 || ch == 62 {
+            var end = i + 1
+            if end < b.len && b[end] == 61 as byte { end += 1 }
+            n.name = version.part(s, 0, i)
+            n.op = version.part(s, i, end)
+            n.version = version.part(s, end, s.len)
+            break
+        }
+    }
+    n
+}
+
+fn spec_ok(n: model.Need) -> bool {
+    if !schema.identity(n.name) { return false }
+    if n.op == "any" { return true }
+    (n.op == "=" || n.op == "!=" || n.op == "<" || n.op == "<=" || n.op == ">" || n.op == ">=") &&
+        version.valid(n.version)
+}
+
+struct Chosen { pkgs: List[txn.Pkg], code: int, error: str }
+
+fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -> Chosen {
+    var out = Chosen { pkgs: List[txn.Pkg](), code: 0, error: "" }
+    var all = copy u.pkgs
+    for p in o.pkgs {
+        var seen = false
+        for q in all { if q.digest == p.digest || q.name == p.name && q.version == p.version && q.arch == p.arch && q.slot == p.slot { seen = true } }
+        if !seen { (mut all).push(copy p) }
+    }
+    if all.len > 24 { out.code = 1; out.error = "snapshot-limit"; return out }
+    var s = model.Snapshot {
+        packages: List[model.Package](),
+        installed: List[str](),
+        holds: List[str](),
+        arch: o.g.arch,
+        slot: o.g.slot,
+        budget: 1000000,
+    }
+    for p in all { (mut s.packages).push(copy p.model) }
+    for p in o.pkgs { (mut s.installed).push(model.id(p.model)) }
+    let plan = solver.resolve(s, wants)
+    if plan.status == "unsatisfiable" { out.code = 3; out.error = "unsatisfiable: {plan.explanation}"; return out }
+    if plan.status == "budget-exceeded" { out.code = 4; out.error = "budget-exceeded: {plan.explanation}"; return out }
+    let checked = checker.check(s, wants, plan.selected)
+    if checked != "" { out.code = 5; out.error = "internal-plan-error: {checked}"; return out }
+    for i in plan.selected {
+        var p = copy all[i]
+        p.reason = "dependency"
+        for n in explicit { if n == p.name { p.reason = "explicit" } }
+        (mut out.pkgs).push(p)
+    }
+    out
+}
+
+fn pkg_less(a: txn.Pkg, b: txn.Pkg) -> bool { version.lexical(a.name, b.name) < 0 }
+
+// ------------------------------------------------------------------ mutation
+
+fn finish_open(o: Open, code: int, message: str) -> int {
+    release(o)
+    if message != "" { eprint("larder: {message}") }
+    code
+}
+
+fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
+    let c = open_root(opts.root, fp)
+    if c.root.error != "" { return fail(c.root.error) }
+    var o = take_lock(c)
+    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    let hooked = failpoint.hit(fp, "lock", "")
+    if hooked != "" { return finish_open(o, 1, "lock: {hooked}") }
+    let guard = check_state(c)
+    if guard != "" { return finish_open(o, 1, guard) }
+    let waiting = txn.pending(c)
+    if waiting != "" {
+        return finish_open(o, 8, "recovery-needed: {waiting} pending; run lrd rescue --root {c.root.path}")
+    }
+    let v = qualify.root(c.root.path)
+    if v.error != "" { return finish_open(o, 1, v.error) }
+    load(mut o)
+    if o.error != "" { return finish_open(o, o.code, o.error) }
+    var news = List[txn.Pkg]()
+    var purge = List[str]()
+    var entries = List[meta.Entry]()
+    if verb == "install" || verb == "upgrade" {
+        if verb == "install" && opts.names.len == 0 { return finish_open(o, 2, "install needs at least one package") }
+        if verb == "upgrade" && opts.names.len != 0 { return finish_open(o, 2, "upgrade takes no names (whole snapshot)") }
+        let now = now_of(opts)
+        if now < 0 { return finish_open(o, 1, "metadata-time") }
+        let u = universe(o, now)
+        if u.error != "" { return finish_open(o, 1, u.error) }
+        entries = copy u.entries
+        var wants = List[model.Need]()
+        var explicit = List[str]()
+        for p in o.pkgs {
+            if p.reason == "explicit" {
+                (mut explicit).push(p.name)
+                (mut wants).push(model.Need { name: p.name, op: "any", version: "", arch: o.g.arch, slot: o.g.slot })
+            }
+        }
+        for s in opts.names {
+            let n = spec(s, o.g.arch, o.g.slot)
+            if !spec_ok(n) { return finish_open(o, 2, "bad-want: {s}") }
+            (mut wants).push(n)
+            (mut explicit).push(n.name)
+        }
+        let chosen = resolve(o, u, wants, explicit)
+        if chosen.error != "" { return finish_open(o, chosen.code, chosen.error) }
+        news = chosen.pkgs
+    } else if verb == "remove" {
+        if opts.names.len == 0 { return finish_open(o, 2, "remove needs at least one package") }
+        for n in opts.names {
+            var known = db.find(o.g, n) >= 0
+            for r in o.g.residuals { if r.package == n { known = true } }
+            if !known { return finish_open(o, 1, "not-installed {n}") }
+        }
+        for p in o.pkgs {
+            var gone = false
+            for n in opts.names { if n == p.name { gone = true } }
+            if !gone { (mut news).push(copy p) }
+        }
+        for q in news {
+            for need in q.model.requires {
+                var met = false
+                for r in news { if provides(r.model, need) { met = true } }
+                if met { continue }
+                for p in o.pkgs {
+                    if provides(p.model, need) { return finish_open(o, 1, "remove {p.name} refused: required-by {q.name}") }
+                }
+            }
+        }
+        if opts.purge { purge = opts.names }
+    } else if verb == "autoremove" {
+        var reach = List[str]()
+        for p in o.pkgs { if p.reason == "explicit" { (mut reach).push(p.name) } }
+        var grew = true
+        while grew {
+            grew = false
+            for p in o.pkgs {
+                var inside = false
+                for n in reach { if n == p.name { inside = true } }
+                if !inside { continue }
+                for need in p.model.requires {
+                    for q in o.pkgs {
+                        if !provides(q.model, need) { continue }
+                        var have = false
+                        for n in reach { if n == q.name { have = true } }
+                        if !have { (mut reach).push(q.name); grew = true }
+                    }
+                }
+            }
+        }
+        var orphans = List[txn.Pkg]()
+        for p in o.pkgs {
+            var inside = false
+            for n in reach { if n == p.name { inside = true } }
+            if inside { (mut news).push(copy p) } else { (mut orphans).push(copy p) }
+        }
+        list.sort_by(mut orphans, pkg_less)
+        if orphans.len == 0 { print("autoremove ok nothing to do"); return finish_open(o, 0, "") }
+        if !opts.yes {
+            for p in orphans { print("orphan {p.name} {p.version}") }
+            print("autoremove preview: {orphans.len} orphans; rerun with --yes to remove them together")
+            return finish_open(o, 0, "")
+        }
+    }
+    var plan = txn.plan(c, o.g, o.pkgs, news, purge)
+    if plan.error != "" { return finish_open(o, 1, plan.error) }
+    var changed = plan.ops.len > 0
+    if db.render(plan.next) != db.render(rebased(o.g, plan.next)) { changed = true }
+    for line in plan.summary { print(line) }
+    if !changed {
+        print("{verb} ok nothing to do")
+        return finish_open(o, 0, "")
+    }
+    if opts.dry_run {
+        print("{verb} dry-run: {plan.ops.len} operations, generation {plan.next.generation} not written")
+        return finish_open(o, 0, "")
+    }
+    for k in 0..plan.stage.len {
+        let e = fetch_payload(c, o.g.repository, entries, mut plan.stage[k])
+        if e != "" { return finish_open(o, 1, e) }
+    }
+    let done = txn.execute(c, plan, o.g.generation)
+    if done.error != "" { return finish_open(o, 1, done.error) }
+    print("{verb} ok generation={done.generation}")
+    finish_open(o, 0, "")
+}
+
+/// The old generation with the next one's number and transaction, for comparing content.
+fn rebased(g: db.Db, next: db.Db) -> db.Db {
+    var r = copy g
+    r.generation = next.generation
+    r.transaction = next.transaction
+    r
+}
+
+// ------------------------------------------------------------------ read-only verbs
+
+fn status(opts: Opts) -> int {
+    let c = open_root(opts.root, failpoint.none())
+    if c.root.error != "" { return fail(c.root.error) }
+    var o = Open {
+        c: copy c,
+        cur: db.Current { generation: -1, database: "", transaction: "", error: "" },
+        g: db.empty("", "", "", ""),
+        pkgs: List[txn.Pkg](),
+        lock: -1,
+        code: 0,
+        error: "",
+    }
+    let waiting = txn.pending(c)
+    o.cur = txn.current(c)
+    if o.cur.error != "" { walk.close_root(c.root); return fail(o.cur.error) }
+    o.g = txn.load(c, o.cur)
+    if o.g.error != "" { walk.close_root(c.root); return fail(o.g.error) }
+    let g = o.g
+    walk.close_root(c.root)
+    if opts.as_json {
+        var s = "{{\"generation\":{g.generation},\"pending\":{quote(waiting)},\"ownership\":{quote(g.ownership)},\"packages\":["
+        for i in 0..g.packages.len {
+            let p = copy g.packages[i]
+            if i > 0 { s += "," }
+            s += "{{\"name\":{quote(p.name)},\"version\":{quote(p.version)},\"arch\":{quote(p.arch)},\"slot\":{quote(p.slot)},\"reason\":{quote(p.reason)}}}"
+        }
+        s += "],\"residuals\":["
+        for i in 0..g.residuals.len {
+            if i > 0 { s += "," }
+            s += "{{\"path\":{quote(g.residuals[i].path)},\"package\":{quote(g.residuals[i].package)}}}"
+        }
+        s += "],\"proposals\":["
+        for i in 0..g.proposals.len {
+            if i > 0 { s += "," }
+            s += "{{\"path\":{quote(g.proposals[i].path)},\"package\":{quote(g.proposals[i].package)}}}"
+        }
+        s += "],\"accounts\":["
+        for i in 0..g.accounts.len {
+            let a = copy g.accounts[i]
+            if i > 0 { s += "," }
+            s += "{{\"name\":{quote(a.name)},\"uid\":{a.uid},\"gid\":{a.gid},\"package\":{quote(a.package)}}}"
+        }
+        s += "],\"pending_actions\":["
+        for i in 0..g.pending.len {
+            let a = copy g.pending[i]
+            if i > 0 { s += "," }
+            s += "{{\"kind\":{quote(a.kind)},\"name\":{quote(a.name)},\"package\":{quote(a.package)}}}"
+        }
+        print(s + "]}}")
+        return 0
+    }
+    print("generation {g.generation} ({g.ownership})")
+    if waiting != "" { print("recovery-needed {waiting}") }
+    for p in g.packages { print("installed {p.name} {p.version} {p.reason}") }
+    for r in g.residuals { print("residual {r.path} {r.package}") }
+    for p in g.proposals { print("proposal {p.path} {p.package}") }
+    for a in g.pending { print("pending {a.kind} {a.name} {a.package}") }
+    0
+}
+
+fn verify(opts: Opts) -> int {
+    let c = open_root(opts.root, failpoint.none())
+    if c.root.error != "" { return fail(c.root.error) }
+    let waiting = txn.pending(c)
+    if waiting != "" { walk.close_root(c.root); eprint("larder: recovery-needed: {waiting} pending"); return 8 }
+    var o = take_lock(c)
+    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    load(mut o)
+    if o.error != "" { return finish_open(o, o.code, o.error) }
+    var drift = 0
+    for p in o.pkgs {
+        for r in p.recs {
+            var cfg = false
+            for x in p.configs { if x == r.path { cfg = true } }
+            if cfg { continue }
+            let live = walk.look_path(c.root, r.path, true)
+            let want = txn.want_of(p, r)
+            var good = txn.matches(live, want, !c.privileged)
+            if good && want.kind == "link" {
+                let a = walk.look_path(c.root, r.path, false)
+                let b = walk.look_path(c.root, r.target, false)
+                good = a.ino == b.ino && a.dev == b.dev
+            }
+            if !good { eprint("larder: drift {r.path} ({p.name})"); drift += 1 }
+        }
+    }
+    if drift > 0 { return finish_open(o, 1, "verify: {drift} drifted paths") }
+    print("verify ok")
+    finish_open(o, 0, "")
+}
+
+// ------------------------------------------------------------------ rescue
+
+fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
+    let c = open_root(opts.root, fp)
+    if c.root.error != "" { return fail(c.root.error) }
+    var o = take_lock(c)
+    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    let guard = check_state(c)
+    if guard != "" { return finish_open(o, 9, "rescue-unknown-state {guard}") }
+    o.cur = txn.current(c)
+    if o.cur.error != "" { return finish_open(o, 9, "rescue-ambiguous-generation ({o.cur.error})") }
+    o.g = txn.load(c, o.cur)
+    if o.g.error != "" { return finish_open(o, 9, "rescue-ambiguous-generation ({o.g.error})") }
+    let waiting = txn.pending(c)
+    if waiting == "" {
+        print("rescue: nothing to do")
+        return finish_open(o, 0, "")
+    }
+    if text.contains(waiting, ",") { return finish_open(o, 9, "rescue-ambiguous-generation (transactions {waiting})") }
+    let t = waiting
+    let n = intent.decimal(version.part(t, 1, t.len))
+    if !text.starts_with(t, "t") || n < 1 { return finish_open(o, 9, "rescue-ambiguous-generation ({t})") }
+    if o.cur.transaction == t && o.cur.generation == n {
+        let e = txn.finish(c, t)
+        if e != "" { return finish_open(o, 9, "rescue: finish {t}: {e}") }
+        print("rescue: finished {t}")
+        return finish_open(o, 0, "")
+    }
+    if n != o.cur.generation + 1 { return finish_open(o, 9, "rescue-ambiguous-generation ({t} after generation {o.cur.generation})") }
+    let present = walk.look_path(c.root, "{txn.state()}/transactions/{t}/intent", false)
+    if present.kind == "error" { return finish_open(o, 9, "rescue-unknown-state ({present.error})") }
+    if present.kind == "absent" {
+        let e = txn.undo_unprepared(c, t, n)
+        if e != "" { return finish_open(o, 9, e) }
+        print("rescue: discarded {t}")
+        return finish_open(o, 0, "")
+    }
+    let it = intent.parse(txn.read_rel(c, "{txn.state()}/transactions/{t}/intent", 268435456))
+    if it.error != "" { return finish_open(o, 9, it.error) }
+    if it.transaction != t || it.from != o.cur.generation { return finish_open(o, 9, "rescue-ambiguous-generation (intent {it.transaction})") }
+    let e = txn.undo(c, it)
+    if e != "" { return finish_open(o, 9, e) }
+    print("rescue: undone {t}")
+    finish_open(o, 0, "")
+}
+
+/// Run one root verb. fail is inert for the shipped executable (R-pm04-4).
+pub fn run(a: List[str], fp: failpoint.Fail) -> int {
+    let opts = parse(a)
+    if opts.error != "" { return usage(opts.error) }
+    let verb = a[0]
+    if verb == "init" { return init(opts) }
+    if verb == "status" { return status(opts) }
+    if verb == "verify" { return verify(opts) }
+    if verb == "rescue" { return rescue(opts, fp) }
+    if verb == "install" || verb == "remove" || verb == "upgrade" || verb == "autoremove" {
+        return mutate(verb, opts, fp)
+    }
+    usage("unknown root verb {verb}")
+}
+
+/// Whether a verb belongs to this module.
+pub fn owns(verb: str) -> bool {
+    verb == "init" ||
+        verb == "status" ||
+        verb == "verify" ||
+        verb == "rescue" ||
+        verb == "install" ||
+        verb == "remove" ||
+        verb == "upgrade" ||
+        verb == "autoremove"
+}
