@@ -14,7 +14,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import stat
 import subprocess
 import sys
@@ -30,6 +29,9 @@ ZERO = '0' * 64
 CRASH_EXIT = 134  # the failpoint crash is a runtime trap (assert), never an exit call
 EXCLUDED = ('var/lib/larder/trust', 'var/cache/larder')
 PRIVILEGED = os.geteuid() == 0
+# pm03 refuses test-only signing as root, so a privileged take publishes its
+# fixture repository as this unprivileged uid and uses root only for root verbs.
+FIXTURE_UID = int(os.environ.get('LARDER_FIXTURE_UID', '65534'))
 
 FAILED = []
 KEEP_GOING = False
@@ -55,7 +57,7 @@ def check(ok, row, detail=''):
     return emit(bool(ok), row, detail)
 
 
-def lrd(*args, binary=None, env=None, timeout=120):
+def lrd(*args, binary=None, env=None, timeout=120, fixture=False):
     exe = binary or BIN
     if not Path(exe).exists():
         return subprocess.CompletedProcess([str(exe)], 127, '', f'missing executable {exe}')
@@ -63,12 +65,27 @@ def lrd(*args, binary=None, env=None, timeout=120):
     full_env.pop('LARDER_FAILPOINT', None)
     if env:
         full_env.update(env)
+    drop = fixture and PRIVILEGED
     return subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True,
-                          timeout=timeout, env=full_env, preexec_fn=no_core)
+                          timeout=timeout, env=full_env, preexec_fn=as_fixture if drop else no_core)
 
 
 def no_core():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def as_fixture():
+    no_core()
+    os.setgroups([])
+    os.setgid(FIXTURE_UID)
+    os.setuid(FIXTURE_UID)
+
+
+def fixture_dir(path):
+    path.mkdir(parents=True, mode=0o700)
+    if PRIVILEGED:
+        os.chown(path, FIXTURE_UID, FIXTURE_UID)
+    return path
 
 
 def describe(p):
@@ -223,7 +240,13 @@ class Package:
             f'configs: [{configs}], actions: [{actions}] }}\n')
         tpath = work / f'{self.name}-{self.version}.template'
         tpath.write_text(template)
-        p = lrd('pack', src, tpath, out, '--epoch', '100')
+        if PRIVILEGED:
+            for top in (src, out, buildinfo, tpath):
+                os.lchown(top, FIXTURE_UID, FIXTURE_UID)
+                for dirpath, dirnames, filenames in os.walk(top):
+                    for n in dirnames + filenames:
+                        os.lchown(os.path.join(dirpath, n), FIXTURE_UID, FIXTURE_UID)
+        p = lrd('pack', src, tpath, out, '--epoch', '100', fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-pack-{self.name}-{self.version} {describe(p)}')
         return out / f'{self.name}-{self.version}.manifest', buildinfo
@@ -266,10 +289,10 @@ class Repo:
         self.built = {}
 
     def setup(self):
-        p = lrd('repo', 'keygen', '--keys', self.keys, '--now', NOW)
+        p = lrd('repo', 'keygen', '--keys', self.keys, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-keygen {describe(p)}')
-        p = lrd('repo', 'init', '--repo', self.url, '--keys', self.keys, '--now', NOW)
+        p = lrd('repo', 'init', '--repo', self.url, '--keys', self.keys, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-repo-init {describe(p)}')
         shutil.copyfile(self.repo / 'metadata/1.root.json', self.pinned)
@@ -284,7 +307,7 @@ class Repo:
             manifest, buildinfo = self.built[key]
             args += ['--manifest', manifest, '--buildinfo', buildinfo]
         p = lrd('repo', 'publish', '--repo', self.url, '--keys', self.keys, '--version', str(self.version),
-                *args, '--now', NOW)
+                *args, '--now', NOW, fixture=True)
         if p.returncode != 0:
             raise SystemExit(f'FAIL fixture-publish-{self.version} {describe(p)}')
 
@@ -418,9 +441,9 @@ def paused(root, failpoint, *args):
     return proc, fifo, line.strip()
 
 
-def resume(proc, fifo):
+def resume(proc, fifo, word='go'):
     with open(fifo, 'w') as f:
-        f.write('go\n')
+        f.write(word + '\n')
     out, err = proc.communicate(timeout=120)
     os.unlink(fifo)
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
@@ -451,9 +474,9 @@ def lock_owner_exit(r):
         emit(False, 'lock-owner-exit', f'missing {FPBIN}')
     proc, fifo, line = paused(root, 'lock', 'install', '--root', root, 'lone', '--now', NOW)
     check(line == 'PAUSED lock', 'lock-owner-exit-paused', line)
-    proc.send_signal(signal.SIGKILL)
-    proc.wait(timeout=30)
-    os.unlink(fifo)
+    # The holder dies by its own trap; the test signals nothing (RULES 5).
+    died = resume(proc, fifo, 'crash')
+    check(died.returncode == CRASH_EXIT, 'lock-owner-exit-holder-died', describe(died))
     ok(lrd('install', '--root', root, 'lone', '--now', NOW), 'lock-owner-exit')
     check(not any(p.name.startswith('pid') for p in (root / 'var/lib/larder').iterdir()), 'lock-no-pid-file')
 
@@ -975,8 +998,10 @@ def main():
     KEEP_GOING = args.all
     if WORK.exists():
         shutil.rmtree(WORK)
-    (WORK / 'packages').mkdir(parents=True, mode=0o700)
-    repo = Repo(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    fixture = fixture_dir(WORK / 'fixture')
+    fixture_dir(fixture / 'packages')
+    repo = Repo(fixture)
     repo.setup()
     repo.publish(universe())
     roots = Roots(repo)
