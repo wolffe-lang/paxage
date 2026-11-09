@@ -181,10 +181,18 @@ fn extract(fd: int, es: List[payload.Entry]) -> str {
 
 /// Stage only in an empty caller-owned non-mount directory. Leaves partial tree
 /// on failure, never recursively cleans it; caller discards it. Root is refused.
-pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str {
+pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str { stage_inner(fd, es, root, false) }
+
+/// Transaction staging (pm04, R-pm04-8): stage's checks, with euid 0 allowed only
+/// for a caller that stages into the root's own 0700 transaction directory.
+pub fn stage_private(fd: int, es: List[payload.Entry], root: str) -> str { stage_inner(fd, es, root, true) }
+
+fn stage_inner(fd: int, es: List[payload.Entry], root: str, transaction: bool) -> str {
     let uid = os_euid() else |_| { return "stage-identity-unavailable" }
-    let denied = privilege(uid)
-    if denied != "" { return denied }
+    if !transaction {
+        let denied = privilege(uid)
+        if denied != "" { return denied }
+    }
     if root == "/" { return "stage-root-is-root" }
     let before = fs_lstat(root) else |_| { return "stage-root" }
     if before[0] != 1 ||
