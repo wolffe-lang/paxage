@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# check-transactions-privileged — the X-rows as root, so owners are applied by
+# handle (R-pm04-5). Three routes, chosen by the gauntlet (tools/gauntlet prints the
+# column-0 SKIP when none is available):
+#   * already root: run the rows here;
+#   * GitHub Actions on Linux with passwordless sudo: run them under sudo;
+#   * LARDER_CONTAINER_ENGINE + LARDER_TRANSACTION_IMAGE: a rootless container's
+#     root, with a copy of this tree on the same journalled filesystem (a bind
+#     mount, never the container's overlay) and a tmpfs for the unqualified row.
+# --available exits 0 when a route exists, 1 otherwise, and writes nothing.
+set -eu
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+route=none
+if [ "$(id -u)" = 0 ]; then
+  route=root
+elif [ "${GITHUB_ACTIONS:-}" = true ] && [ "$(uname -s)" = Linux ] && sudo -n true 2>/dev/null; then
+  route=sudo
+elif [ -n "${LARDER_CONTAINER_ENGINE:-}" ] && [ -n "${LARDER_TRANSACTION_IMAGE:-}" ]; then
+  route=container
+fi
+if [ "${1:-}" = --available ]; then [ "$route" != none ]; exit $?; fi
+echo "transactions-privileged: route=$route"
+case $route in
+  root)
+    exec python3 -I tools/check-transactions ;;
+  sudo)
+    shm=$(mktemp -d /dev/shm/larder-unqualified.XXXXXX)
+    trap 'sudo -n rm -rf "$shm" "$ROOT/target/transactions"' EXIT
+    sudo -n env PATH="$PATH" LARDER_UNQUALIFIED_ROOT="$shm" python3 -I tools/check-transactions
+    exit $? ;;
+  container)
+    scratch=$ROOT/target/privileged
+    rm -rf "$scratch"
+    mkdir -p "$scratch/tmp"
+    toolchain=$(cd .wolf-bin && pwd -P)
+    cpus=${LARDER_CPUS:-0-3}
+    rc=0
+    "$LARDER_CONTAINER_ENGINE" run --rm --memory "${LARDER_CONTAINER_MEMORY:-12g}" --pids-limit 4096 \
+      -v "$ROOT:/src:ro" -v "$toolchain:/toolchain:ro" -v "$scratch:$scratch" \
+      --tmpfs /mnt/unqualified:size=16m \
+      -e LARDER_UNQUALIFIED_ROOT=/mnt/unqualified -e TMPDIR="$scratch/tmp" -e S="$scratch" -e CPUS="$cpus" \
+      "$LARDER_TRANSACTION_IMAGE" bash -c '
+        set -eu
+        mkdir -p "$S/tree"
+        tar -C /src --exclude=./target --exclude=./.wolf-bin -cf - . | tar -C "$S/tree" -xf -
+        ln -s /toolchain "$S/tree/.wolf-bin"
+        cd "$S/tree"
+        export LARDER_ROOT="$S/tree"
+        taskset -c "$CPUS" tools/build >/dev/null
+        taskset -c "$CPUS" python3 -I tools/check-transactions
+        exit $?' || rc=$?
+    "$LARDER_CONTAINER_ENGINE" unshare rm -rf "$scratch" 2>/dev/null || rm -rf "$scratch" 2>/dev/null || true
+    exit $rc ;;
+  none)
+    echo 'transactions-privileged: no route (not root, no CI sudo, no container engine and image)' >&2
+    exit 2 ;;
+esac
