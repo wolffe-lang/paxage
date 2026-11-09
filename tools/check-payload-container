@@ -18,14 +18,14 @@ IMAGE='docker.io/library/archlinux@sha256:8185e444e45ba166146b244b41f1cba2d7d91f
 CAP_KIB=2*1024*1024
 
 def container(command,mounts):
-    engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
+    engine=os.environ.get('PAXAGE_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
     args=[engine,'run','--rm','--network','none','--memory','2g','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
     if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
     for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
     # A larder built on a NixOS host (hasu) asks for its loader and libraries under
     # /nix/store; mounting that read-only lets the same binary run here and changes no verdict.
     if Path('/nix/store').is_dir():args+=['-v','/nix/store:/nix/store:ro']
-    cpus=os.environ.get('LARDER_CONTAINER_CPUS')
+    cpus=os.environ.get('PAXAGE_CONTAINER_CPUS')
     if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
     # The 2 GiB address-space cap is the archivers' and larder's, inside the container. podman
     # (a Go program) is not capped: under the cap its runtime failed to map 4 MiB blocks
@@ -42,7 +42,7 @@ def warm():
     old outer 2 GiB cap: pthread_create, then runtime out of memory). So the pull, with retries, and
     the copy happen here under their own 900 s bounds. A warm store takes a second."""
     import time
-    engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
+    engine=os.environ.get('PAXAGE_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
     start=time.monotonic()
     for attempt in range(1,5):
         p=subprocess.run([engine,'pull','-q',IMAGE],stdin=subprocess.DEVNULL,capture_output=True,timeout=900)

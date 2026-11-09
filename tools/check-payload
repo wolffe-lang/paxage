@@ -234,7 +234,7 @@ def check_staged(rows,into):
     assert actual==expected,('F6-fuzz-tree-inventory',actual,expected)
 
 def fuzz(d,valid):
-    seed=1347244082; rng=random.Random(seed);count=int(os.environ.get('LARDER_FUZZ_CASES','100000'))
+    seed=1347244082; rng=random.Random(seed);count=int(os.environ.get('PAXAGE_FUZZ_CASES','100000'))
     assert count>=100000,'F6-fuzz-minimum'
     print(f'F6 mutation seed={seed} inputs={count} per-input-timeout=5s',flush=True)
     command=[str(PROBE)]

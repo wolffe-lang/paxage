@@ -4,7 +4,7 @@
 A GitHub release origin can answer 504 for minutes at a time. fetch_release
 (tools/lib-fetch.sh) must outlast six in a row, give up by name inside its
 bound, and leave the digest check to its caller. The rows use
-LARDER_FETCH_RETRY_DELAY=1 and LARDER_FETCH_RETRY_MAX_TIME=30, so they run in
+PAXAGE_FETCH_RETRY_DELAY=1 and PAXAGE_FETCH_RETRY_MAX_TIME=30, so they run in
 seconds. Nothing leaves 127.0.0.1, and nothing is written outside
 target/fetch-retry.
 """
@@ -60,7 +60,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
 
 
 def fetch(url, out):
-    env = dict(os.environ, LARDER_FETCH_RETRY_DELAY='1', LARDER_FETCH_RETRY_MAX_TIME='30')
+    env = dict(os.environ, PAXAGE_FETCH_RETRY_DELAY='1', PAXAGE_FETCH_RETRY_MAX_TIME='30')
     script = '. "$1"; fetch_release "$2" "$3"'
     start = time.monotonic()
     p = subprocess.run(['sh', '-c', script, 'fetch', str(LIB), url, str(out)], capture_output=True, text=True,
@@ -104,12 +104,12 @@ def main():
         archives = WORK / 'archives'
         archives.mkdir()
         target = subprocess.run(['sh', '-c', '. tools/lib-toml.sh; host_target'], cwd=ROOT, capture_output=True,
-                                text=True, env=dict(os.environ, LARDER_ROOT=str(ROOT))).stdout.strip()
+                                text=True, env=dict(os.environ, PAXAGE_ROOT=str(ROOT))).stdout.strip()
         version = subprocess.run(['sh', '-c', '. tools/lib-toml.sh; toml_value wolf version'], cwd=ROOT,
-                                 capture_output=True, text=True, env=dict(os.environ, LARDER_ROOT=str(ROOT))).stdout.strip()
+                                 capture_output=True, text=True, env=dict(os.environ, PAXAGE_ROOT=str(ROOT))).stdout.strip()
         (archives / f'wolf-{version}-{target}.tar.gz').write_bytes(BODY)
         p = subprocess.run([str(scratch / 'tools/fetch-toolchain')], capture_output=True, text=True, timeout=120,
-                           env=dict(os.environ, LARDER_ARCHIVE_DIR=str(archives), TMPDIR=str(WORK)))
+                           env=dict(os.environ, PAXAGE_ARCHIVE_DIR=str(archives), TMPDIR=str(WORK)))
         have = hashlib.sha256(BODY).hexdigest()
         good = p.returncode == 1 and f'sha256 {have}' in p.stderr and 'REFUSED' in p.stderr
         emit(good, 'fetch-retry-digest-still-refuses', f'exit={p.returncode} stderr={p.stderr[-300:]!r}')

@@ -6,9 +6,9 @@
 # pinned commit. A stage whose recorded digests already match is left
 # alone, so the tool is cheap to run before every build.
 set -eu
-LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export LARDER_ROOT
-cd "$LARDER_ROOT"
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
 . tools/lib-toml.sh
 . tools/lib-fetch.sh
 
@@ -45,13 +45,13 @@ fetch_archive() {
     version=$(toml_value "$1" version)
     repo=$(toml_value "$1" repo)
     base="$2-$version-$target"
-    # $LARDER_ARCHIVE_DIR takes the archive from a directory instead of the
+    # $PAXAGE_ARCHIVE_DIR takes the archive from a directory instead of the
     # network, for a host whose link to GitHub is slow or absent. The
     # digest check below is the same either way: the pin is what makes an
     # archive acceptable, never where it came from.
-    if [ -n "${LARDER_ARCHIVE_DIR:-}" ] && [ -f "$LARDER_ARCHIVE_DIR/$base.tar.gz" ]; then
-        echo "fetch-toolchain: $LARDER_ARCHIVE_DIR/$base.tar.gz"
-        cp "$LARDER_ARCHIVE_DIR/$base.tar.gz" "$tmp/$base.tar.gz"
+    if [ -n "${PAXAGE_ARCHIVE_DIR:-}" ] && [ -f "$PAXAGE_ARCHIVE_DIR/$base.tar.gz" ]; then
+        echo "fetch-toolchain: $PAXAGE_ARCHIVE_DIR/$base.tar.gz"
+        cp "$PAXAGE_ARCHIVE_DIR/$base.tar.gz" "$tmp/$base.tar.gz"
     else
         url="https://github.com/$repo/releases/download/v$version/$base.tar.gz"
         echo "fetch-toolchain: $url"

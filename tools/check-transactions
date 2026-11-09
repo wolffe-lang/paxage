@@ -37,9 +37,9 @@ def fixture_identity():
     checkout's owner, who can always reach the checkout: a GitHub runner keeps it under a
     0750 home that nobody else may search, so a fixed uid like 65534 cannot exec the
     binary there. A root-owned checkout (the container take's copy) falls back to sudo's
-    caller, then to 65534. LARDER_FIXTURE_UID overrides."""
-    if os.environ.get('LARDER_FIXTURE_UID', '').isdigit():
-        uid = int(os.environ['LARDER_FIXTURE_UID'])
+    caller, then to 65534. PAXAGE_FIXTURE_UID overrides."""
+    if os.environ.get('PAXAGE_FIXTURE_UID', '').isdigit():
+        uid = int(os.environ['PAXAGE_FIXTURE_UID'])
         return uid, uid
     st = ROOT.stat()
     if st.st_uid != 0:
@@ -81,7 +81,7 @@ def pxg(*args, binary=None, env=None, timeout=120, fixture=False):
     if not Path(exe).exists():
         return subprocess.CompletedProcess([str(exe)], 127, '', f'missing executable {exe}')
     full_env = dict(os.environ)
-    full_env.pop('LARDER_FAILPOINT', None)
+    full_env.pop('PAXAGE_FAILPOINT', None)
     if env:
         full_env.update(env)
     drop = fixture and PRIVILEGED
@@ -456,7 +456,7 @@ def lock_inode(r):
 def paused(root, failpoint, *args):
     fifo = WORK / f'fifo-{os.getpid()}-{time.monotonic_ns()}'
     os.mkfifo(fifo, 0o600)
-    env = dict(os.environ, LARDER_FAILPOINT=f'{failpoint}:pause', LARDER_FAILPOINT_FIFO=str(fifo))
+    env = dict(os.environ, PAXAGE_FAILPOINT=f'{failpoint}:pause', PAXAGE_FAILPOINT_FIFO=str(fifo))
     proc = subprocess.Popen([str(FPBIN), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, preexec_fn=no_core)
     deadline = time.monotonic() + 30
@@ -813,7 +813,7 @@ def trace_points(p, prefix=''):
 
 def failpoints(r, base, verb):
     root = r.copy(base, f'trace-{verb}')
-    p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = run_verb(root, verb, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'trace'})
     return p, [name for name, _ in trace_points(p)]
 
 
@@ -848,7 +848,7 @@ def crash_matrix(r, verb):
         if name == 'commit-renamed':
             committed = True
         root = r.copy(base, f'crash-{verb}')
-        p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
+        p = run_verb(root, verb, binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{name}:crash'})
         row_name = f'crash-{verb}-{name}'
         try:
             check(p.returncode == CRASH_EXIT, f'{row_name}-cut', describe(p))
@@ -889,14 +889,14 @@ def crash_rescue(r):
     _, names = failpoints(r, base, 'remove')
     cut = [n for n in names if n.startswith('apply:')][-1]
     stuck = r.copy(base, 'rescue-base')
-    run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    run_verb(stuck, 'remove', binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{cut}:crash'})
     probe = r.copy(stuck, 'rescue-trace')
-    p = pxg('rescue', '--root', probe, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = pxg('rescue', '--root', probe, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'trace'})
     rescue_names = [name for name, _ in trace_points(p, 'rescue:')]
     check(any(n.startswith('rescue:undo:') for n in rescue_names), 'crash-rescue-hooked', repr(rescue_names))
     for name in rescue_names:
         root = r.copy(stuck, 'crash-rescue')
-        q = pxg('rescue', '--root', root, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:crash'})
+        q = pxg('rescue', '--root', root, binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{name}:crash'})
         try:
             check(q.returncode == CRASH_EXIT, f'crash-rescue-{name}-cut', describe(q))
             recovered_twice(r, root, f'crash-rescue-{name}', old)
@@ -913,7 +913,7 @@ def injected_matrix(r, verb):
     for kind in ('eio', 'enospc'):
         for name in picks:
             root = r.copy(base, f'{kind}')
-            p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:{kind}'})
+            p = run_verb(root, verb, binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{name}:{kind}'})
             row_name = f'{kind}-{verb}-{name}'
             try:
                 check(p.returncode == 1 and ('io' if kind == 'eio' else 'no-space') in p.stderr,
@@ -947,7 +947,7 @@ def rescue_entry(r):
     _, names = failpoints(r, root, 'remove')
     cut = [n for n in names if n.startswith('apply:') and n.count(':') == 1][-1]
     stuck = r.copy(root, 'rescue-stuck')
-    run_verb(stuck, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    run_verb(stuck, 'remove', binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{cut}:crash'})
     s = status(stuck) or {}
     check(s.get('pending', '').startswith('t'), 'status-recovery-needed', json.dumps(s))
     refused(pxg('install', '--root', stuck, 'lone', '--now', NOW), 'mutation-refused-recovery-needed', 8,
@@ -978,7 +978,7 @@ def races(r):
     base = r.ready('race-base')
     old = tree_digest(base)
     probe = r.copy(base, 'race-trace')
-    p = pxg('install', '--root', probe, 'alpha', '--now', NOW, binary=FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = pxg('install', '--root', probe, 'alpha', '--now', NOW, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'trace'})
     points = trace_points(p)
     target = 'usr/share/alpha/data'
     walks = [n for n, info in points if n.endswith(':walk') and f'path={target}' in info.split()]
@@ -1029,10 +1029,10 @@ def state_race(r):
 
 @row('fs-unqualified-refused')
 def unqualified(r):
-    target = os.environ.get('LARDER_UNQUALIFIED_ROOT', '')
+    target = os.environ.get('PAXAGE_UNQUALIFIED_ROOT', '')
     if not target:
         # The gauntlet prints the column-0 SKIP for this row; inside a step it would read as a nested SKIP.
-        print('  skipped fs-unqualified-refused: no LARDER_UNQUALIFIED_ROOT (the container take mounts a tmpfs)')
+        print('  skipped fs-unqualified-refused: no PAXAGE_UNQUALIFIED_ROOT (the container take mounts a tmpfs)')
         return
     root = Path(target) / 'root'
     root.mkdir()

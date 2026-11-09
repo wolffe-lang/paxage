@@ -4,9 +4,9 @@
 --host runs the recorder's protocol rows, the synthesizer's rows and the mark
 rows. They need no VM and run on the Mac as well.
 --vm runs the guest rows. They need Linux with /dev/kvm, qemu-system-x86_64,
-the staged Ubuntu 24.04 image (LARDER_GUEST_DIR, checked against the pins
+the staged Ubuntu 24.04 image (PAXAGE_GUEST_DIR, checked against the pins
 below) and a container image of the guest's release to build the guest's
-binaries in (LARDER_GUEST_BUILD_IMAGE).
+binaries in (PAXAGE_GUEST_BUILD_IMAGE).
 --available says whether this host can run --vm, and why not.
 --all keeps going after a FAIL, so a red take names every red row.
 Nothing is written outside target/powercut.
@@ -411,7 +411,7 @@ def mark_rows():
         marked = roots.copy(base, 'marked')
         record = WORK / 'mark' / 'mark-record'
         p = ct.run_verb(marked, 'install', binary=FPBIN,
-                        env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
+                        env={'PAXAGE_FAILPOINT': 'mark', 'PAXAGE_FAILPOINT_MARK': str(record)})
         marks = [line.split(' ', 2)[1] for line in p.stderr.splitlines() if line.startswith('MARK ')]
         last = record.read_bytes()[:512] if record.exists() else b''
         good = (p.returncode == 0 and marks == names and len(last) == 512 and last.startswith(b'MARK done')
@@ -422,7 +422,7 @@ def mark_rows():
         pass
     inert = roots.copy(base, 'inert')
     record = WORK / 'mark' / 'inert-record'
-    p = ct.run_verb(inert, 'install', env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
+    p = ct.run_verb(inert, 'install', env={'PAXAGE_FAILPOINT': 'mark', 'PAXAGE_FAILPOINT_MARK': str(record)})
     good = p.returncode == 0 and not record.exists() and ct.tree_digest(inert) == new
     check(good, 'failpoint-mark-shipped-inert', '' if good else ct.describe(p))
 
@@ -438,7 +438,7 @@ def vm(fn):
 
 
 def guest_dir():
-    return Path(os.environ.get('LARDER_GUEST_DIR', ''))
+    return Path(os.environ.get('PAXAGE_GUEST_DIR', ''))
 
 
 def vm_available():
@@ -449,10 +449,10 @@ def vm_available():
     if not shutil.which('qemu-system-x86_64'):
         return False, 'no qemu-system-x86_64 in PATH'
     d = guest_dir()
-    if not os.environ.get('LARDER_GUEST_DIR') or not all((d / f).is_file() for f in GUEST_FILES):
-        return False, 'LARDER_GUEST_DIR does not hold the staged Ubuntu 24.04 image'
-    if not os.environ.get('LARDER_GUEST_BUILD_IMAGE'):
-        return False, 'no LARDER_GUEST_BUILD_IMAGE to build the guest binaries in'
+    if not os.environ.get('PAXAGE_GUEST_DIR') or not all((d / f).is_file() for f in GUEST_FILES):
+        return False, 'PAXAGE_GUEST_DIR does not hold the staged Ubuntu 24.04 image'
+    if not os.environ.get('PAXAGE_GUEST_BUILD_IMAGE'):
+        return False, 'no PAXAGE_GUEST_BUILD_IMAGE to build the guest binaries in'
     return True, ''
 
 
@@ -476,12 +476,12 @@ def guest_build():
     out.mkdir(parents=True)
     shutil.copytree(ROOT, src, symlinks=True,
                     ignore=shutil.ignore_patterns('target', '.wolf-bin', '.git', '.lu-cache', '__pycache__'))
-    engine = os.environ.get('LARDER_CONTAINER_ENGINE') or shutil.which('podman') or 'podman'
-    image = os.environ['LARDER_GUEST_BUILD_IMAGE']
-    cpus = os.environ.get('LARDER_CPUS', '')
+    engine = os.environ.get('PAXAGE_CONTAINER_ENGINE') or shutil.which('podman') or 'podman'
+    image = os.environ['PAXAGE_GUEST_BUILD_IMAGE']
+    cpus = os.environ.get('PAXAGE_CPUS', '')
     pin = f'taskset -c {cpus} ' if cpus else ''
     toolchain = (ROOT / '.wolf-bin').resolve()
-    args = [engine, 'run', '--rm', '--network', 'none', '--memory', os.environ.get('LARDER_CONTAINER_MEMORY', '8g'),
+    args = [engine, 'run', '--rm', '--network', 'none', '--memory', os.environ.get('PAXAGE_CONTAINER_MEMORY', '8g'),
             '-v', f'{src.resolve()}:/w', '-v', f'{toolchain}:/w/.wolf-bin:ro', '-v', f'{out.resolve()}:/out', image,
             'bash', '-c', f'cd /w && {pin}tools/build > /out/build.log 2>&1 && '
                           'cp target/bin/paxage target/bin/paxage-failpoint /out/']

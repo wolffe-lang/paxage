@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eu
 cd "$(dirname "$0")/.."
-export LARDER_ROOT="$PWD"
+export PAXAGE_ROOT="$PWD"
 . tools/lib-toolchain.sh
 case "${1:-}" in trust_json|trust_state|trust_metadata) unit=$1 ;; *) echo 'usage: check-trust-unit trust_json|trust_state|trust_metadata' >&2; exit 2 ;; esac
 step() {

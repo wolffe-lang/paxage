@@ -5,8 +5,8 @@
 # runs. PATH is deliberately not consulted: a wolf on PATH is whatever
 # the machine last installed, and the pin is the point.
 # Callers get $WOLF, $LUPIN and an exported $WOLF_STD.
-: "${LARDER_ROOT:?lib-toolchain.sh needs LARDER_ROOT}"
-. "$LARDER_ROOT/tools/lib-toml.sh"
+: "${PAXAGE_ROOT:?lib-toolchain.sh needs PAXAGE_ROOT}"
+. "$PAXAGE_ROOT/tools/lib-toml.sh"
 
 fail_pin() {
     echo "toolchain: REFUSED — $1" >&2
@@ -14,8 +14,8 @@ fail_pin() {
     exit 1
 }
 
-WOLF=${WOLF_BIN:-$LARDER_ROOT/.wolf-bin/wolf}
-LUPIN=${LUPIN_BIN:-$LARDER_ROOT/.wolf-bin/lupin}
+WOLF=${WOLF_BIN:-$PAXAGE_ROOT/.wolf-bin/wolf}
+LUPIN=${LUPIN_BIN:-$PAXAGE_ROOT/.wolf-bin/lupin}
 [ -x "$WOLF" ] || fail_pin "no wolf at $WOLF"
 [ -x "$LUPIN" ] || fail_pin "no lupin at $LUPIN"
 
@@ -27,7 +27,7 @@ have=$("$LUPIN" --version 2>/dev/null | head -1)
 [ "$have" = "$want" ] || fail_pin "lupin identity: have \"$have\", pin wants \"$want\""
 [ -f "$(dirname "$WOLF")/libwolf_rt.a" ] || fail_pin "libwolf_rt.a is not beside $WOLF"
 
-WOLF_STD=${WOLF_STD:-$LARDER_ROOT/.wolf-bin/std}
+WOLF_STD=${WOLF_STD:-$PAXAGE_ROOT/.wolf-bin/std}
 want=$(toml_value std rev)
 [ -f "$WOLF_STD/STD-REV" ] || fail_pin "no std tree at $WOLF_STD"
 have=$(cat "$WOLF_STD/STD-REV")

@@ -3,14 +3,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 test "$(hostname)" = kasumi || { echo 'FAIL generator-host'; exit 1; }
-: "${LARDER_VECTOR_WORK:?set a new lane-local vector output directory}"
-mkdir -m 700 "$LARDER_VECTOR_WORK"
-mkdir -m 700 "$LARDER_VECTOR_WORK/tmp" "$LARDER_VECTOR_WORK/home"
+: "${PAXAGE_VECTOR_WORK:?set a new lane-local vector output directory}"
+mkdir -m 700 "$PAXAGE_VECTOR_WORK"
+mkdir -m 700 "$PAXAGE_VECTOR_WORK/tmp" "$PAXAGE_VECTOR_WORK/home"
 image=77fdad6b841abfdb3968ea6137b1edf7248578bdfc4f92e4aab6b2a05f241485
 podman run --rm --pull=never --network none --read-only --init \
   --userns keep-id --user "$(id -u):$(id -g)" --memory 2g --pids-limit 256 \
-  --cpuset-cpus "${LARDER_CONTAINER_CPUS:-0-3}" --cap-drop ALL --security-opt no-new-privileges \
+  --cpuset-cpus "${PAXAGE_CONTAINER_CPUS:-0-3}" --cap-drop ALL --security-opt no-new-privileges \
   -e TMPDIR=/work/tmp -e HOME=/work/home -e PM03_HOST=kasumi \
-  -v "$PWD:/src:ro" -v "$LARDER_VECTOR_WORK:/work:rw" "$image" \
+  -v "$PWD:/src:ro" -v "$PAXAGE_VECTOR_WORK:/work:rw" "$image" \
   prlimit --as=2147483648 python3 -I /src/tools/generate-trust-vectors \
   --output /work/independent --keys /work/test-only-keys

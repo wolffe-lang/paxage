@@ -39,7 +39,7 @@ else
 fi
 if [ "$(uname -s)" = Linux ]; then
   unqualified=$(mktemp -d /dev/shm/paxage-unqualified.XXXXXX)
-  step transactions env LARDER_UNQUALIFIED_ROOT="$unqualified" python3 -I tools/check-transactions
+  step transactions env PAXAGE_UNQUALIFIED_ROOT="$unqualified" python3 -I tools/check-transactions
   rm -rf "$unqualified"
 else
   echo 'SKIP fs-unqualified-refused reason=no tmpfs root on this host; Linux takes refuse one by name'

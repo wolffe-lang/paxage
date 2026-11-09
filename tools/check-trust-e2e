@@ -149,7 +149,7 @@ def main():
     check(stored_root['signed']['version'] == 33, 'T12-last-verified-root-durable')
     last_root.write_bytes(last_bytes)
     run('T12-root-chain-resume', 'update', '--repo', url, '--state', state, '--now', NOW, last='update ok')
-    evidence = Path(os.environ.get('LARDER_WRITER_EVIDENCE', ROOT / 'target/evidence/trust-writer-metadata'))
+    evidence = Path(os.environ.get('PAXAGE_WRITER_EVIDENCE', ROOT / 'target/evidence/trust-writer-metadata'))
     evidence.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(repo / 'metadata', evidence)
     print('PASS trust-e2e')

@@ -163,16 +163,16 @@ A package names registry entries (`src/registry`, R-pm04-9), never ids or paths:
 ## X8 — Failpoints
 
 The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
-(built beside it, never installed) reads `LARDER_FAILPOINT` (R-pm04-4):
+(built beside it, never installed) reads `PAXAGE_FAILPOINT` (R-pm04-4):
 
 - `trace` prints `FAILPOINT <name> [detail]` for every hook passed.
 - `NAME:crash` ends the process by a runtime trap at NAME (exit 134, no
   unwinding).
 - `NAME:eio` and `NAME:enospc` fail the step at NAME with `io` or `no-space`.
-- `NAME:pause` prints `PAUSED NAME` and waits on `LARDER_FAILPOINT_FIFO`. The
+- `NAME:pause` prints `PAUSED NAME` and waits on `PAXAGE_FAILPOINT_FIFO`. The
   word `crash` there traps.
 - `mark` writes one 512-byte record, `MARK <name> [detail]`, at offset 0 of
-  `LARDER_FAILPOINT_MARK` at every hook. It fsyncs the record and prints it on
+  `PAXAGE_FAILPOINT_MARK` at every hook. It fsyncs the record and prints it on
   stderr. On a block device served by the power-cut recorder (X11), each record
   is logged in order with the data writes.
 

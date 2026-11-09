@@ -11,7 +11,7 @@ toml_value() {
             print
             exit
         }
-    ' "${LARDER_ROOT:-.}/wolf-toolchain.toml"
+    ' "${PAXAGE_ROOT:-.}/wolf-toolchain.toml"
 }
 
 # host_target: the release-archive target triple for this machine.

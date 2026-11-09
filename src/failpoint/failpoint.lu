@@ -10,7 +10,7 @@ pub struct Fail { name: str, action: str, trace: bool, fifo: str, mark: str }
 /// The inert hook set the shipped executable uses.
 pub fn none() -> Fail { Fail { name: "", action: "", trace: false, fifo: "", mark: "" } }
 
-/// Parse LARDER_FAILPOINT. An unknown action arms nothing and is reported by the caller.
+/// Parse PAXAGE_FAILPOINT. An unknown action arms nothing and is reported by the caller.
 pub fn parse(spec: str, fifo: str) -> Fail {
     if spec == "" { return none() }
     if spec == "trace" { return Fail { name: "", action: "", trace: true, fifo, mark: "" } }

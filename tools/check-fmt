@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
-LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export LARDER_ROOT
-cd "$LARDER_ROOT"
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
 . tools/lib-toolchain.sh
 "$WOLF" fmt --check src

@@ -116,7 +116,7 @@ def roots_on(repo, work):
 def paused(root, failpoint, *args):
     fifo = P / f'fifo-{time.monotonic_ns()}'
     os.mkfifo(fifo, 0o600)
-    env = dict(os.environ, LARDER_FAILPOINT=f'{failpoint}:pause', LARDER_FAILPOINT_FIFO=str(fifo))
+    env = dict(os.environ, PAXAGE_FAILPOINT=f'{failpoint}:pause', PAXAGE_FAILPOINT_FIFO=str(fifo))
     proc = subprocess.Popen([str(ct.FPBIN), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
     line = ''
@@ -144,7 +144,7 @@ def resume(proc, fifo, word='go'):
 
 
 def marked(verb_args, markdev):
-    return ct.pxg(*verb_args, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': markdev})
+    return ct.pxg(*verb_args, binary=ct.FPBIN, env={'PAXAGE_FAILPOINT': 'mark', 'PAXAGE_FAILPOINT_MARK': markdev})
 
 
 def scenario_line(**kw):
@@ -153,7 +153,7 @@ def scenario_line(**kw):
 
 def trace_names(roots, base, args):
     probe = roots.copy(base, 'trace')
-    p = ct.pxg(*args(probe), binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    p = ct.pxg(*args(probe), binary=ct.FPBIN, env={'PAXAGE_FAILPOINT': 'trace'})
     return [name for name, _ in ct.trace_points(p)]
 
 
@@ -195,7 +195,7 @@ def phase_run(job):
     old = ct.tree_digest(stuck)
     names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
     cut = [n for n in names if n.startswith('apply:')][-1]
-    q = ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    q = ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'PAXAGE_FAILPOINT': f'{cut}:crash'})
     emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-undo-crash', ct.describe(q))
     _, after, _ = recorded('rescue-undo', stuck, ['rescue', '--root', stuck], markdev, fs, old=old)
     emit(after == old, f'powercut-{fs}-rescue-undo-restores-old', f'after={after[:12]} old={old[:12]}')
@@ -205,7 +205,7 @@ def phase_run(job):
     _, upgraded, _ = recorded('upgrade', base, ['upgrade', '--root', base, '--now', NOW], markdev, fs)
     done = roots.ready('pc-rescue-finish', 'alpha=1-1')
     old = ct.tree_digest(done)
-    q = ct.pxg('upgrade', '--root', done, '--now', NOW, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'commit:crash'})
+    q = ct.pxg('upgrade', '--root', done, '--now', NOW, binary=ct.FPBIN, env={'PAXAGE_FAILPOINT': 'commit:crash'})
     emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-finish-crash', ct.describe(q))
     _, finished, _ = recorded('rescue-finish', done, ['rescue', '--root', done], markdev, fs, old=old)
     emit(finished == upgraded, f'powercut-{fs}-rescue-finish-completes',
@@ -320,7 +320,7 @@ def matrix(fs, dev):
     run('cp', '-a', PAXAGE / 'target/bin', checkout / 'target/bin')
     unq = P / 'unqualified'
     unq.mkdir()
-    env = dict(os.environ, LARDER_UNQUALIFIED_ROOT=str(unq))
+    env = dict(os.environ, PAXAGE_UNQUALIFIED_ROOT=str(unq))
     proc = subprocess.Popen(['python3', '-I', str(checkout / 'tools/check-transactions'), '--all'],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     passes, fails = 0, 0
@@ -356,7 +356,7 @@ def phase_eio(job):
         old = ct.tree_digest(stuck)
         names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
         cut = [n for n in names if n.startswith('apply:')][-1]
-        ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+        ct.pxg('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'PAXAGE_FAILPOINT': f'{cut}:crash'})
         root, args = stuck, ['rescue', '--root', stuck]
     else:
         repo.publish(ct.universe(upgraded=True))

@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
-LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export LARDER_ROOT
-cd "$LARDER_ROOT"
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
 . tools/lib-toolchain.sh
 mkdir -p target/bin
-rm -rf "$LARDER_ROOT/src/.lu-cache"
+rm -rf "$PAXAGE_ROOT/src/.lu-cache"
 "$WOLF" build --deny-warnings src/paxage.lu -o target/bin/paxage
 ln -sf paxage target/bin/pxg
-rm -rf "$LARDER_ROOT/src/.lu-cache"
+rm -rf "$PAXAGE_ROOT/src/.lu-cache"
 "$WOLF" build --deny-warnings src/paxage_failpoint.lu -o target/bin/paxage-failpoint
 printf 'build: target/bin/paxage and pxg\n'

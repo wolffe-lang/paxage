@@ -239,6 +239,6 @@ undone t<N>`. It refuses, exit 9, with `rescue-unknown-state PATH`,
 ## C16 — The test-only failpoint executable
 
 `target/bin/paxage-failpoint` accepts only the root verbs and reads
-`LARDER_FAILPOINT` (X8). It is built for the transaction rows and never installed;
+`PAXAGE_FAILPOINT` (X8). It is built for the transaction rows and never installed;
 `paxage` and `pxg` carry no failpoint input.
 

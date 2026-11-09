@@ -2,7 +2,7 @@
 # T17 primitive qualification, including the named strict-policy rows.
 set -eu
 cd "$(dirname "$0")/.."
-export LARDER_ROOT="$PWD"
+export PAXAGE_ROOT="$PWD"
 . tools/lib-toolchain.sh
 step() {
   local name=$1 started=$SECONDS result=0

@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 [ "$(uname -s)" = Linux ] || { echo 'FAIL trust-fuzz-requires-linux'; exit 1; }
-export LARDER_ROOT="$PWD"
+export PAXAGE_ROOT="$PWD"
 . tools/lib-toolchain.sh
 step() {
   local name=$1 started=$SECONDS result=0

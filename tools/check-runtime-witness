@@ -2,16 +2,16 @@
 # Record the requested three-line runtime witness; never alter the runtime.
 set -eu
 ulimit -c 0
-LARDER_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export LARDER_ROOT
-cd "$LARDER_ROOT"
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
 . tools/lib-toolchain.sh
-out="$LARDER_ROOT/target/runtime-witness"
+out="$PAXAGE_ROOT/target/runtime-witness"
 mkdir -p "$out"
 "$WOLF" --version > "$out/version.txt"
 cat "$out/version.txt"
 for row in trap return; do
-  rm -rf "$LARDER_ROOT/tests/runtime/$row/.lu-cache"
+  rm -rf "$PAXAGE_ROOT/tests/runtime/$row/.lu-cache"
   "$WOLF" build --deny-warnings "tests/runtime/$row/main.lu" -o "$out/$row"
   result=0
   if [ "$(uname -s)" = Linux ]; then
