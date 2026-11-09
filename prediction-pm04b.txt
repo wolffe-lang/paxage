@@ -1,0 +1,337 @@
+pm04b prediction — 2026-11-09T09:26Z. Recovery and power cuts, M-PM1's second half.
+Authority: planning fa4cfeed, sprints/pm/04-linux-transactions (items 4 and 5 and
+the gate stand); R-pm04-1..15 all A, in particular R-pm04-14 A (an NBD write
+recorder and synthesized crash states, blkdebug for EIO only) and R-pm04-15 A
+(the split: pm04b = the QEMU power-cut witness, real EIO and ENOSPC, the ext2
+refusal and the missing-barrier plant; M-PM1 is claimed at pm04b's merge).
+Base: larder trunk 226cfcbd6bec (pm04a merged). Branch pm04b.
+This is a prediction, not measured evidence. It is committed before any change.
+Sources, as ruled: the NBD protocol specification (doc/proto.md, sha256
+4b4eda49c5b9b4bf1572eebbee8bcacf99ca3d910b102d7ecf525b90565592c4), QEMU's
+documentation (block drivers, -blockdev, virtio-blk), fsync(2), rename(2),
+mount(8) and ext4(5) (data=ordered, auto_da_alloc, delalloc, commit=),
+e2fsck(8), mkfs.ext4(8), the kernel's admin-guide kernel-parameters (init=,
+"--"), the crash-consistency papers (ALICE, OSDI'14; CrashMonkey, OSDI'18), and
+pacman's and dpkg's documented behaviour. Never another package manager's,
+archiver's or filesystem's source.
+
+== 0. What the base has, and what it cannot see
+
+pm04a gives, on host ext4 in a container (938 rows as root, 937 as the user):
+a crash at every transition of install, upgrade and remove; a crash at every
+rescue hook; injected EIO and ENOSPC at capacity, backup, intent, a temp step,
+a renamed step, generation and commit; lock contention and owner exit; symlink
+swaps on every ancestor; and the rescue refusals by name.
+A process crash keeps the page cache. Nothing in that matrix can see:
+- a missing or misplaced barrier (an fsync, or a parent directory's fsync);
+- what the device actually holds after a power cut, including torn sectors;
+- a real device error, or a really full filesystem;
+- ext3 as distinct from ext4;
+- a power cut during rescue itself.
+pm04b adds that witness. It adds no new transaction semantics. Its larder change
+is one test-only failpoint action (section 2) and whatever the witness finds.
+
+Measured before this file (2026-11-09):
+- The guest is the staged Ubuntu 24.04 cloud image, release 20261017 (R-pm04
+  gate: a digest-checked input), on hasu under the lane path:
+  img 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94,
+  vmlinuz-generic 41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f,
+  initrd-generic bf276ffc12872256080890698b42db0dc9c5a469c896d8b59af6bc4e723cd186.
+  SHA256SUMS and unpacked/SHA256SUMS were fetched on hasu (11-08) and again on
+  the Mac (11-09) and are byte-identical (0449a33b…, 059d05ab…). Both carry a
+  good signature (gpgv) from "UEC Image Automatic Signing Key", fingerprint
+  D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81 (key file sha256 927138de…). The
+  three files re-read OK against those sums on hasu.
+- hasu: QEMU 11.1.0, /dev/kvm 0666, mkfs.ext4/ext2, e2fsck and debugfs in
+  PATH, Python 3.14.
+- A probe boot (light C, 09:23Z): direct kernel boot of the staged kernel and
+  initrd, rootfs read-only, `init=/bin/sh -- -c "…"` passed through the
+  initramfs, reached the shell and powered off in 3.0 s. The guest runs kernel
+  6.8.0-147-generic and Python 3.12.3.
+- localhost/px75-ubuntu:2 on hasu is Ubuntu 24.04.5 with glibc 2.39, the
+  guest's own release.
+- hasu had 31 GB free on / at 09:18Z, under the 35 GB floor for a heavy take
+  (R-pm04b-10).
+
+== 1. The witness: three pieces
+
+tools/nbd-recorder (host, Python stdlib). It is written from the NBD protocol
+specification and nothing else:
+- the fixed newstyle handshake;
+- NBD_OPT_GO, NBD_OPT_INFO, NBD_OPT_EXPORT_NAME and NBD_OPT_ABORT; any other
+  option answers NBD_REP_ERR_UNSUP;
+- the transmission flags HAS_FLAGS, SEND_FLUSH and SEND_FUA; no TRIM, no
+  WRITE_ZEROES, no structured replies, no multi-conn;
+- READ, WRITE, FLUSH and DISC. A request out of range answers NBD_EINVAL.
+It serves two exports from memory: `data` (a base image file, or zeros) and
+`mark` (1 MiB). One lock orders every request on both connections. Each
+request is logged as one line (seq, export, command, offset, length, FUA,
+sha256 of the payload), with the payload bytes in an append-only blob file.
+A FLUSH is answered only after every earlier write in the log is applied. An
+armed rule answers one request NBD_EIO without applying it (R-pm04b-1). The
+unix socket lives under ~/lanes/pm04/vm/<run>/ and stays under 108 bytes.
+
+tools/powercut-synth (shared by the host and the guest, Python stdlib, no I/O
+but its arguments). It turns a log into crash states. For a cut at log
+position c:
+  durable(c)  = every write before c that a FLUSH before c covers, and every FUA
+                write before c;
+  volatile(c) = every other write before c;
+  state(c, S) = zeros, then durable(c) and S ⊆ volatile(c), in log order. A
+                write in S lands whole, or torn: only its first k 512-byte sectors.
+Cuts are labelled by the marks (section 2). Window W(s) runs from the mark
+before step s to step s's mark. Each window gives these states:
+  before          state(mark_prev, ∅)
+  after           state(mark_s, ∅)          only what the step made durable
+  after-all       state(mark_s, volatile)   everything the step wrote
+  flush-<j>       state(flush_j, ∅) and state(flush_j, volatile) for every
+                  FLUSH inside the window
+  subset-<k>      k = 0..3: seeded subsets of volatile(mark_s) (R-pm04b-4).
+                  The seed is sha256(fs, verb, step, k). Each write is kept with
+                  p=1/2, or torn at a seeded sector with p=1/4.
+Identical images are deduplicated by digest, and their labels are kept.
+
+tools/powercut-guest (runs as init's child in the guest). Phase run:
+- mkfs the data disk (ext4 by default, or ext3);
+- mount it data=ordered,noauto_da_alloc, so ext4's rename heuristic cannot hide
+  a missing fsync;
+- build the fixture repository on tmpfs;
+- set up the scenario root on the data disk, as tools/check-transactions'
+  scenarios do;
+- sync, write the mark `setup <verb>`, and digest REF_OLD;
+- run larder-failpoint <verb> with LARDER_FAILPOINT=mark, write the mark
+  `end <verb>`, and digest REF_NEW;
+- print both digests and the trace, then power off without unmounting (sysrq o).
+Phase check:
+- rebuild every planned state in tmpfs from the shipped log;
+- loop-mount it (the kernel replays the journal) and read `lrd status`;
+- run `lrd rescue` and digest R1; run it again and digest R2;
+- unmount, mount again and digest R3;
+- unmount, then require `e2fsck -fn` to be clean;
+- print one line per state.
+The host driver tools/check-powercut does three things:
+- builds the guest binaries in px75-ubuntu:2 from the same commit
+  (R-pm04b-3), with their digests printed;
+- makes the payload disk, a raw tar;
+- boots QEMU (-enable-kvm, 2 vCPUs, 2 GiB), with vda the rootfs (read-only),
+  vdb the payload (read-only), and vdc/vdd the recorder's data and mark exports.
+It then plans the states, runs the check boot, and prints the rows.
+
+== 2. The one larder change: the mark action (R-pm04b-13)
+
+larder-failpoint accepts LARDER_FAILPOINT=mark with LARDER_FAILPOINT_MARK=PATH.
+At every hook it writes one 512-byte record "MARK <point> <detail>" at offset 0
+of PATH, fsyncs it, and prints "MARK <point>" on stderr, as trace does. On the
+mark export the recorder logs each record in order with the data writes. A
+hook runs after its step's durable action, so the mark for step s arrives after
+every flush s waited for. The shipped larder still reads no failpoint input. A
+block device rejects O_APPEND writes, which is why the record always goes at
+offset 0. The predicted hook order for a two-file upgrade:
+lock capacity stage backup:0 backup:1 intent-written intent apply:0:walk
+apply:0:temp apply:0:renamed apply:0 … generation commit-written commit-renamed
+commit cleanup:backup cleanup:stage cleanup:intent cleanup:dir done.
+Rescue adds rescue:undo:<i>, rescue:relink:<i>, rescue:generation and
+rescue:cleanup:*.
+
+== 3. The pass condition (pm00's, made exact for a power cut)
+
+For every planned state of (fs, verb), all of these must hold:
+- the image mounts; a journal replay is allowed;
+- `status` reads recovery-needed exactly when a transaction directory is visible;
+- both rescues exit 0, and the second says "rescue: nothing to do";
+- R1 == R2 == R3;
+- R1 is in {REF_OLD, REF_NEW}, and by position:
+  - R1 == REF_OLD for every state in a window up to and including W(commit-written);
+  - R1 is either in W(commit-renamed) and W(commit), excluding the after state of
+    commit;
+  - R1 == REF_NEW for commit's after state and every later state;
+- `verify` passes;
+- no t<N> or .larder-t<N>-* name remains;
+- `e2fsck -fn` exits 0.
+The digest is pm04a's (docs/TRANSACTIONS.md X10) with owners applied, because the
+guest runs as root. "Recovered twice identically" covers two things:
+- R1 == R2 (rescue is idempotent);
+- R3 == R1 (the recovered tree survives a remount).
+A rescue refusal on any planned state is a FAIL: every power-cut state must be
+recoverable.
+
+== 4. Rows (all red at the base: there is no recorder, synthesizer, guest
+harness or driver, and larder-failpoint refuses `mark` as an unknown failpoint)
+
+Host rows (the Mac and Linux; tools/check-powercut --host):
+- nbd-handshake-fixed-newstyle
+- nbd-option-unsupported
+- nbd-opt-go-info
+- nbd-opt-export-name
+- nbd-read-after-write
+- nbd-flush-orders-log
+- nbd-fua-logged
+- nbd-out-of-range-einval
+- nbd-two-exports-one-order
+- nbd-inject-eio
+- nbd-disconnect
+- synth-prefix-durable
+- synth-volatile-all
+- synth-fua-durable
+- synth-tear-sector
+- synth-subset-seeded-deterministic
+- synth-dedup-keeps-labels
+- synth-window-labels
+- failpoint-mark-every-hook: the marks equal the trace order, the last record
+  reads "MARK done", and the tree equals an unmarked run's
+- failpoint-mark-shipped-inert: the shipped larder with the same environment
+  writes nothing
+VM rows (Linux with /dev/kvm and the staged image; tools/check-powercut --vm):
+- vm-inputs-digests, vm-boot, vm-binaries-match
+- vm-fs-ext4-qualified, vm-fs-ext3-qualified
+- vm-fs-ext2-refused: init refuses fs-unqualified, no jbd2 journal, by name
+- vm-fs-ext4-nojournal-refused: the same magic, with no journal
+- vm-matrix-ext4, vm-matrix-ext3: pm04a's tools/check-transactions --all in
+  the guest as root, its work tree on the data disk. That covers:
+  - every transition crash and every rescue-hook crash;
+  - injected errors;
+  - contention and owner exit;
+  - the ancestor swaps and the rescue refusals.
+  Predicted 938 PASS each.
+- powercut-<fs>-<verb>-<step>-{before,after,after-all,flush-<j>,subset-<k>}
+  for fs in {ext4, ext3}, verb in {install, upgrade, remove}, and every step
+  in the verb's trace. Predicted 15–20 steps per verb, about 15 states per
+  step before dedup, about 1,800 states in all.
+- powercut-<fs>-rescue-undo-<step>-…: the state is remove's after-state at its
+  last apply:<i>. It is mounted, and rescue then runs in mark mode under the
+  recorder. Every state of that log must recover to REF_OLD.
+- powercut-<fs>-rescue-finish-<step>-…: the state is upgrade's after-state at
+  commit. Every state must recover to REF_NEW.
+- vm-eio-<fs>-<verb>-<step>-{write,flush} for steps backup:0, intent-written,
+  apply:0:temp, generation and commit-written in upgrade, and rescue:undo:0:
+  - the recorder fails the first write (then the first flush) after the mark
+    before the step;
+  - the verb exits nonzero, naming the step's io error, or the journal aborts
+    and the next operation names it;
+  - power off. The check boot preens (e2fsck -p, exit 0 or 1) as a boot would
+    (R-pm04b-6), and rescue twice gives REF_OLD.
+- vm-enospc-<fs>-upgrade-{backup:0,apply:0:temp,generation}: a 32 MiB data
+  disk (mkfs -m 0):
+  - pause at the step, and fill the filesystem from the harness;
+  - resume; the verb exits 1 naming no-space at a real ENOSPC;
+  - delete the filler; rescue twice gives REF_OLD.
+- vm-enospc-capacity: the disk is filled before the verb, and capacity refuses
+  with zero writes.
+- vm-concurrent-<fs>:
+  - the owner pauses at apply:0:temp, and a second install exits 7 in under 5 s;
+  - the power is cut while the owner holds the lock (states from that log);
+  - after recovery the lock is free (a fresh status and install take it), and
+    rescue twice gives REF_OLD.
+CI and toolchain rows (R-pm04b-8; tools/check-fetch-retry, the Mac and Linux):
+- fetch-retry-survives-504s: a loopback server answers 504 six times, then
+  serves a test archive with a pinned digest. tools/fetch-toolchain fetches it
+  and accepts it. Red at the base, which gives up after 3 retries.
+- fetch-retry-gives-up-named: a server that always answers 504 is refused,
+  naming the URL, inside the bounded time.
+- fetch-retry-digest-still-refuses: a 200 with the wrong bytes is refused.
+
+== 5. Predictions per row group
+
+- Host rows: FAIL at the base by name (missing tools; mark unknown). PASS after.
+- The ext2 and no-journal refusals: red at the base only because the driver is
+  missing; predicted PASS the first time the driver runs, because pm04a's
+  qualification already demands jbd2. They witness merged code on a real
+  device, not new behaviour.
+- vm-matrix-*: predicted 938 PASS each, with none of pm04a's code changed.
+- powercut-*: predicted all PASS on ext4 and ext3, with R1 == REF_OLD in every
+  window up to W(commit-written), because every write_new and every rename's
+  parent is synced. The likeliest real finding is a window where a parent
+  directory's fsync is missing after a mkdir or a remove (cleanup:*). It would
+  show as an after state that still holds a removed name, or lacks a made one,
+  and rescue then refuses or leaves a t<N>. If so, it is fixed in txn.lu with
+  its own commit, and the row stays.
+- vm-eio-*: predicted PASS. The error names are those of pm04a's injected rows
+  ("sync <path>", "backup-sync <i>", "write …"). An aborted ext4 journal may
+  instead surface as a read-only error on the next step; the row accepts any
+  nonzero exit that names a step, plus REF_OLD after rescue.
+- vm-enospc-*: predicted PASS, with the names pm04a injected.
+- The plant (pm04-plant-*, pushed without a PR): write_new for current.<t>
+  skips its fsync. Predicted:
+  - FAIL powercut-ext4-upgrade-commit-after: the rename is durable, current
+    is zero-length (delalloc, noauto_da_alloc), and rescue exits 9
+    (rescue-ambiguous-generation or a refused current);
+  - vm-matrix-ext4 crash-upgrade-* stays PASS under the plant, because a
+    process crash keeps the page cache. That contrast is the point of the plant.
+  - ext3 is not predicted either way (whether delalloc applies to an
+    ext3-format filesystem under the ext4 driver is not documented to the
+    lane), so the plant row is ext4's.
+
+== 6. Rulings asked (the recommendations are implemented unless ruled otherwise)
+
+R-pm04b-1 EIO. R-pm04-14 A said blkdebug for EIO. blkdebug's rules fire on
+  block-layer events and sectors, not on a step, and arming one at run time
+  needs the debug-only qemu-io monitor command. (A) the recorder answers NBD_EIO
+  to the first write or flush after a named mark. The guest's kernel sees the
+  same device error, and the log ties it to the step. (B) blkdebug as ruled,
+  with sector rules learned from a first recorded run. Recommend A.
+R-pm04b-2 guest boot. (A) a direct kernel boot of the staged kernel and initrd,
+  rootfs read-only, init= a loader that extracts the payload tar from vdb and
+  runs tools/powercut-guest; no network, no cloud-init (probed: 3 s); (B) a
+  cloud-init NoCloud seed (vfat, mtools) and a full systemd boot. Recommend A.
+R-pm04b-3 guest binaries. (A) build larder in localhost/px75-ubuntu:2
+  (Ubuntu 24.04.5, glibc 2.39, the guest's release) from the same commit and
+  toolchain; (B) share /nix/store into the guest over 9p. Recommend A.
+R-pm04b-4 the state model. Every FLUSH boundary, before, after, after-all,
+  and K=4 seeded subsets per window with 512-byte tearing; dedup by digest; no
+  cap on the count, which is printed per take. (B) K=16 on ext4 upgrade only.
+  Recommend A.
+R-pm04b-5 filesystems. (A) the full power-cut set and the matrix on ext4 and
+  ext3; (B) ext4 in full, ext3 only for upgrade and rescue. Recommend A if a
+  take stays inside 2 h (measured at the first take), B otherwise.
+R-pm04b-6 fsck. A power-cut state is mounted (journal replay), recovered, and
+  must then pass e2fsck -fn. An EIO state is first preened (e2fsck -p, exit 0
+  or 1), as a boot does. Recommend as listed.
+R-pm04b-7 where the VM rows run. (A) the local gauntlet on Linux with /dev/kvm
+  and the staged image; CI runs the host rows and SKIPs the VM step loudly;
+  (B) also a CI job with KVM on the hosted Linux runner, which downloads the
+  600 MB image by digest on every run. Recommend A now, B as a BACKLOG item.
+R-pm04b-8 the fetch-toolchain BACKLOG item. pm04b's PR is cross-cutting, and
+  larder#9's labelled run died seven times on release 504s. (A) fold it in:
+  curl's growing backoff (--retry 10 --retry-max-time 600, no fixed delay;
+  LARDER_FETCH_RETRY_DELAY fixes the delay for the rows), with the three
+  fetch-retry rows red first; (B) leave it in the BACKLOG. Recommend A.
+R-pm04b-9 the cold podman store BACKLOG item. It blocks a take only on a
+  cold store. hasu's store is warm, and satoyama's is not. (A) fold it in:
+  pull by digest with retries, then warm the keep-id copy uncapped under its
+  own timeout before the capped run, with a cold-store row (a scratch store
+  under target/); (B) leave it in the BACKLOG. Recommend A if R-pm04b-10 picks
+  satoyama, B otherwise.
+R-pm04b-10 the take host. hasu has 31 GB free (09:18Z), under the 35 GB
+  heavy floor. (A) take on hasu, block then slot then light, once ≥35 GB is
+  free; (B) satoyama slot A when it is cool, with the wineserver check, the
+  ≤95 °C gate and a sensor log. Recommend A, with B if hasu stays under the floor.
+R-pm04b-11 the plant. (A) the commit pointer's temporary file renamed without
+  its fsync, red by name in powercut-ext4-upgrade-commit-after; (B) a missing
+  parent fsync after the generation directory's mkdir. Recommend A (section 9
+  of prediction-pm04.txt named it).
+R-pm04b-12 the claim. M-PM1 is claimed at pm04b's merge (R-pm04-15 A). The
+  claim's scope: Linux ext3/ext4 with jbd2 under QEMU/KVM, synthetic roots, a
+  file:// repository. The live root stays pm05's. Recommend as stated.
+R-pm04b-13 marks. (A) the mark action in the test-only binary, as section 2;
+  (B) a pause at each hook, with the harness writing the mark: one run per hook.
+  Recommend A.
+
+== 7. Hosts and order
+
+Edits and commits on the Mac (TMPDIR=~/lanes/pm04/tmp). The host rows run on
+the Mac, behind the build lock. VM boots run on hasu: light jobs for
+development, and inside the take for records (block, then slot, then light).
+uptime, the queues and the 35 GB floor are read before each take, and a take is
+at most 2 h. Never sign on hasu. Order:
+1. this file;
+2. the red rows (tools/check-powercut and tools/check-fetch-retry, wired into
+   tools/gauntlet);
+3. the mark action;
+4. the recorder and its rows;
+5. the synthesizer and its rows;
+6. the guest harness and the driver;
+7. the VM rows;
+8. fetch-retry;
+9. docs (docs/TRANSACTIONS.md X11, the power-cut witness; CLI unchanged);
+10. the lane note.
+Hand back at this file with the rows red.
