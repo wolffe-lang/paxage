@@ -1069,6 +1069,13 @@ def main():
             fn(roots)
         except RowFailed:
             continue
+        except Exception as e:
+            # A row whose own check raises (a file it reads is missing, say) is red by its
+            # group's name, not an anonymous traceback; with --all the other rows still run.
+            try:
+                emit(False, name, f'crashed {type(e).__name__}: ' + ' | '.join(str(e).splitlines()))
+            except RowFailed:
+                continue
     if FAILED:
         print(f'transactions: {len(FAILED)} red rows', flush=True)
         return 1
