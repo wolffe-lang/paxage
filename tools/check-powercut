@@ -173,6 +173,16 @@ class Client:
         body = self.recv(length) if kind == 0 and error == 0 else b''
         return magic, error, cookie == self.cookie, body
 
+    def disconnect(self):
+        """NBD_CMD_DISC, then wait for the server to close. DISC has no reply, so only the close
+        orders it before anything sent on another connection afterwards."""
+        self.request(2)
+        try:
+            while self.s.recv(4096):
+                pass
+        except (OSError, socket.timeout):
+            pass
+
     def close(self):
         self.s.close()
 
@@ -239,8 +249,10 @@ def nbd_rows():
     a.request(1, 1536, data=b'D' * 512)
     bad_r = a.request(0, (1 << 20) - 256, 512)
     bad_w = a.request(1, 1 << 20, data=b'E' * 512)
-    a.request(2)
-    b.request(2)
+    # Two DISCs on two connections are ordered only if the first close is seen before the second
+    # is sent (the hosted runner logged them reversed at trunk 4e6fda1, run 42668549742).
+    a.disconnect()
+    b.disconnect()
     a.close()
     b.close()
     c = Client(d / 'nbd.sock')
@@ -287,8 +299,8 @@ def nbd_rows():
         hit = a.request(1 if cmd == 'write' else 3, 512, data=b'H' * 512)
         after = a.request(1 if cmd == 'write' else 3, 512, data=b'I' * 512)
         back = a.request(0, 0, 1024)
-        a.request(2)
-        b.request(2)
+        a.disconnect()
+        b.disconnect()
         rc = proc.wait(timeout=30)
         ok = early[1] == 0 and not_yet[1] == 0 and hit[1] == 5 and after[1] == 0 and rc == 0
         if cmd == 'write':
