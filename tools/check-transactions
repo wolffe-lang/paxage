@@ -8,6 +8,7 @@ Run as container root for the ownership rows, as a plain user for the logical
 rows. --all keeps going after a FAIL so a red take names every red row.
 """
 import argparse
+import resource
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ WORK = ROOT / 'target/transactions'
 NOW = '2026-11-09T00:00:00Z'
 ARCH, SLOT = 'x86_64', 'default'
 ZERO = '0' * 64
-CRASH_EXIT = 99
+CRASH_EXIT = 134  # the failpoint crash is a runtime trap (assert), never an exit call
 EXCLUDED = ('var/lib/larder/trust', 'var/cache/larder')
 PRIVILEGED = os.geteuid() == 0
 
@@ -63,7 +64,11 @@ def lrd(*args, binary=None, env=None, timeout=120):
     if env:
         full_env.update(env)
     return subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True,
-                          timeout=timeout, env=full_env)
+                          timeout=timeout, env=full_env, preexec_fn=no_core)
+
+
+def no_core():
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def describe(p):
@@ -403,7 +408,7 @@ def paused(root, failpoint, *args):
     os.mkfifo(fifo, 0o600)
     env = dict(os.environ, LARDER_FAILPOINT=f'{failpoint}:pause', LARDER_FAILPOINT_FIFO=str(fifo))
     proc = subprocess.Popen([str(FPBIN), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env)
+                            text=True, env=env, preexec_fn=no_core)
     deadline = time.monotonic() + 30
     line = ''
     while time.monotonic() < deadline:
@@ -713,8 +718,8 @@ SCENARIOS = {
 
 def scenario_base(r, verb):
     if verb == 'upgrade':
-        root = r.ready('base-upgrade', 'alpha')
-        return root
+        # The repository already offers 2-1 here; the base pins 1-1 explicitly.
+        return r.ready('base-upgrade', 'alpha=1-1')
     return SCENARIOS[verb][0](r, f'base-{verb}')
 
 
