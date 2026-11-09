@@ -14,3 +14,17 @@
   and container interop/confinement gates; record the bounded std SHA-2 pin and
   require under 8 MiB RSS growth under a 2 GiB Linux cap. No threshold is waived.
 - Keep live-root installs, trust/signing, transactions and fetch unavailable.
+- Add durable transactions over a synthetic Linux root (pm04, TRANSACTIONS
+  X1–X10). The verbs are init, status, verify, install, remove, upgrade,
+  autoremove and rescue. They take a persistent lock inode, refuse an
+  unjournalled filesystem, and write only through the descriptor walk. Each
+  transaction keeps immutable generations, a framed intent with backups and an
+  undo shared with rescue. Account, directory and pending-cache actions come from
+  a compiled registry. Configs follow a three-way rule; removal keeps residuals;
+  orphans are collected together after a preview. Exits 7, 8 and 9 are new;
+  `sync` stays refused.
+- Pin wolf 0.2.38 and lupin 0.1.60 (the descriptor walk); std stays at 23baa1a.
+- Add a test-only failpoint executable and the transaction rows. They cover a
+  crash at every hook, a crash during rescue, injected EIO and ENOSPC, ancestor
+  races, lock contention and owner death. The check is that the root reaches the
+  old or the new generation, recovered twice identically.
