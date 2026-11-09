@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""The names rows (pm05a): paxage, its link pxg and the test-only paxage-failpoint;
+the `paxage:` prefix; ROOT/var/lib/paxage, ROOT/var/cache/paxage and the reserved
+ROOT/etc/paxage; the `.paxage-new` proposal, the intent header, the transaction
+temporaries, the db.pxg database file and PAXAGE_FAILPOINT. No old name is an alias.
+
+Every row prints PASS or FAIL by name, and every row runs: the step fails at the end
+if any row is red. The fixture repository is check-transactions' own, driven through
+this file's executables. The old words come from check-census, never from here.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+census = load('check_census', 'check-census')
+ct = load('check_transactions', 'check-transactions')
+OLD, OLD_SHORT, OLD_ENV = census.OLD, census.OLD_SHORT, census.OLD_ENV
+
+BINDIR = ROOT / 'target/bin'
+BIN = BINDIR / 'paxage'
+LINK = BINDIR / 'pxg'
+FPBIN = BINDIR / 'paxage-failpoint'
+WORK = ROOT / 'target/names'
+VERSION = 'paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)'
+STATE, CACHE, ETC = 'var/lib/paxage', 'var/cache/paxage', 'etc/paxage'
+ct.BIN, ct.FPBIN, ct.WORK = BIN, FPBIN, WORK
+
+RESULTS = []
+
+
+def row(name, good, detail=''):
+    if good:
+        print(f'PASS {name}', flush=True)
+    else:
+        print(f'FAIL {name}' + (f' {detail}' if detail else ''), flush=True)
+    RESULTS.append((name, bool(good)))
+    return bool(good)
+
+
+def run(*args, binary=BIN, env=None):
+    exe = Path(binary)
+    if not os.path.lexists(exe):
+        return subprocess.CompletedProcess([str(exe)], 127, '', f'missing executable {exe}')
+    full = {k: v for k, v in os.environ.items() if not k.startswith(('PAXAGE_FAILPOINT', OLD_ENV))}
+    if env:
+        full.update(env)
+    return subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True, timeout=120,
+                          env=full, preexec_fn=ct.no_core)
+
+
+def describe(p):
+    return f'exit={p.returncode} stdout={p.stdout[-300:]!r} stderr={p.stderr[-300:]!r}'
+
+
+def old_named(root):
+    """Every entry under root whose name, or whose file bytes, carry an old name. The
+    checkout's own absolute path (in the recorded repository URL) is not the root's."""
+    checkout = sorted({str(ROOT).encode(), os.path.realpath(ROOT).encode()}, key=len, reverse=True)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for n in dirnames + filenames:
+            path = Path(dirpath) / n
+            rel = str(path.relative_to(root))
+            if census.PATTERN.search(n.encode()):
+                found.append(rel)
+            elif n in filenames and path.is_file() and not path.is_symlink():
+                data = path.read_bytes()
+                for c in checkout:
+                    data = data.replace(c, b'CHECKOUT')
+                if census.PATTERN.search(data):
+                    found.append(rel + ' (contents)')
+    return found
+
+
+# ---------------------------------------------------------------- the executables
+
+def executables():
+    row('names-binary', BIN.is_file() and not BIN.is_symlink() and os.access(BIN, os.X_OK), f'not a built executable: {BIN}')
+    row('names-short-link', LINK.is_symlink() and LINK.resolve() == BIN.resolve(),
+        f'{LINK} is not a link to {BIN.name}')
+    row('names-failpoint-binary', FPBIN.is_file() and not FPBIN.is_symlink() and os.access(FPBIN, os.X_OK),
+        f'not a built executable: {FPBIN}')
+    stale = sorted(p.name for p in BINDIR.iterdir() if census.PATTERN.search(p.name.encode())) if BINDIR.is_dir() else []
+    row('names-old-binaries-absent', not stale, f'old-name entries in target/bin: {stale}')
+    versions = [run('version', binary=b) for b in (BIN, LINK)]
+    row('names-version-line', all(p.returncode == 0 and p.stdout == VERSION + '\n' and p.stderr == '' for p in versions),
+        ' | '.join(describe(p) for p in versions))
+    refusals = [run('compare', '1-0', '1-1', binary=b) for b in (BIN, LINK)]
+    usages = [run(binary=b) for b in (BIN, LINK)]
+    good = all(p.returncode == 1 and p.stdout == '' and p.stderr == 'paxage: bad-version\n' for p in refusals)
+    good = good and all(p.returncode == 2 and p.stderr.startswith('paxage: ') and '\nUsage: paxage (pxg) ' in p.stderr
+                        for p in usages)
+    row('names-prefix', good, ' | '.join(describe(p) for p in refusals + usages))
+    p = run('version', binary=FPBIN)
+    row('names-failpoint-prefix', p.returncode == 2 and p.stderr == 'paxage-failpoint: root verbs only\n', describe(p))
+
+
+# ---------------------------------------------------------------- roots
+
+def fixture():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    fx = ct.fixture_dir(WORK / 'fixture')
+    ct.fixture_dir(fx / 'packages')
+    repo = ct.Repo(fx)
+    repo.setup()
+    repo.publish(ct.universe())
+    return repo
+
+
+def init(repo, label, binary=LINK):
+    root = WORK / 'roots' / label
+    root.mkdir(parents=True, mode=0o755)
+    p = run('init', '--root', root, '--repo', repo.url, '--pinned-root', repo.pinned,
+            '--arch', ct.ARCH, '--slot', ct.SLOT, '--now', ct.NOW, binary=binary)
+    if p.returncode != 0:
+        raise RuntimeError(f'init {label}: {describe(p)}')
+    return root
+
+
+def must(p, what):
+    if p.returncode != 0:
+        raise RuntimeError(f'{what}: {describe(p)}')
+    return p
+
+
+def guarded(names, fn, *args):
+    """Run one group; a setup failure reds every row of the group not yet reported."""
+    try:
+        fn(*args)
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as e:
+        done = {n for n, _ in RESULTS}
+        for name in names:
+            if name not in done:
+                row(name, False, f'setup: {e}')
+
+
+def layout(repo):
+    root = init(repo, 'layout')
+    state = root / STATE
+    row('names-state-path', state.is_dir() and stat.S_IMODE(os.lstat(state).st_mode) == 0o700
+        and (state / 'lock').is_file() and (state / 'current').is_file()
+        and not os.path.lexists(root / 'var/lib' / OLD), f'state under {sorted(os.listdir(root / "var/lib")) if (root / "var/lib").is_dir() else "none"}')
+    row('names-cache-path', (root / CACHE).is_dir() and not os.path.lexists(root / 'var/cache' / OLD),
+        f'cache under {sorted(os.listdir(root / "var/cache")) if (root / "var/cache").is_dir() else "none"}')
+    gen0 = state / 'generations/0'
+    row('names-database-file', (gen0 / 'db.pxg').is_file() and not os.path.lexists(gen0 / f'db.{OLD_SHORT}'),
+        f'generation 0 holds {sorted(os.listdir(gen0)) if gen0.is_dir() else "nothing"}')
+
+
+def proposal(repo):
+    root = init(repo, 'proposal')
+    must(run('install', '--root', root, 'alpha', '--now', ct.NOW, binary=LINK), 'install alpha')
+    (root / 'etc/alpha.conf').write_bytes(b'mine\n')
+    repo.publish(ct.universe(upgraded=True))
+    try:
+        must(run('upgrade', '--root', root, '--now', ct.NOW, binary=LINK), 'upgrade')
+        new = root / 'etc/alpha.conf.paxage-new'
+        st = run('status', '--root', root, '--json', binary=LINK)
+        listed = []
+        if st.returncode == 0:
+            listed = [x.get('path') for x in json.loads(st.stdout).get('proposals', [])]
+        etc = sorted(os.listdir(root / 'etc'))
+        row('names-proposal-suffix', new.is_file() and new.read_bytes() == b'setting=2\n'
+            and (root / 'etc/alpha.conf').read_bytes() == b'mine\n'
+            and listed == ['etc/alpha.conf.paxage-new'] and not os.path.lexists(root / f'etc/alpha.conf.{OLD}-new'),
+            f'etc holds {etc}; status proposals {listed}')
+        row('names-etc-reserved', not os.path.lexists(root / ETC) and not os.path.lexists(root / 'etc' / OLD),
+            f'etc holds {etc}')
+    finally:
+        repo.publish(ct.universe())
+
+
+def intent(repo):
+    root = init(repo, 'intent')
+    p = run('install', '--root', root, 'lone', '--now', ct.NOW, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'intent:crash'})
+    intents = sorted((root / STATE / 'transactions').glob('t*/intent')) if (root / STATE / 'transactions').is_dir() else []
+    first = intents[0].read_bytes().split(b'\n', 1)[0] if intents else b''
+    row('names-intent-header', p.returncode == ct.CRASH_EXIT and len(intents) == 1 and first == b'paxage-intent\t1',
+        f'intents={[str(i.relative_to(root)) for i in intents]} first={first!r} {describe(p)}')
+
+
+def failpoints(repo):
+    probe = init(repo, 'trace')
+    traced = run('install', '--root', probe, 'lone', '--now', ct.NOW, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'trace'})
+    points = [ln.split()[1] for ln in traced.stderr.splitlines() if ln.startswith('FAILPOINT ')]
+    old = init(repo, 'old-variable')
+    quiet = run('install', '--root', old, 'lone', '--now', ct.NOW, binary=FPBIN, env={OLD_ENV + 'FAILPOINT': 'trace'})
+    bogus = run('status', '--root', old, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'bogus'})
+    row('names-failpoint-env', traced.returncode == 0 and 'intent' in points
+        and quiet.returncode == 0 and 'FAILPOINT' not in quiet.stderr
+        and bogus.returncode == 2 and bogus.stderr == 'paxage-failpoint: bad PAXAGE_FAILPOINT bogus\n',
+        f'traced={len(points)} points; {describe(traced)} | old variable: {describe(quiet)} | bogus: {describe(bogus)}')
+    shipped = init(repo, 'shipped', binary=BIN)
+    p = run('install', '--root', shipped, 'lone', '--now', ct.NOW, binary=BIN, env={'PAXAGE_FAILPOINT': 'trace'})
+    row('names-shipped-no-failpoint', p.returncode == 0 and 'FAILPOINT' not in p.stderr, describe(p))
+    temps_at = [x for x in points if x.startswith('apply:') and x.endswith(':temp')]
+    if not temps_at:
+        row('names-temp-prefix', False, f'no apply:<i>:temp hook in the trace: {points}')
+        return
+    cut = init(repo, 'temp')
+    q = run('install', '--root', cut, 'lone', '--now', ct.NOW, binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{temps_at[0]}:crash'})
+    temps = sorted(str(t.relative_to(cut)) for t in cut.rglob('.paxage-t*'))
+    olds = sorted(str(t.relative_to(cut)) for t in cut.rglob(f'.{OLD}-*'))
+    row('names-temp-prefix', q.returncode == ct.CRASH_EXIT and len(temps) == 1 and not olds,
+        f'cut at {temps_at[0]}; temps={temps} old={olds} {describe(q)}')
+
+
+def environment():
+    stale = sorted(k for k in os.environ if k.startswith(OLD_ENV))
+    row('names-no-old-environment', not stale, f'old variables set: {stale}; rename them PAXAGE_*')
+
+
+GROUPS = {
+    'layout': ('names-state-path', 'names-cache-path', 'names-database-file'),
+    'proposal': ('names-proposal-suffix', 'names-etc-reserved'),
+    'intent': ('names-intent-header',),
+    'failpoints': ('names-failpoint-env', 'names-shipped-no-failpoint', 'names-temp-prefix'),
+}
+
+
+def main():
+    print(f'names: {BIN.name}, {LINK.name}, {FPBIN.name}; state {STATE}, cache {CACHE}, reserved {ETC}', flush=True)
+    environment()
+    executables()
+    try:
+        repo = fixture()
+    except (SystemExit, RuntimeError, OSError) as e:
+        reason = f'fixture unavailable: {e}'
+        for name in [n for group in GROUPS.values() for n in group] + ['names-root-tree']:
+            row(name, False, reason)
+    else:
+        guarded(GROUPS['layout'], layout, repo)
+        guarded(GROUPS['proposal'], proposal, repo)
+        guarded(GROUPS['intent'], intent, repo)
+        guarded(GROUPS['failpoints'], failpoints, repo)
+        found = old_named(WORK / 'roots')
+        row('names-root-tree', not found, f'old names in the roots: {found[:20]}')
+    red = [n for n, good in RESULTS if not good]
+    if red:
+        print(f'names: {len(red)} of {len(RESULTS)} rows red', flush=True)
+        return 1
+    print(f'PASS names rows={len(RESULTS)}', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
