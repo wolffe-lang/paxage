@@ -1197,7 +1197,23 @@ fn cleanup(c: Ctx, t: str, prefix: str) -> str {
 }
 
 /// Remove an uncommitted generation and commit temp, then the whole transaction tree.
+/// The intent goes first, and durably: removing the tree syncs each directory as it goes,
+/// so a power cut inside it could leave the backups gone and the intent still there, and the
+/// next rescue would try to undo again without them (rescue-missing-backup, found by the
+/// power-cut witness). Without its intent, t<N> is one rescue discards: the live tree is
+/// already the old one when this runs.
 fn discard(c: Ctx, t: str, to: int, prefix: str) -> str {
+    let td = walk.dir(c.root, tx_rel(t))
+    if td.error == "" {
+        var d = remove_name(td, "intent")
+        if d == "" { d = remove_name(td, "intent.tmp") }
+        if d == "" { d = walk.sync(td) }
+        walk.close(td)
+        d = step(c, "{prefix}cleanup:intent", "", d)
+        if d != "" { return d }
+    } else if !walk.missing(td) {
+        return td.error
+    }
     let s = walk.dir(c.root, state())
     if s.error != "" { return s.error }
     var e = remove_name(s, "current.{t}")
