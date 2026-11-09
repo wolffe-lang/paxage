@@ -5,7 +5,7 @@
 One binary, `larder`; `lrd` is a symbolic link with identical behavior.
 Diagnostics start `larder:` regardless of invocation name. Usage names both.
 
-- `version`: `larder 0.1.0 (lrd; format v1, file trust, pack and stage)`.
+- `version`: `larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)`.
 - `check-manifest FILE`: strict F2/F3 validation, exact-byte std SHA-256 and
   byte length. This does not authenticate a signer or a payload.
 - `compare V1 V2`: V2 versions, normalized result -1, 0 or 1.
@@ -17,19 +17,23 @@ Diagnostics start `larder:` regardless of invocation name. Usage names both.
   old and replacing packages; text is deterministic. No root/cache/trust writes.
 - `pack`, `verify-payload`, `stage`, `list-payload`: C4–C7 below.
 - `repo`, `bootstrap`, `update`, `fetch`: C8–C11 below; test-only signing and file transport.
+- `init`, `status`, `verify`, `install`, `remove`, `upgrade`, `autoremove`, `rescue`: C12–C16,
+  transactions over a synthetic root (docs/TRANSACTIONS.md).
 - `--help` / `help`: usage, exit 0; `--version` aliases version.
 
 ## C2 — Refusals and exits
 
-`install`, `remove`, `upgrade`, `sync` refuse individually by name:
-`larder: VERB refused: mutation arrives in pm04`, exit 6. No argument enables
-root mutation. `/var/lib/larder/`, `/var/cache/larder/`, `/etc/larder/` and
-`<file>.larder-new` are reserved specification paths, never written here.
+`sync` refuses by name, exit 6: `upgrade` is the one refresh-and-upgrade operation.
+`install`, `remove` and `upgrade` act only on a `--root` synthetic root (C12–C16);
+`--root /` refuses `live-root-is-pm05`. `<file>.larder-new` is a three-way config
+proposal (TRANSACTIONS X9).
 
 Exit 0 success; 1 malformed data, I/O or safety refusal; 2 usage; 3 proven
 unsatisfiable snapshot; 4 budget exceeded (search incomplete); 5 independent
-checker disagreement; 6 root mutation unavailable. Errors go to stderr and
-successful data to stdout. No hidden transport, eval or promotion verb.
+checker disagreement; 6 refused verb (`sync`); 7 another writer holds the root's
+lock; 8 a transaction is pending and only `rescue` may act; 9 a rescue refusal (a
+state rescue does not understand). Errors go to stderr and successful data to
+stdout. No hidden transport, eval or promotion verb.
 
 ## C3 — Boundaries and fixtures
 
@@ -181,3 +185,60 @@ without repair writes or selection of an older generation. The diagnostic says
 That explicit operator action leaves the damaged directory alone; it is not an
 automatic recovery feature. `recover-offline` refuses `offline-recovery-refused`.
 See TRUST T19 for the distinction between candidate fuzz and committed corruption.
+
+## C12 — init
+
+`init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC]`
+
+DIR must exist on a qualified filesystem (TRANSACTIONS X2) and, for an
+unprivileged caller, belong to the caller. Makes `DIR/var/lib/larder` (the lock
+inode, generation 0, `current`, `transactions/`, `trust/` bootstrapped from the
+caller's pinned root) and `DIR/var/cache/larder`. An existing state refuses
+`state-exists`. The ownership mode (privileged for euid 0, logical otherwise) is
+fixed here. Success: `init ok`.
+
+## C13 — install, upgrade, remove, autoremove
+
+- `install --root DIR SPEC... [--now UTC] [--dry-run]`: SPEC is C1's
+  `NAME[OPVERSION]`. Updates trust (C9), resolves the requested packages with
+  every explicit installed package against the trusted targets, stages and
+  applies the plan (X5).
+- `upgrade --root DIR [--now UTC] [--dry-run]`: the same, for the whole
+  snapshot, with no names.
+- `remove --root DIR NAME... [--purge] [--dry-run]`: removes the named packages'
+  owned paths (X9); `--purge` also deletes their residual configs.
+- `autoremove --root DIR [--yes]`: lists `orphan NAME VERSION` for packages
+  unreachable from explicit ones, writing nothing; `--yes` removes them together.
+
+Each prints its plan (`install`, `upgrade`, `remove`, `mark`, `residual`,
+`proposal`, `purge`, `pending` lines), then `VERB ok generation=N`, or `VERB ok
+nothing to do`. `--dry-run` prints the plan and writes nothing but trust and
+cache state. A refusal before the first durable step writes nothing in the root.
+A failure after it is undone in-process (`rolled back`) or left for `rescue`
+(`rollback refused`).
+
+## C14 — status and verify
+
+`status --root DIR [--json]` is read-only and takes no lock: generation, mode,
+installed packages with reasons, residuals, proposals, accounts, pending actions,
+and the pending transaction (`recovery-needed t<N>`). JSON keys: `generation`,
+`pending`, `ownership`, `packages`, `residuals`, `proposals`, `accounts`,
+`pending_actions`. `verify --root DIR` takes the lock and compares every owned
+non-config path with its manifest record; drift prints `drift PATH (NAME)` and
+exits 1. Success: `verify ok`.
+
+## C15 — rescue
+
+`rescue --root DIR` finishes a committed transaction, discards one whose intent
+never became durable, or undoes one whose intent is valid (X6). It prints `rescue:
+nothing to do`, `rescue: finished t<N>`, `rescue: discarded t<N>` or `rescue:
+undone t<N>`. It refuses, exit 9, with `rescue-unknown-state PATH`,
+`rescue-missing-backup PATH`, `rescue-malformed-intent` or
+`rescue-ambiguous-generation`. A refused rescue may be repeated.
+
+## C16 — The test-only failpoint executable
+
+`target/bin/larder-failpoint` accepts only the root verbs and reads
+`LARDER_FAILPOINT` (X8). It is built for the transaction rows and never installed;
+`larder` and `lrd` carry no failpoint input.
+
