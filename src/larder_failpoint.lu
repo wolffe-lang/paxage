@@ -1,0 +1,16 @@
+//! member: false
+//! Test-only: the root verbs with LARDER_FAILPOINT armed (R-pm04-4). Never shipped
+//! as larder; the shipped executable passes failpoint.none().
+
+use root_cli
+use failpoint
+
+fn main() -> int {
+    let a = env_args()
+    if a.len < 1 || !root_cli.owns(a[0]) { eprint("larder-failpoint: root verbs only"); return 2 }
+    let spec = env_get("LARDER_FAILPOINT") else |_| { "" }
+    let fifo = env_get("LARDER_FAILPOINT_FIFO") else |_| { "" }
+    let f = failpoint.parse(spec, fifo)
+    if !failpoint.valid(spec, f) { eprint("larder-failpoint: bad LARDER_FAILPOINT {spec}"); return 2 }
+    root_cli.run(a, f)
+}
