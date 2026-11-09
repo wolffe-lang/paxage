@@ -138,9 +138,9 @@ struct Open {
     error: str,
 }
 
-fn trust_dir(c: txn.Ctx) -> str { "{c.root.path}/var/lib/larder/trust" }
+fn trust_dir(c: txn.Ctx) -> str { "{c.root.path}/var/lib/paxage/trust" }
 
-fn cache_dir(c: txn.Ctx) -> str { "{c.root.path}/var/cache/larder" }
+fn cache_dir(c: txn.Ctx) -> str { "{c.root.path}/var/cache/paxage" }
 
 fn open_root(path: str, fp: failpoint.Fail) -> txn.Ctx {
     var r = walk.open_root(path)
@@ -357,10 +357,10 @@ fn init(o: Opts) -> int {
         e = mkdir_rel(c, "var/cache", 493)
     }
     for d in [
-        "var/cache/larder",
-        "var/cache/larder/.part",
-        "var/cache/larder/objects",
-        "var/cache/larder/objects/sha256",
+        "var/cache/paxage",
+        "var/cache/paxage/.part",
+        "var/cache/paxage/objects",
+        "var/cache/paxage/objects/sha256",
     ] {
         if e == "" { e = mkdir_rel(c, d, 448) }
     }

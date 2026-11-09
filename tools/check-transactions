@@ -27,7 +27,7 @@ NOW = '2026-11-09T00:00:00Z'
 ARCH, SLOT = 'x86_64', 'default'
 ZERO = '0' * 64
 CRASH_EXIT = 134  # the failpoint crash is a runtime trap (assert), never an exit call
-EXCLUDED = ('var/lib/larder/trust', 'var/cache/larder')
+EXCLUDED = ('var/lib/paxage/trust', 'var/cache/paxage')
 PRIVILEGED = os.geteuid() == 0
 
 
@@ -424,7 +424,7 @@ def row(name):
 def init_root(r):
     root, p = r.init('init-root')
     ok(p, 'init-root', last='init ok')
-    state = root / 'var/lib/larder'
+    state = root / 'var/lib/paxage'
     check(stat.S_IMODE(os.lstat(state).st_mode) == 0o700 and (state / 'lock').is_file()
           and (state / 'current').is_file(), 'init-root-layout')
     s = status(root)
@@ -444,7 +444,7 @@ def live_root(r):
 @row('lock-persistent-inode')
 def lock_inode(r):
     root = r.ready('lock-inode')
-    lock = root / 'var/lib/larder/lock'
+    lock = root / 'var/lib/paxage/lock'
     before = os.lstat(lock)
     ok(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-inode-install')
     ok(pxg('remove', '--root', root, 'lone'), 'lock-inode-remove')
@@ -505,13 +505,13 @@ def lock_owner_exit(r):
     died = resume(proc, fifo, 'crash')
     check(died.returncode == CRASH_EXIT, 'lock-owner-exit-holder-died', describe(died))
     ok(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-owner-exit')
-    check(not any(p.name.startswith('pid') for p in (root / 'var/lib/larder').iterdir()), 'lock-no-pid-file')
+    check(not any(p.name.startswith('pid') for p in (root / 'var/lib/paxage').iterdir()), 'lock-no-pid-file')
 
 
 @row('lock-symlink-refused')
 def lock_symlink(r):
     root = r.ready('lock-symlink')
-    lock = root / 'var/lib/larder/lock'
+    lock = root / 'var/lib/paxage/lock'
     lock.unlink()
     os.symlink(r.outside / 'lock-target', lock)
     refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-symlink-refused', 1, 'lock-inode')
@@ -521,9 +521,9 @@ def lock_symlink(r):
 @row('lock-missing-refused')
 def lock_missing(r):
     root = r.ready('lock-missing')
-    (root / 'var/lib/larder/lock').unlink()
+    (root / 'var/lib/paxage/lock').unlink()
     refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'lock-missing-refused', 1, 'lock-missing')
-    check(not (root / 'var/lib/larder/lock').exists(), 'lock-missing-not-recreated')
+    check(not (root / 'var/lib/paxage/lock').exists(), 'lock-missing-not-recreated')
 
 
 @row('install-explicit')
@@ -543,7 +543,7 @@ def install_explicit(r):
               'install-owner-applied')
     check(outside_digest(r) == before, 'install-outside-untouched')
     ok(pxg('verify', '--root', root), 'verify-clean', last='verify ok')
-    check(not list((root / 'var/lib/larder/transactions').iterdir()), 'install-no-transaction-left')
+    check(not list((root / 'var/lib/paxage/transactions').iterdir()), 'install-no-transaction-left')
 
 
 @row('install-dependency-reason')
@@ -919,7 +919,7 @@ def injected_matrix(r, verb):
                 check(p.returncode == 1 and ('io' if kind == 'eio' else 'no-space') in p.stderr,
                       f'{row_name}-refused', describe(p))
                 if name == 'capacity':
-                    check(not list((root / 'var/lib/larder/transactions').iterdir()), f'{row_name}-zero-writes')
+                    check(not list((root / 'var/lib/paxage/transactions').iterdir()), f'{row_name}-zero-writes')
                 recovered_twice(r, root, row_name, old)
             except RowFailed:
                 continue
@@ -959,12 +959,12 @@ def rescue_entry(r):
     refused(pxg('rescue', '--root', tampered), 'rescue-unknown-state', 9, 'rescue-unknown-state')
     check(tree_digest(tampered) == before, 'rescue-unknown-state-no-writes')
     gone = r.copy(stuck, 'rescue-missing-backup')
-    backups = sorted((gone / 'var/lib/larder/transactions').glob('t*/backup/*'))
+    backups = sorted((gone / 'var/lib/paxage/transactions').glob('t*/backup/*'))
     if backups:
         backups[0].unlink()
     refused(pxg('rescue', '--root', gone), 'rescue-missing-backup', 9, 'rescue-missing-backup')
     bad = r.copy(stuck, 'rescue-malformed')
-    intents = sorted((bad / 'var/lib/larder/transactions').glob('t*/intent'))
+    intents = sorted((bad / 'var/lib/paxage/transactions').glob('t*/intent'))
     if intents:
         data = intents[0].read_bytes()
         intents[0].write_bytes(data[:-10] + b'x' * 10)

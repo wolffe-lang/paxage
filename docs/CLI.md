@@ -191,9 +191,9 @@ See TRUST T19 for the distinction between candidate fuzz and committed corruptio
 `init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC]`
 
 DIR must exist on a qualified filesystem (TRANSACTIONS X2) and, for an
-unprivileged caller, belong to the caller. Makes `DIR/var/lib/larder` (the lock
+unprivileged caller, belong to the caller. Makes `DIR/var/lib/paxage` (the lock
 inode, generation 0, `current`, `transactions/`, `trust/` bootstrapped from the
-caller's pinned root) and `DIR/var/cache/larder`. An existing state refuses
+caller's pinned root) and `DIR/var/cache/paxage`. An existing state refuses
 `state-exists`. The ownership mode (privileged for euid 0, logical otherwise) is
 fixed here. Success: `init ok`.
 

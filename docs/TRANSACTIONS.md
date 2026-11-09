@@ -40,7 +40,7 @@ process-wide working directory is sound.
 
 ## X4 — The database
 
-`ROOT/var/lib/larder/` (0700, one filesystem with the root):
+`ROOT/var/lib/paxage/` (0700, one filesystem with the root):
 
 - `lock`: the persistent lock inode, made once by init, never unlinked or
   recreated, no PID inside. Each writer opens it with `O_NOFOLLOW` and takes an
@@ -65,7 +65,7 @@ process-wide working directory is sound.
 - `trust/`: pm03's trust generations. They are monotonic and outside package
   rollback.
 
-`ROOT/var/cache/larder/` is pm03's hash-bound cache. Generation numbers and
+`ROOT/var/cache/paxage/` is pm03's hash-bound cache. Generation numbers and
 transaction ids are deterministic, so two identical runs write identical bytes.
 
 ## X5 — The transaction
@@ -207,7 +207,7 @@ The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
 
 `tools/check-transactions` digests a root: every entry's path, type, mode, owner
 (logical roots omit it), length, content SHA-256 or link target, and hardlink
-class. Times are excluded, and so are `var/lib/larder/trust/` and the cache.
+class. Times are excluded, and so are `var/lib/paxage/trust/` and the cache.
 
 For every hook a trace passes in install, upgrade and remove, the run is cut
 there and `rescue` runs twice. It passes when:

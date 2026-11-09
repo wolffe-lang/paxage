@@ -70,9 +70,9 @@ pub struct Plan {
 }
 
 /// The state directory, root-relative.
-pub fn state() -> str { "var/lib/larder" }
+pub fn state() -> str { "var/lib/paxage" }
 
-fn tx_rel(t: str) -> str { "var/lib/larder/transactions/{t}" }
+fn tx_rel(t: str) -> str { "var/lib/paxage/transactions/{t}" }
 
 fn hook(c: Ctx, point: str, detail: str) -> str { failpoint.hit(c.fail, point, detail) }
 

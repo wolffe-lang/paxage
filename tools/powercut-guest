@@ -291,7 +291,7 @@ def enospc(job, repo, dev):
         fill(str(filler), leave=48 << 10)
         p = ct.pxg('upgrade', '--root', root, '--now', NOW)
         filler.unlink()
-        left = list((Path(root) / 'var/lib/larder/transactions').iterdir())
+        left = list((Path(root) / 'var/lib/paxage/transactions').iterdir())
         emit(p.returncode == 1 and 'no-space: need' in p.stderr and not left and ct.tree_digest(root) == old,
              'vm-enospc-capacity', f'left={left} {ct.describe(p)}')
     umount('/mnt/e')
@@ -398,8 +398,8 @@ def recover(fs, img, rel, want, old, new, preen):
         second = ct.pxg('rescue', '--root', root)
         two = ct.tree_digest(root)
         verify = ct.pxg('verify', '--root', root)
-        pending = [x.name for x in (root / 'var/lib/larder/transactions').iterdir()] \
-            if (root / 'var/lib/larder/transactions').is_dir() else ['(no transactions dir)']
+        pending = [x.name for x in (root / 'var/lib/paxage/transactions').iterdir()] \
+            if (root / 'var/lib/paxage/transactions').is_dir() else ['(no transactions dir)']
         temps = [str(q.relative_to(root)) for q in root.rglob('.larder-t*')]
     finally:
         umount(m)
