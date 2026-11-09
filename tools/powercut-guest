@@ -129,8 +129,15 @@ def paused(root, failpoint, *args):
 
 
 def resume(proc, fifo, word='go'):
-    with open(fifo, 'w') as f:
-        f.write(word + '\n')
+    """Wake a paused owner. An owner that never paused (or already ended) has no reader on the
+    fifo, so the open is non-blocking and its ENXIO means: nothing to wake."""
+    if proc.poll() is None:
+        try:
+            fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.write(fd, (word + '\n').encode())
+            os.close(fd)
+        except OSError:
+            pass
     out, err = proc.communicate(timeout=300)
     os.unlink(fifo)
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
@@ -205,15 +212,17 @@ def phase_run(job):
          f'finished={finished[:12]} upgraded={upgraded[:12]}')
     # Two writers; the power goes while the owner holds the lock.
     base = roots.ready('pc-concurrent')
+    names = trace_names(roots, base, lambda r: ['install', '--root', r, 'alpha', '--now', NOW])
+    hold = ([n for n in names if n.endswith(':temp')] + ['intent'])[0]
     os.sync()
     mark(markdev, 'HARNESS setup concurrent')
     old = ct.tree_digest(base)
-    owner, fifo, line = paused(base, 'apply:0:temp', 'install', '--root', base, 'alpha', '--now', NOW)
+    owner, fifo, line = paused(base, hold, 'install', '--root', base, 'alpha', '--now', NOW)
     start = time.monotonic()
     second = ct.lrd('install', '--root', base, 'lone', '--now', NOW)
     secs = time.monotonic() - start
     emit(line.startswith('PAUSED') and second.returncode == 7 and secs < 5, f'vm-concurrent-{fs}-contention',
-         f'owner={line!r} second={ct.describe(second)} secs={secs:.2f}')
+         f'held at {hold}: owner={line!r} second={ct.describe(second)} secs={secs:.2f}')
     mark(markdev, 'HARNESS paused concurrent')
     resume(owner, fifo, 'crash')
     mark(markdev, 'HARNESS end concurrent')
@@ -291,7 +300,7 @@ def enospc(job, repo, dev):
 def qualify(repo, dev):
     for fs, extra, row in (('ext2', (), 'vm-fs-ext2-refused'), ('ext4', ('-O', '^has_journal'), 'vm-fs-ext4-nojournal-refused')):
         mkfs(fs, dev, *extra)
-        p = mount(fs, dev, '/mnt/q')
+        p = mount(fs, dev, '/mnt/q', opts='noatime')  # data=ordered needs a journal; these have none
         if p.returncode != 0:
             emit(False, row, f'mount {p.stderr!r}')
             continue
