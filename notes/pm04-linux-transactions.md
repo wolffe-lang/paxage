@@ -84,6 +84,15 @@ what was built:
     - `sync` refused by name;
     - `root-missing` and `live-root-is-pm05` for the three root verbs;
     - usage errors for root verbs without `--root`.
+  - pm02's container rows had been recorded only on kasumi, an FHS host. On hasu
+    (NixOS) they failed twice:
+    - podman's first `--userns=keep-id` use of the archlinux image builds an
+      ID-mapped layer copy. Under the step's 2 GiB address-space cap that copy hit
+      `pthread_create` EAGAIN, then the test's 60 s limit. It was warmed once
+      outside the gauntlet (135 s).
+    - The hasu-built binary's loader lives under `/nix/store`, so it could not
+      start in the container. The rows now mount `/nix/store` read-only where it
+      exists; no verdict changes.
 
 ## Evidence index
 
