@@ -1,0 +1,324 @@
+//! The installed database (X4). current is the commit decision; generations/<N>/db.lrd
+//! is immutable F2 literal data bounded by the 24-package snapshot limit, and its
+//! manifests live beside it by digest (generations/<N>/manifests/<sha256>).
+
+use literal
+use schema
+
+/// One installed package and the manifest object that describes its files.
+pub struct Installed { name: str, version: str, arch: str, slot: str, reason: str, manifest: str }
+
+/// A config file's packaged digest at install time; "" when the package shipped none.
+pub struct Baseline { path: str, package: str, sha256: str }
+
+/// A modified file left behind when its package was removed.
+pub struct Residual { path: str, package: str }
+
+/// An owned PATH.larder-new proposal written by the three-way rule.
+pub struct Proposal { path: str, package: str, sha256: str }
+
+/// An account an action declared; never deleted, kept after its package leaves.
+pub struct Account { name: str, uid: int, gid: int, package: str }
+
+/// A directory an action created (its missing ancestors included).
+pub struct Owned { path: str, package: str }
+
+/// A recorded but never executed action (cache rebuilds, R-pm04-10).
+pub struct Pending { kind: str, name: str, package: str }
+
+/// One generation's complete record.
+pub struct Db {
+    generation: int,
+    transaction: str,
+    arch: str,
+    slot: str,
+    repository: str,
+    ownership: str,
+    packages: List[Installed],
+    baselines: List[Baseline],
+    residuals: List[Residual],
+    proposals: List[Proposal],
+    accounts: List[Account],
+    directories: List[Owned],
+    pending: List[Pending],
+    error: str,
+}
+
+/// The commit decision: which generation is current, and the transaction that made it.
+pub struct Current { generation: int, database: str, transaction: str, error: str }
+
+/// An empty generation 0 for a new root.
+pub fn empty(arch: str, slot: str, repository: str, ownership: str) -> Db {
+    Db {
+        generation: 0,
+        transaction: "",
+        arch,
+        slot,
+        repository,
+        ownership,
+        packages: List[Installed](),
+        baselines: List[Baseline](),
+        residuals: List[Residual](),
+        proposals: List[Proposal](),
+        accounts: List[Account](),
+        directories: List[Owned](),
+        pending: List[Pending](),
+        error: "",
+    }
+}
+
+/// F2 string literal; braces doubled, quotes and backslashes escaped.
+pub fn quote(s: str) -> str {
+    var out = List[byte]()
+    (mut out).push(34 as byte)
+    for b in s.bytes() {
+        let c = b as int
+        if c == 92 || c == 34 {
+            (mut out).push(92 as byte)
+            (mut out).push(b)
+        } else if c == 123 || c == 125 {
+            (mut out).push(b)
+            (mut out).push(b)
+        } else if c == 10 {
+            (mut out).push(92 as byte)
+            (mut out).push(110 as byte)
+        } else if c == 9 {
+            (mut out).push(92 as byte)
+            (mut out).push(116 as byte)
+        } else if c == 13 {
+            (mut out).push(92 as byte)
+            (mut out).push(114 as byte)
+        } else {
+            (mut out).push(b)
+        }
+    }
+    (mut out).push(34 as byte)
+    str_from_utf8(out) else |_| { "\"\"" }
+}
+
+fn join_rows(rows: List[str]) -> str {
+    var s = "["
+    for i in 0..rows.len {
+        if i > 0 { s += ", " }
+        s += rows[i]
+    }
+    s + "]"
+}
+
+/// Canonical bytes of a generation record.
+pub fn render(db: Db) -> str {
+    var packages = List[str]()
+    for p in db.packages {
+        (mut packages).push(
+            "installed {{ name: {quote(p.name)}, version: {quote(p.version)}, arch: {quote(p.arch)}, slot: {quote(p.slot)}, reason: {quote(p.reason)}, manifest: {quote(p.manifest)} }}",
+        )
+    }
+    var baselines = List[str]()
+    for b in db.baselines {
+        (mut baselines).push(
+            "baseline {{ path: {quote(b.path)}, package: {quote(b.package)}, sha256: {quote(b.sha256)} }}",
+        )
+    }
+    var residuals = List[str]()
+    for r in db.residuals {
+        (mut residuals).push("residual {{ path: {quote(r.path)}, package: {quote(r.package)} }}")
+    }
+    var proposals = List[str]()
+    for p in db.proposals {
+        (mut proposals).push(
+            "proposal {{ path: {quote(p.path)}, package: {quote(p.package)}, sha256: {quote(p.sha256)} }}",
+        )
+    }
+    var accounts = List[str]()
+    for a in db.accounts {
+        (mut accounts).push(
+            "account {{ name: {quote(a.name)}, uid: {a.uid}, gid: {a.gid}, package: {quote(a.package)} }}",
+        )
+    }
+    var directories = List[str]()
+    for o in db.directories {
+        (mut directories).push("owned {{ path: {quote(o.path)}, package: {quote(o.package)} }}")
+    }
+    var pending = List[str]()
+    for p in db.pending {
+        (mut pending).push(
+            "pending {{ kind: {quote(p.kind)}, name: {quote(p.name)}, package: {quote(p.package)} }}",
+        )
+    }
+    "database {{ schema: 1, features: [], generation: {db.generation}, transaction: {quote(db.transaction)}, arch: {quote(db.arch)}, slot: {quote(db.slot)}, repository: {quote(db.repository)}, ownership: {quote(db.ownership)}, packages: {join_rows(packages)}, baselines: {join_rows(baselines)}, residuals: {join_rows(residuals)}, proposals: {join_rows(proposals)}, accounts: {join_rows(accounts)}, directories: {join_rows(directories)}, pending: {join_rows(pending)} }}\n"
+}
+
+fn rows(d: literal.Data, key: str) -> List[int] { literal.children(d, literal.field(d, 0, key)) }
+
+fn bad(why: str) -> Db {
+    var d = empty("", "", "", "")
+    d.error = "database-invalid {why}"
+    d
+}
+
+/// Parse and validate a generation record; any deviation refuses database-invalid.
+pub fn parse(bytes: List[byte]) -> Db {
+    var db = empty("", "", "", "")
+    let d = literal.parse(bytes)
+    if d.error != "" { return bad(d.error) }
+    let top = schema.shape(
+        d,
+        0,
+        "database",
+        [
+            "schema",
+            "features",
+            "generation",
+            "transaction",
+            "arch",
+            "slot",
+            "repository",
+            "ownership",
+            "packages",
+            "baselines",
+            "residuals",
+            "proposals",
+            "accounts",
+            "directories",
+            "pending",
+        ],
+        [
+            "int",
+            "list",
+            "int",
+            "string",
+            "string",
+            "string",
+            "string",
+            "string",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+            "list",
+        ],
+    )
+    if top != "" { return bad(top) }
+    if schema.integer(d, 0, "schema") != 1 || rows(d, "features").len != 0 { return bad("schema") }
+    db.generation = schema.integer(d, 0, "generation")
+    db.transaction = schema.string(d, 0, "transaction")
+    db.arch = schema.string(d, 0, "arch")
+    db.slot = schema.string(d, 0, "slot")
+    db.repository = schema.string(d, 0, "repository")
+    db.ownership = schema.string(d, 0, "ownership")
+    if db.ownership != "privileged" && db.ownership != "logical" { return bad("ownership") }
+    for c in rows(d, "packages") {
+        let e = schema.shape(
+            d,
+            c,
+            "installed",
+            ["name", "version", "arch", "slot", "reason", "manifest"],
+            ["string", "string", "string", "string", "string", "string"],
+        )
+        if e != "" { return bad(e) }
+        let p = Installed {
+            name: schema.string(d, c, "name"),
+            version: schema.string(d, c, "version"),
+            arch: schema.string(d, c, "arch"),
+            slot: schema.string(d, c, "slot"),
+            reason: schema.string(d, c, "reason"),
+            manifest: schema.string(d, c, "manifest"),
+        }
+        if p.reason != "explicit" && p.reason != "dependency" { return bad("reason") }
+        if !schema.digest(p.manifest) { return bad("manifest") }
+        (mut db.packages).push(p)
+    }
+    if db.packages.len > 24 { return bad("snapshot-limit") }
+    for c in rows(d, "baselines") {
+        let e = schema.shape(d, c, "baseline", ["path", "package", "sha256"], ["string", "string", "string"])
+        if e != "" { return bad(e) }
+        (mut db.baselines).push(Baseline {
+            path: schema.string(d, c, "path"),
+            package: schema.string(d, c, "package"),
+            sha256: schema.string(d, c, "sha256"),
+        })
+    }
+    for c in rows(d, "residuals") {
+        let e = schema.shape(d, c, "residual", ["path", "package"], ["string", "string"])
+        if e != "" { return bad(e) }
+        (mut db.residuals).push(Residual {
+            path: schema.string(d, c, "path"),
+            package: schema.string(d, c, "package"),
+        })
+    }
+    for c in rows(d, "proposals") {
+        let e = schema.shape(d, c, "proposal", ["path", "package", "sha256"], ["string", "string", "string"])
+        if e != "" { return bad(e) }
+        (mut db.proposals).push(Proposal {
+            path: schema.string(d, c, "path"),
+            package: schema.string(d, c, "package"),
+            sha256: schema.string(d, c, "sha256"),
+        })
+    }
+    for c in rows(d, "accounts") {
+        let e = schema.shape(d, c, "account", ["name", "uid", "gid", "package"], ["string", "int", "int", "string"])
+        if e != "" { return bad(e) }
+        (mut db.accounts).push(Account {
+            name: schema.string(d, c, "name"),
+            uid: schema.integer(d, c, "uid"),
+            gid: schema.integer(d, c, "gid"),
+            package: schema.string(d, c, "package"),
+        })
+    }
+    for c in rows(d, "directories") {
+        let e = schema.shape(d, c, "owned", ["path", "package"], ["string", "string"])
+        if e != "" { return bad(e) }
+        (mut db.directories).push(Owned {
+            path: schema.string(d, c, "path"),
+            package: schema.string(d, c, "package"),
+        })
+    }
+    for c in rows(d, "pending") {
+        let e = schema.shape(d, c, "pending", ["kind", "name", "package"], ["string", "string", "string"])
+        if e != "" { return bad(e) }
+        (mut db.pending).push(Pending {
+            kind: schema.string(d, c, "kind"),
+            name: schema.string(d, c, "name"),
+            package: schema.string(d, c, "package"),
+        })
+    }
+    db
+}
+
+/// Canonical bytes of the commit record.
+pub fn render_current(c: Current) -> str {
+    "current {{ schema: 1, features: [], generation: {c.generation}, database: {quote(c.database)}, transaction: {quote(c.transaction)} }}\n"
+}
+
+/// Parse the commit record; anything malformed is current-invalid, never a fallback.
+pub fn parse_current(bytes: List[byte]) -> Current {
+    var c = Current { generation: -1, database: "", transaction: "", error: "" }
+    let d = literal.parse(bytes)
+    if d.error != "" { c.error = "current-invalid"; return c }
+    let e = schema.shape(
+        d,
+        0,
+        "current",
+        ["schema", "features", "generation", "database", "transaction"],
+        ["int", "list", "int", "string", "string"],
+    )
+    if e != "" || schema.integer(d, 0, "schema") != 1 || rows(d, "features").len != 0 {
+        c.error = "current-invalid"
+        return c
+    }
+    c.generation = schema.integer(d, 0, "generation")
+    c.database = schema.string(d, 0, "database")
+    c.transaction = schema.string(d, 0, "transaction")
+    if !schema.digest(c.database) || c.generation < 0 || c.generation > 1000000000 {
+        c.error = "current-invalid"
+    }
+    c
+}
+
+/// The package record for name, or -1.
+pub fn find(db: Db, name: str) -> int {
+    for i in 0..db.packages.len { if db.packages[i].name == name { return i } }
+    -1
+}
