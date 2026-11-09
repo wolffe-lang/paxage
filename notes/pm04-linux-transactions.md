@@ -107,6 +107,21 @@ what was built:
       refuses `floor-masks-peak` rather than passing.
     - On hasu (light slot, under the 2 GiB cap): floor 1692 and 1688 KiB. Chunk
       reader 2704 → 2752 KiB (+48); full reader 3180 → 3268 KiB (+88).
+  - The CI root take (`sudo` on GitHub's Linux runner) went red at the fixture
+    publication. The harness dropped those commands to uid 65534, but the runner
+    keeps the checkout under `/home/runner` (0750, the runner's own), so 65534 could
+    not exec `target/bin/larder` (EACCES).
+    - hasu's container take never saw it. It copies the tree under podman's
+      bind-mount path, whose directories are 0755, and that copy is root-owned
+      with 0755 binaries.
+    - It reproduced red in `localhost/pm04-sudo:1`, a lane image (px75 plus `sudo`,
+      a uid-1001 `runner`, a 0750 home, passwordless sudo) running
+      `tools/check-transactions-privileged` with `GITHUB_ACTIONS=true` from
+      `/home/runner/work/larder/larder`: the same `PermissionError` on the same path.
+    - The fixture is now published as the checkout's owner (sudo's caller, then
+      65534 only for a root-owned checkout), behind a named preflight
+      (`fixture-identity-reach`). Both routes then pass 938 rows: the sudo route as
+      uid 1001, the container route as 65534.
   - One dev job on hasu (block A, then slot, then light) ran every step the Mac
     skips. trust-openssl-writer runs only on kasumi, off limits here, and prints
     its SKIP.
