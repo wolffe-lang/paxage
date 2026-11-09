@@ -1,0 +1,367 @@
+//! The descriptor walk (X3). Every live-tree name is reached one component at a
+//! time from a held root handle with O_DIRECTORY|O_NOFOLLOW (open word 48), never by
+//! a whole path. wolf 0.2.38 has no renameat, readlinkat, fchownat or fchdir
+//! (wolf-lang#1084), so those three operations run with the working directory
+//! pinned: chdir one component at a time, each step's "." checked by dev/ino
+//! against the held handle, then a one-component name (R-pm04-2). larder is
+//! single-threaded, so the process-wide working directory is safe to pin.
+
+use payload
+use std.str as text
+use std.x.crypto.sha2 as sha2
+
+/// The held synthetic root: its canonical path, handle and identity.
+pub struct Root { path: str, fd: int, dev: int, ino: int, cwd: str, error: str }
+
+/// A held directory reached by the walk, with every level's identity for pinning.
+pub struct Dir { fd: int, rel: str, names: List[str], devs: List[int], inos: List[int], error: str }
+
+/// What a name in the live tree is. kind: absent, file, dir, symlink or other.
+pub struct Ident {
+    kind: str,
+    mode: int,
+    uid: int,
+    gid: int,
+    length: int,
+    sha256: str,
+    target: str,
+    dev: int,
+    ino: int,
+    nlink: int,
+    error: str,
+}
+
+/// The identity of a missing name.
+pub fn absent() -> Ident {
+    Ident {
+        kind: "absent",
+        mode: 0,
+        uid: 0,
+        gid: 0,
+        length: 0,
+        sha256: "",
+        target: "",
+        dev: 0,
+        ino: 0,
+        nlink: 0,
+        error: "",
+    }
+}
+
+fn failed(error: str) -> Ident {
+    var i = absent()
+    i.kind = "error"
+    i.error = error
+    i
+}
+
+/// Components of a root-relative path; "" is the root itself.
+pub fn components(rel: str) -> List[str] {
+    if rel == "" { return List[str]() }
+    text.split(rel, "/")
+}
+
+/// The parent of a root-relative path ("" for a top-level name).
+pub fn parent_of(rel: str) -> str {
+    let parts = text.rsplit_once(rel, "/") else |_| { return "" }
+    let (head, _tail) = parts
+    head
+}
+
+/// The last component of a root-relative path.
+pub fn base_of(rel: str) -> str {
+    let parts = text.rsplit_once(rel, "/") else |_| { return rel }
+    let (_head, tail) = parts
+    tail
+}
+
+/// Join a root-relative directory and a name.
+pub fn join(dir: str, name: str) -> str {
+    if dir == "" { return name }
+    "{dir}/{name}"
+}
+
+/// Hold the root. The caller's path is canonicalized once; afterwards only the
+/// handle and its identity are trusted.
+pub fn open_root(path: str) -> Root {
+    var r = Root { path: "", fd: -1, dev: 0, ino: 0, cwd: "", error: "" }
+    let cwd = os_cwd() else |_| { r.error = "root-cwd"; return r }
+    r.cwd = cwd
+    let real = fs_realpath(path) else |_| { r.error = "root-missing"; return r }
+    r.path = real
+    let fd = fs_open_mode(real, 48) else |_| { r.error = "root-not-directory"; return r }
+    let rec = fs_fstat_record(fd) else |_| {
+        fs_close(fd) else |_| {}
+        r.error = "root-stat"
+        return r
+    }
+    if rec[0] != 1 { fs_close(fd) else |_| {}; r.error = "root-not-directory"; return r }
+    r.fd = fd
+    r.dev = rec[9]
+    r.ino = rec[10]
+    r
+}
+
+/// Release the root handle and return to the caller's working directory.
+pub fn close_root(r: Root) {
+    os_chdir(r.cwd) else |_| {}
+    if r.fd >= 0 { fs_close(r.fd) else |_| {} }
+}
+
+/// Open every component of rel as a directory, refusing a link or non-directory
+/// at any level as path-race. A missing level is "absent: PREFIX".
+pub fn dir(r: Root, rel: str) -> Dir {
+    var d = Dir {
+        fd: -1,
+        rel,
+        names: List[str](),
+        devs: List[int](),
+        inos: List[int](),
+        error: "",
+    }
+    var cur = fs_open_at(r.fd, ".", 48, 0) else |_| { d.error = "path-race ."; return d }
+    let top = fs_fstat_record(cur) else |_| {
+        fs_close(cur) else |_| {}
+        d.error = "walk-stat ."
+        return d
+    }
+    if top[9] != r.dev || top[10] != r.ino {
+        fs_close(cur) else |_| {}
+        d.error = "path-race ."
+        return d
+    }
+    var prefix = ""
+    for name in components(rel) {
+        prefix = join(prefix, name)
+        var missing = false
+        var error = ""
+        let next = fs_open_at(cur, name, 48, 0) else |e| match e {
+            not_found => { missing = true; -1 },
+            invalid => { error = "path-race {prefix}"; -1 },
+            denied => { error = "walk-denied {prefix}"; -1 },
+            _ => { error = "walk {prefix}"; -1 },
+        }
+        if missing || error != "" {
+            fs_close(cur) else |_| {}
+            if missing { d.error = "absent: {prefix}" } else { d.error = error }
+            return d
+        }
+        let rec = fs_fstat_record(next) else |_| {
+            fs_close(next) else |_| {}
+            fs_close(cur) else |_| {}
+            d.error = "walk-stat {prefix}"
+            return d
+        }
+        fs_close(cur) else |_| {}
+        cur = next
+        (mut d.names).push(name)
+        (mut d.devs).push(rec[9])
+        (mut d.inos).push(rec[10])
+    }
+    d.fd = cur
+    d
+}
+
+/// Release a walked directory.
+pub fn close(d: Dir) { if d.fd >= 0 { fs_close(d.fd) else |_| {} } }
+
+/// True when the walk reported a missing level rather than a race or failure.
+pub fn missing(d: Dir) -> bool { text.starts_with(d.error, "absent: ") }
+
+fn here(dev: int, ino: int) -> bool {
+    let s = fs_lstat(".") else |_| { return false }
+    s[0] == 1 && s[9] == dev && s[10] == ino
+}
+
+/// Make d the working directory, verified level by level against the held handles.
+pub fn pin(r: Root, d: Dir) -> str {
+    os_chdir(r.path) else |_| { return "path-race {d.rel}" }
+    if !here(r.dev, r.ino) { return "path-race {d.rel}" }
+    for i in 0..d.names.len {
+        os_chdir(d.names[i]) else |_| { return "path-race {d.rel}" }
+        if !here(d.devs[i], d.inos[i]) { return "path-race {d.rel}" }
+    }
+    let held = fs_fstat_record(d.fd) else |_| { return "path-race {d.rel}" }
+    if !here(held[9], held[10]) { return "path-race {d.rel}" }
+    ""
+}
+
+/// Leave the pinned directory for the caller's original one.
+pub fn unpin(r: Root) { os_chdir(r.cwd) else |_| {} }
+
+/// Rename one name to another inside the held directory (pinned cwd).
+pub fn rename(r: Root, d: Dir, from: str, to: str) -> str {
+    let p = pin(r, d)
+    if p != "" { unpin(r); return p }
+    var error = ""
+    fs_rename(from, to) else |e| match e {
+        not_found => { error = "rename-missing" },
+        _ => { error = "rename" },
+    }
+    unpin(r)
+    error
+}
+
+/// Set a symbolic link's own owner (pinned cwd, follow false).
+pub fn lchown(r: Root, d: Dir, name: str, uid: int, gid: int) -> str {
+    let p = pin(r, d)
+    if p != "" { unpin(r); return p }
+    var error = ""
+    fs_set_owner(name, uid, gid, false) else |_| { error = "owner" }
+    unpin(r)
+    error
+}
+
+fn link_text(r: Root, d: Dir, name: str) -> Ident {
+    let p = pin(r, d)
+    if p != "" { unpin(r); return failed(p) }
+    var out = absent()
+    let raw = fs_read_link(name) else |_| {
+        unpin(r)
+        return failed("readlink {join(d.rel, name)}")
+    }
+    unpin(r)
+    let t = str_from_utf8(raw) else |_| { return failed("readlink {join(d.rel, name)}") }
+    out.target = t
+    out
+}
+
+/// Sync a held directory's entries to the disk.
+pub fn sync(d: Dir) -> str {
+    fs_sync(d.fd) else |_| { return "dir-sync {d.rel}" }
+    ""
+}
+
+/// Digest exactly length bytes of a held regular file and require EOF after.
+pub fn digest_fd(fd: int, length: int) -> str {
+    let h = payload.digest(fd, length)
+    if h.error != "" { return "" }
+    h.hash
+}
+
+/// Look a name up in a held directory without following it. hash reads a regular
+/// file's bytes through a no-follow handle checked against the same identity.
+pub fn look(r: Root, d: Dir, name: str, hash: bool) -> Ident {
+    var missing = false
+    let s = fs_lstat_at(d.fd, name) else |e| match e {
+        not_found => { missing = true; List[int]() },
+        _ => { List[int]() },
+    }
+    if missing { return absent() }
+    if s.len == 0 { return failed("stat {join(d.rel, name)}") }
+    var out = absent()
+    out.mode = s[4]
+    out.uid = s[6]
+    out.gid = s[7]
+    out.dev = s[9]
+    out.ino = s[10]
+    out.nlink = s[5]
+    if s[0] == 1 {
+        out.kind = "dir"
+    } else if s[0] == 3 {
+        let t = link_text(r, d, name)
+        if t.error != "" { return t }
+        out.kind = "symlink"
+        out.target = t.target
+        out.length = s[1]
+    } else if s[0] == 0 {
+        out.kind = "file"
+        out.length = s[1]
+        if hash {
+            let fd = fs_open_at(d.fd, name, 21, 0) else |_| {
+                return failed("open {join(d.rel, name)}")
+            }
+            let held = fs_fstat_record(fd) else |_| {
+                fs_close(fd) else |_| {}
+                return failed("stat {join(d.rel, name)}")
+            }
+            if held[9] != s[9] || held[10] != s[10] || held[1] != s[1] {
+                fs_close(fd) else |_| {}
+                return failed("path-race {join(d.rel, name)}")
+            }
+            out.sha256 = digest_fd(fd, s[1])
+            fs_close(fd) else |_| {}
+            if out.sha256 == "" { return failed("read {join(d.rel, name)}") }
+        }
+    } else {
+        out.kind = "other"
+    }
+    out
+}
+
+/// Look up a root-relative path; a missing ancestor is an absent name.
+pub fn look_path(r: Root, rel: str, hash: bool) -> Ident {
+    let d = dir(r, parent_of(rel))
+    if d.error != "" {
+        if missing(d) { return absent() }
+        return failed(d.error)
+    }
+    let out = look(r, d, base_of(rel), hash)
+    close(d)
+    out
+}
+
+/// Entry names of a held directory, in host order.
+pub fn names(d: Dir) -> List[str] {
+    var out = List[str]()
+    let rows = fs_read_dir_entries_at(d.fd) else |_| { return out }
+    for row in rows {
+        let n = str_from_utf8(row[1..row.len]) else |_| { continue }
+        (mut out).push(n)
+    }
+    out
+}
+
+fn remove_fd(parent: int, name: str, depth: int) -> str {
+    if depth > 256 { return "remove-depth" }
+    var missing = false
+    let s = fs_lstat_at(parent, name) else |e| match e {
+        not_found => { missing = true; List[int]() },
+        _ => { List[int]() },
+    }
+    if missing { return "" }
+    if s.len == 0 { return "remove-stat {name}" }
+    if s[0] != 1 {
+        fs_remove_at(parent, name) else |_| { return "remove {name}" }
+        return ""
+    }
+    let child = fs_open_at(parent, name, 48, 0) else |_| { return "remove-open {name}" }
+    fs_set_mode_fd(child, 448) else |_| {}
+    let rows = fs_read_dir_entries_at(child) else |_| {
+        fs_close(child) else |_| {}
+        return "remove-list {name}"
+    }
+    for row in rows {
+        let n = str_from_utf8(row[1..row.len]) else |_| {
+            fs_close(child) else |_| {}
+            return "remove-name {name}"
+        }
+        let e = remove_fd(child, n, depth + 1)
+        if e != "" { fs_close(child) else |_| {}; return e }
+    }
+    fs_sync(child) else |_| {}
+    fs_close(child) else |_| {}
+    fs_remove_dir_at(parent, name) else |_| { return "remove-dir {name}" }
+    ""
+}
+
+/// Remove a name and everything below it through handles only; links are removed,
+/// never followed. A missing name is not an error.
+pub fn remove_tree(d: Dir, name: str) -> str { remove_fd(d.fd, name, 0) }
+
+/// Copy exactly length bytes from fd into out, returning the SHA-256 of what was copied.
+pub fn copy_fd(input: int, out: int, length: int) -> str {
+    var remaining = length
+    var buffer = List[byte]()
+    var st = sha2.new256()
+    while remaining > 0 {
+        var n = remaining
+        if n > 65536 { n = 65536 }
+        let got = payload.read_into(input, mut buffer, n) else |_| { return "" }
+        if got == 0 { return "" }
+        fs_write_chunk(out, buffer) else |_| { return "" }
+        sha2.update256(mut st, buffer)
+        remaining -= got
+    }
+    sha2.to_hex(sha2.final256(take st))
+}
