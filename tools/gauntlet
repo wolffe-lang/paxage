@@ -19,7 +19,10 @@ step unit tools/check-test
 step cli tools/check-e2e
 if [ "$(uname -s)" = Linux ]; then
   step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
-  step container prlimit --as=2147483648 python3 -I tools/check-payload-container
+  # podman runs uncapped; the step caps the archivers and larder inside the container (ulimit -v
+  # 2 GiB). The warm step pulls and copies the image under its own bound first, for a cold store.
+  step container-warm python3 -I tools/check-payload-container --warm
+  step container python3 -I tools/check-payload-container
   step inventory-bound prlimit --as=2147483648 python3 -I tools/check-inventory-bound
   step chunk-rss prlimit --as=2147483648 python3 -I tools/check-chunk-rss
   step rss prlimit --as=2147483648 python3 -I tools/check-payload-rss

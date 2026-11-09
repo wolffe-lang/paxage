@@ -15,6 +15,7 @@ if __name__ == '__main__': sys.excepthook = _named_failure
 ROOT=Path(__file__).resolve().parents[1]
 v=importlib.machinery.SourceFileLoader('vectors',str(ROOT/'tools/check-payload')).load_module()
 IMAGE='docker.io/library/archlinux@sha256:8185e444e45ba166146b244b41f1cba2d7d91f3eddce533a839cc9591e0fa785'
+CAP_KIB=2*1024*1024
 
 def container(command,mounts):
     engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
@@ -26,12 +27,39 @@ def container(command,mounts):
     if Path('/nix/store').is_dir():args+=['-v','/nix/store:/nix/store:ro']
     cpus=os.environ.get('LARDER_CONTAINER_CPUS')
     if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
+    # The 2 GiB address-space cap is the archivers' and larder's, inside the container. podman
+    # (a Go program) is not capped: under the cap its runtime failed to map 4 MiB blocks
+    # ("runtime: out of memory") on satoyama, with the image already warm.
+    command=f'ulimit -v {CAP_KIB} && '+command
     args +=[IMAGE,'/usr/bin/bash','-c',command]
     p=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,timeout=60)
     assert p.returncode==0,(command,p.returncode,p.stdout,p.stderr)
     return p.stdout
 
+def warm():
+    """The step's own preparation, before its 60 s per-container bound applies. On a cold store,
+    podman's pull and its --userns=keep-id layer copy take tens of seconds (and failed under the
+    old outer 2 GiB cap: pthread_create, then runtime out of memory). So the pull, with retries, and
+    the copy happen here under their own 900 s bounds. A warm store takes a second."""
+    import time
+    engine=os.environ.get('LARDER_CONTAINER_ENGINE') or ('podman' if shutil.which('podman') else 'docker')
+    start=time.monotonic()
+    for attempt in range(1,5):
+        p=subprocess.run([engine,'pull','-q',IMAGE],stdin=subprocess.DEVNULL,capture_output=True,timeout=900)
+        if p.returncode==0:break
+        print(f'container-warm: pull attempt {attempt} rc={p.returncode} {p.stderr[-200:]!r}',flush=True)
+        time.sleep(10*attempt)
+    assert p.returncode==0,('container-warm-pull',p.stderr[-400:])
+    pulled=time.monotonic()-start
+    args=[engine,'run','--rm','--network','none',IMAGE,'/usr/bin/true']
+    if engine.endswith('podman'):args[3:3]=['--userns=keep-id']
+    p=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,timeout=900)
+    assert p.returncode==0,('container-warm-copy',p.stderr[-400:])
+    print(f'PASS container-warm pull_secs={pulled:.0f} copy_secs={time.monotonic()-start-pulled:.0f}',flush=True)
+
 def main():
+    if sys.argv[1:]==['--warm']:
+        warm();return
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='container-') as d:
         d=Path(d);work=d/'work';work.mkdir();tree=work/'tree';tree.mkdir();(tree/'usr').mkdir()
         file=tree/'usr/file';file.write_bytes(b'abc');file.chmod(0o644);os.utime(file,(-1,-1))
