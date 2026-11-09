@@ -156,6 +156,15 @@ fn main() -> int {
     ) {
         ok = false
     }
+    if !row(
+        failpoint.parse("mark", "").action == "mark" &&
+            !failpoint.valid("mark", failpoint.parse("mark", "")) &&
+            failpoint.valid("mark", failpoint.marked(failpoint.parse("mark", ""), "/dev/vdd")) &&
+            failpoint.marked(failpoint.parse("commit:eio", ""), "").action == "eio",
+        "X8-failpoint-mark",
+    ) {
+        ok = false
+    }
 
     if !row(
         walk.parent_of("usr/share/a") == "usr/share" &&
