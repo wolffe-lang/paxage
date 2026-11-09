@@ -45,6 +45,13 @@ if bash tools/check-transactions-privileged --available; then
 else
   echo 'SKIP transactions-privileged reason=no root route here (not root, no CI sudo, no container engine and image); owners stay logical'
 fi
+step powercut-host python3 -I tools/check-powercut --host
+if vm_why=$(python3 -I tools/check-powercut --available); then
+  step powercut-vm python3 -I tools/check-powercut --vm
+else
+  echo "SKIP powercut-vm reason=${vm_why#powercut: vm unavailable: }; the power-cut witness needs a KVM Linux take"
+fi
+step fetch-retry python3 -I tools/check-fetch-retry
 bash tools/check-trust-unit trust_json
 bash tools/check-trust-unit trust_metadata
 bash tools/check-trust-unit trust_state
