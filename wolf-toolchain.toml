@@ -1,23 +1,23 @@
-# larder release archives, checked twice through GitHub API 2026-11-02.
+# larder release archives, checked twice (GitHub API digest and a downloaded sha256) 2026-11-09.
 # Std has an explicit git pin and is staged in place of the bundled tree.
 [wolf]
-version = "0.2.36"
+version = "0.2.38"
 repo = "wolffe-lang/wolf-lang"
-rev = "5adf3d91f75b3545ff8d38e5b6693b0b9f367a05"
-version_line = "wolf 0.2.36 (wolfgang, pin 5adf3d9)"
-aarch64-apple-darwin = "b79d55845f349d56789d9d1cb057ee88b5a7128d3b6dd77ca070707cfa4aa632"
-x86_64-unknown-linux-gnu = "d383c74c8cd123b9d9dfaa268271d4f004294f85c2b230237d0ef07027d9500d"
+rev = "95ae0827a8ad4d0bbed9302df7811caaa7009fa1"
+version_line = "wolf 0.2.38 (wolfgang, pin 95ae082)"
+aarch64-apple-darwin = "66a2c31324e9e4c4cbb6f103e4014e36b400366c198598b67c71491a65cffba4"
+x86_64-unknown-linux-gnu = "8447a57944da67ba8e76f5b4e88c2f38a32f39466f44b65e5817dcc276394f39"
 
 [lupin]
-# The reference interpreter wolf 0.2.36 declares as its pairing:
-# `wolf --version` line 2 reads "paired with lupin 0.1.58 (reference
-# interpreter), pin a5378e3".
-version = "0.1.58"
+# The reference interpreter wolf 0.2.38 declares as its pairing:
+# `wolf --version` line 2 reads "paired with lupin 0.1.60 (reference
+# interpreter), pin 5f1f1c9...". 0.2.38 adds the descriptor walk (s277).
+version = "0.1.60"
 repo = "wolffe-lang/wolf-interp"
-rev = "6240efe5570dba1a33ba6269e3ba44bae33dd972"
-version_line = "lupin 0.1.58 (wolf-interp, reference interpreter at pin a5378e3)"
-aarch64-apple-darwin = "c1b0277133c052892be10539062666e873e874997cbb5be300cffe2c309ec055"
-x86_64-unknown-linux-gnu = "34f52792bb59bc7565e0edc1235cd47d9a6ad13d5e6528993627f2e699b62193"
+rev = "17bd522382373b361fe035a5cc61f9e136e1caba"
+version_line = "lupin 0.1.60 (wolf-interp, reference interpreter at pin 5f1f1c9)"
+aarch64-apple-darwin = "f3cae16fdb88a94702c0fd816d5eb90cdc8e8636c028dcf40f03868c5dc36bb8"
+x86_64-unknown-linux-gnu = "e7d4c4f1534736c9262f4ccd01a631f03ff70e3b8122eefe6e9ec1e15c02637e"
 
 
 [std]
