@@ -22,15 +22,15 @@ fn usage() -> str {
     "Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nRoot: init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S | install --root DIR SPEC... | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR"
 }
 
-fn bad_usage(message: str) -> int { eprint("larder: {message}\n{usage()}"); 2 }
+fn bad_usage(message: str) -> int { eprint("paxage: {message}\n{usage()}"); 2 }
 
 fn fail(message: str) -> int {
     if message == "state-invalid" || message.ends_with(": state-invalid") {
         eprint(
-            "larder: {message}; re-bootstrap into a new, empty state directory from a caller-supplied pinned root",
+            "paxage: {message}; re-bootstrap into a new, empty state directory from a caller-supplied pinned root",
         )
     } else {
-        eprint("larder: {message}")
+        eprint("paxage: {message}")
     }
     1
 }
@@ -251,15 +251,15 @@ fn resolve(args: List[str]) -> int {
     let p = solver.resolve(s, needs)
     if p.status == "solved" {
         let c = checker.check(s, needs, p.selected)
-        if c != "" { eprint("larder: internal-plan-error: {c}"); return 5 }
+        if c != "" { eprint("paxage: internal-plan-error: {c}"); return 5 }
     }
     emit(s, p, wants, as_json)
     if p.status == "unsatisfiable" {
-        eprint("larder: unsatisfiable: exhaustive snapshot proof")
+        eprint("paxage: unsatisfiable: exhaustive snapshot proof")
         return 3
     }
     if p.status == "budget-exceeded" {
-        eprint("larder: budget-exceeded: search incomplete")
+        eprint("paxage: budget-exceeded: search incomplete")
         return 4
     }
     0
@@ -304,7 +304,7 @@ fn main() -> int {
     }
     if root_cli.owns(verb) { return root_cli.run(a, failpoint.none()) }
     if verb == "sync" {
-        eprint("larder: sync refused: upgrade is the one refresh-and-upgrade operation")
+        eprint("paxage: sync refused: upgrade is the one refresh-and-upgrade operation")
         return 6
     }
     if verb == "repo" || verb == "bootstrap" || verb == "update" || verb == "fetch" {

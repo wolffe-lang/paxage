@@ -3,7 +3,7 @@
 ## C1 — Names and working verbs
 
 One binary, `paxage`; `pxg` is a symbolic link with identical behavior.
-Diagnostics start `larder:` regardless of invocation name. Usage names both.
+Diagnostics start `paxage:` regardless of invocation name. Usage names both.
 
 - `version`: `paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)`.
 - `check-manifest FILE`: strict F2/F3 validation, exact-byte std SHA-256 and

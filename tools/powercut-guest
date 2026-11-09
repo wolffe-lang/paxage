@@ -374,7 +374,7 @@ def phase_eio(job):
     aborted = 'Aborting journal' in kernel or 'Detected aborted journal' in kernel
     scenario_line(name=name, fs=fs, root=str(Path(root).relative_to('/mnt/d')), old=old, new=old,
                   rc=p.returncode, marks=[], aborted=aborted)
-    emit(p.returncode != 0 and 'larder' in p.stderr, f'vm-eio-{fs}-{job["row"]}-refused',
+    emit(p.returncode != 0 and 'paxage:' in p.stderr, f'vm-eio-{fs}-{job["row"]}-refused',
          f'aborted={aborted} {ct.describe(p)}')
 
 

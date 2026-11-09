@@ -96,7 +96,7 @@ def main():
         # Bind an existing read-only character device, without creating a node
         # or invoking a privileged process, to exercise pack's device refusal.
         device=tree/'null';device.touch()
-        device_cmd="message=$(/bin/paxage pack /tree /template /out --epoch 0 2>&1); result=$?; test \"$result\" = 1 && test \"$message\" = 'larder: pack-device'"
+        device_cmd="message=$(/bin/paxage pack /tree /template /out --epoch 0 2>&1); result=$?; test \"$result\" = 1 && test \"$message\" = 'paxage: pack-device'"
         container(device_cmd,[(ROOT/'target/bin/paxage','/bin/paxage','ro'),(tree,'/tree','ro'),(Path('/dev/null'),'/tree/null','ro'),(ROOT/'tests/manifests/valid.manifest','/template','ro'),(out,'/out','rw')])
         device.unlink()
         stage=out/'stage';stage.mkdir(mode=0o700)
@@ -107,7 +107,7 @@ def main():
         assert before=={p.name:(p.stat().st_ino,p.stat().st_size) for p in out.iterdir() if p.is_file()},'F6-container-parent-unchanged'
         mounted=d/'mount-stage';mounted.mkdir(mode=0o700)
         refused=cmd.replace('/fixture/','/input/').replace('--into /input/stage','--into /stage')
-        mount_cmd='message=$('+refused+' 2>&1); result=$?; test "$result" = 1 && test "$message" = "larder: stage-root-mount"'
+        mount_cmd='message=$('+refused+' 2>&1); result=$?; test "$result" = 1 && test "$message" = "paxage: stage-root-mount"'
         container(mount_cmd,[(ROOT/'target/bin/paxage','/bin/paxage','ro'),(out,'/input','ro'),(mounted,'/stage','rw')])
         assert list(mounted.iterdir())==[],'F6-mount-refusal-no-writes'
 

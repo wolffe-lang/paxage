@@ -52,7 +52,7 @@ def invoke(args, code=0, error=None, binary=BINARY, timeout=10):
     if sys.platform.startswith("linux"):command=["prlimit","--as=2147483648","--",*command]
     p=subprocess.run(command,capture_output=True,timeout=timeout)
     assert p.returncode==code, ('FAIL F6-'+(error or str(args[0])),args,p.returncode,p.stdout,p.stderr)
-    if error: assert p.stderr==f'larder: {error}\n'.encode(),('FAIL F6-'+error,args,p.stderr,error)
+    if error: assert p.stderr==f'paxage: {error}\n'.encode(),('FAIL F6-'+error,args,p.stderr,error)
     elif code==0: assert p.stderr==b'',(args,p.stderr)
     return p
 
@@ -278,7 +278,7 @@ def fuzz(d,valid):
                 else:
                     # F5 can describe symlink modes this unprivileged host cannot
                     # reproduce. That must be a named refusal, never false success.
-                    assert staged.returncode==1 and staged.stderr==b'larder: stage-mode\n',(seed,i,staged.returncode,staged.stdout,staged.stderr)
+                    assert staged.returncode==1 and staged.stderr==b'paxage: stage-mode\n',(seed,i,staged.returncode,staged.stdout,staged.stderr)
                     refused+=1
                 import shutil
                 shutil.rmtree(into);path.unlink();m.unlink()

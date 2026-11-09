@@ -7,13 +7,13 @@ use failpoint
 
 fn main() -> int {
     let a = env_args()
-    if a.len < 1 || !root_cli.owns(a[0]) { eprint("larder-failpoint: root verbs only"); return 2 }
+    if a.len < 1 || !root_cli.owns(a[0]) { eprint("paxage-failpoint: root verbs only"); return 2 }
     let spec = env_get("LARDER_FAILPOINT") else |_| { "" }
     let fifo = env_get("LARDER_FAILPOINT_FIFO") else |_| { "" }
     let mark = env_get("LARDER_FAILPOINT_MARK") else |_| { "" }
     let f = failpoint.marked(failpoint.parse(spec, fifo), mark)
     if !failpoint.valid(spec, f) {
-        eprint("larder-failpoint: bad LARDER_FAILPOINT {spec}")
+        eprint("paxage-failpoint: bad LARDER_FAILPOINT {spec}")
         return 2
     }
     root_cli.run(a, f)

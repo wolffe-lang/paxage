@@ -31,19 +31,19 @@ for binary in [BINARY,LINK]:
     run(['--version'],out='paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
     run(['--help'],out=usage,err='',binary=binary)
     # C2: sync stays refused by name; the root verbs never touch the live root or a missing one.
-    run(['sync','--root','/do-not-touch'],6,out='',err='larder: sync refused: upgrade is the one refresh-and-upgrade operation\n',binary=binary)
+    run(['sync','--root','/do-not-touch'],6,out='',err='paxage: sync refused: upgrade is the one refresh-and-upgrade operation\n',binary=binary)
     for verb in ['install','remove','upgrade']:
         names=[] if verb=='upgrade' else ['alpha']
-        run([verb,'--root','/do-not-touch',*names],1,out='',err='larder: root-missing\n',binary=binary)
-        run([verb,'--root','/',*names],1,out='',err='larder: live-root-is-pm05\n',binary=binary)
+        run([verb,'--root','/do-not-touch',*names],1,out='',err='paxage: root-missing\n',binary=binary)
+        run([verb,'--root','/',*names],1,out='',err='paxage: live-root-is-pm05\n',binary=binary)
         assert not Path('/do-not-touch').exists(), 'C2-no-root-created'
     for verb in ['init','status','verify','rescue','autoremove']:
         run([verb,'--root','/'],code={'init':2}.get(verb,1),binary=binary)
         run([verb],2,out='',binary=binary)
     for args in [[],['unknown'],['compare','1-1'],['version','extra'],['resolve'],['resolve','--snapshot'],['resolve','--json','--json']]:
         p=run(args,2,binary=binary)
-        assert p.stdout==b'' and p.stderr.startswith(b'larder: ') and usage.encode() in p.stderr
-    run(['compare','1-0','1-1'],1,out='',err='larder: bad-version\n',binary=binary)
+        assert p.stdout==b'' and p.stderr.startswith(b'paxage: ') and usage.encode() in p.stderr
+    run(['compare','1-0','1-1'],1,out='',err='paxage: bad-version\n',binary=binary)
     for line in (ROOT/'tests/versions.tsv').read_text().splitlines():
         if not line or line.startswith('#'): continue
         a,b,result=line.split('\t')
@@ -53,7 +53,7 @@ for binary in [BINARY,LINK]:
         raw=path.read_bytes()
         run(['check-manifest',path],out=f'manifest ok sha256={hashlib.sha256(raw).hexdigest()} bytes={len(raw)}\n',err='',binary=binary)
     for case in json.loads((ROOT/'tests/manifests/malformed.json').read_text()):
-        run(['check-manifest',ROOT/'tests/manifests'/case['file']],1,out='',err=f'larder: {case["error"]}\n',binary=binary)
+        run(['check-manifest',ROOT/'tests/manifests'/case['file']],1,out='',err=f'paxage: {case["error"]}\n',binary=binary)
     for directory in sorted((ROOT/'tests/snapshots').iterdir()):
         expected=json.loads((directory/'expected.json').read_text())
         args=['resolve','--snapshot',directory,'--want',*expected['wants'],'--json']
@@ -67,17 +67,17 @@ for binary in [BINARY,LINK]:
         if code==0: assert p.stderr==b'' and data['explanation'].startswith('complete plan;')
         elif code==3:
             assert data['explanation'].startswith('exhaustive proof;')
-            assert p.stderr==b'larder: unsatisfiable: exhaustive snapshot proof\n'
+            assert p.stderr==b'paxage: unsatisfiable: exhaustive snapshot proof\n'
         else:
             assert data['explanation'].startswith('search incomplete;')
-            assert p.stderr==b'larder: budget-exceeded: search incomplete\n'
+            assert p.stderr==b'paxage: budget-exceeded: search incomplete\n'
         assert before=={p:p.read_bytes() for p in directory.iterdir()},'C3-no-snapshot-mutation'
         if directory.name=='largest': print(f'largest fixture packages=24 resolver_seconds={elapsed:.6f} binary={binary.name}')
         if directory.name=='basic':
             assert data==dict(status='solved',selected=['app@x86_64/default=1-1','lib@x86_64/default=2-1'],removals=[],nodes=3,explanation='complete plan; packages=3; wants=app; holds=; installed=')
             run(['resolve','--snapshot',directory,'--want','app'],out='status: solved\nnodes: 3\nselect app@x86_64/default=1-1\nselect lib@x86_64/default=2-1\nexplanation: complete plan; packages=3; wants=app; holds=; installed=\n',err='',binary=binary)
         if directory.name=='replaces': assert 'replaces' in p.stdout.decode()
-    run(['check-manifest',ROOT/'tests/missing-file'],1,out='',err='larder: io-open\n',binary=binary)
+    run(['check-manifest',ROOT/'tests/missing-file'],1,out='',err='paxage: io-open\n',binary=binary)
 
 base=ROOT/'target/fixture-scratch';base.mkdir(parents=True,exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
     ]
     for name,raw in cases:
         path=temp/f'{name}.manifest';path.write_bytes(raw)
-        run(['check-manifest',path],1,out='',err=f'larder: {name}\n')
+        run(['check-manifest',path],1,out='',err=f'paxage: {name}\n')
     assert not sentinel.exists(),'F2-malformed-data-never-evaluates-code'
     # Same semantics, different signed bytes: exact-byte hashes cannot normalize whitespace.
     original=(ROOT/'tests/manifests/valid.manifest').read_bytes()
@@ -103,9 +103,9 @@ with tempfile.TemporaryDirectory(prefix='e2e-',dir=base) as temp:
     basic=(ROOT/'tests/snapshots/basic/snapshot.lrd').read_text()
     path=temp/'snapshot.lrd'
     path.write_text(basic.replace('version: "2-1"','version: "01-1"'))
-    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='larder: duplicate-version\n')
+    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='paxage: duplicate-version\n')
     path.write_text(basic.replace('holds: []','holds: ["app@x86_64/default=1-1"]'))
-    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='larder: bad-hold\n')
+    run(['resolve','--snapshot',temp,'--want','app'],1,out='',err='paxage: bad-hold\n')
     path.write_text(basic)
     run(['resolve','--snapshot',temp,'--want','app~=1-1'],2)
 print(f'CLI fixture cases={COUNT}; paxage and pxg; no SKIPs')

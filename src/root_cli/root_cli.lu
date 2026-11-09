@@ -110,14 +110,14 @@ fn parse(a: List[str]) -> Opts {
 }
 
 fn usage(message: str) -> int {
-    eprint("larder: {message}")
+    eprint("paxage: {message}")
     eprint(
         "Usage: paxage (pxg) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
     )
     2
 }
 
-fn fail(message: str) -> int { eprint("larder: {message}"); 1 }
+fn fail(message: str) -> int { eprint("paxage: {message}"); 1 }
 
 fn quote(s: str) -> str { json.stringify(json.from_str(s)) else |_| { "\"json-error\"" } }
 
@@ -573,7 +573,7 @@ fn pkg_less(a: txn.Pkg, b: txn.Pkg) -> bool { version.lexical(a.name, b.name) < 
 
 fn finish_open(o: Open, code: int, message: str) -> int {
     release(o)
-    if message != "" { eprint("larder: {message}") }
+    if message != "" { eprint("paxage: {message}") }
     code
 }
 
@@ -583,7 +583,7 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
     var o = take_lock(c)
     if o.code != 0 {
         walk.close_root(c.root)
-        eprint("larder: {o.error}")
+        eprint("paxage: {o.error}")
         return o.code
     }
     let hooked = failpoint.hit(fp, "lock", "")
@@ -797,13 +797,13 @@ fn verify(opts: Opts) -> int {
     let waiting = txn.pending(c)
     if waiting != "" {
         walk.close_root(c.root)
-        eprint("larder: recovery-needed: {waiting} pending")
+        eprint("paxage: recovery-needed: {waiting} pending")
         return 8
     }
     var o = take_lock(c)
     if o.code != 0 {
         walk.close_root(c.root)
-        eprint("larder: {o.error}")
+        eprint("paxage: {o.error}")
         return o.code
     }
     load(mut o)
@@ -822,7 +822,7 @@ fn verify(opts: Opts) -> int {
                 let b = walk.look_path(c.root, r.target, false)
                 good = a.ino == b.ino && a.dev == b.dev
             }
-            if !good { eprint("larder: drift {r.path} ({p.name})"); drift += 1 }
+            if !good { eprint("paxage: drift {r.path} ({p.name})"); drift += 1 }
         }
     }
     if drift > 0 { return finish_open(o, 1, "verify: {drift} drifted paths") }
@@ -838,7 +838,7 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
     var o = take_lock(c)
     if o.code != 0 {
         walk.close_root(c.root)
-        eprint("larder: {o.error}")
+        eprint("paxage: {o.error}")
         return o.code
     }
     let guard = check_state(c)
