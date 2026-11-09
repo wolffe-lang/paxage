@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""The census of the old names (pm05a, the rename of 2026-11-09).
+
+The package manager was renamed while it was private, before anything had been
+installed anywhere. This row fails when an old name reappears in a tracked file's
+contents or in a tracked path, outside the records listed below. The records keep
+their words: they say what was true when they were written.
+
+This file holds the only definition of the old words; tools/check-names imports
+them from here, so it carries none of its own.
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OLD = 'larder'
+OLD_SHORT = 'lrd'
+OLD_ENV = OLD.upper() + '_'
+# The long word in any case, anywhere; the short word in any case as a token, so
+# random bytes in a vector cannot trip it inside a longer run of letters or digits.
+PATTERN = re.compile(re.escape(OLD).encode() + rb'|(?<![A-Za-z0-9])' + re.escape(OLD_SHORT).encode()
+                     + rb'(?![A-Za-z0-9])', re.I)
+
+# Records, whole files: lane notes, name checks, provenance and predictions.
+RECORDS = (
+    'notes/name-checks.txt',
+    'notes/pm01-the-format-and-harness.md',
+    'notes/pm02-pack-and-stage.md',
+    'notes/pm03-trust-and-file-repository.md',
+    'notes/pm04-linux-transactions.md',
+    'notes/pm04b-recovery-and-power-cuts.md',
+    'notes/provenance.txt',
+    'prediction.txt',
+    'prediction-pm02.txt',
+    'prediction-pm04.txt',
+    'prediction-pm04b.txt',
+    'prediction-pm05a.txt',
+    'tools/check-census',
+)
+
+# Exact lines a live file may carry: (path, the whole line).
+LINES = (
+)
+
+
+def tracked():
+    out = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-z'], capture_output=True, check=True).stdout
+    return [p for p in out.decode('utf-8', 'surrogateescape').split('\0') if p]
+
+
+def excerpt(line):
+    text = line.decode('utf-8', 'replace').replace('\t', ' ').strip()
+    return text if len(text) <= 160 else text[:157] + '...'
+
+
+def main():
+    files = tracked()
+    present = set(files)
+    allowed = {}
+    for path, line in LINES:
+        allowed.setdefault(path, set()).add(line.encode())
+    red = 0
+    stale = [p for p in RECORDS if p not in present]
+    seen = set()
+    hits = 0
+    for path in files:
+        if PATTERN.search(path.encode('utf-8', 'surrogateescape')):
+            print(f'FAIL census-old-paths {path}', flush=True)
+            red += 1
+        if path in RECORDS:
+            continue
+        full = ROOT / path
+        if not full.is_file():
+            continue
+        for number, line in enumerate(full.read_bytes().split(b'\n'), 1):
+            line = line.rstrip(b'\r')
+            if not PATTERN.search(line):
+                continue
+            if line in allowed.get(path, ()):
+                seen.add((path, line))
+                continue
+            hits += 1
+            print(f'FAIL census-old-names {path}:{number}: {excerpt(line)}', flush=True)
+    missing = [(p, l) for p, l in LINES if (p, l.encode()) not in seen]
+    if stale or missing:
+        detail = [f'untracked record {p}' for p in stale] + [f'missing line {p}: {l!r}' for p, l in missing]
+        print('FAIL census-allowlist ' + '; '.join(detail), flush=True)
+        red += 1
+    else:
+        print(f'PASS census-allowlist records={len(RECORDS)} lines={len(LINES)}', flush=True)
+    red += hits
+    if red:
+        print(f'census: {hits} lines and {red - hits} other rows red over {len(files)} tracked files', flush=True)
+        return 1
+    print(f'PASS census-old-names files={len(files)} records={len(RECORDS)} lines={len(LINES)}', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
