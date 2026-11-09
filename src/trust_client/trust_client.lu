@@ -43,7 +43,9 @@ fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
     ""
 }
 
-fn update(repo: str, dir: str, now: int) -> str {
+/// Rotate roots and verify timestamp, snapshot and targets into dir (C9); the
+/// root verbs call it under the root's own lock (pm04).
+pub fn update(repo: str, dir: str, now: int) -> str {
     var loaded = store.load(dir)
     if loaded.error != "" { return loaded.error }
     if loaded.value.repository != repo { return "repository-mismatch" }
