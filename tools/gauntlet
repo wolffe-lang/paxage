@@ -32,6 +32,19 @@ else
   echo 'SKIP chunk-rss reason=Linux-only capped allocation measurement'
   echo 'SKIP rss reason=Linux-only capped large-file measurement; never on the Mac'
 fi
+if [ "$(uname -s)" = Linux ]; then
+  unqualified=$(mktemp -d /dev/shm/larder-unqualified.XXXXXX)
+  step transactions env LARDER_UNQUALIFIED_ROOT="$unqualified" python3 -I tools/check-transactions
+  rm -rf "$unqualified"
+else
+  echo 'SKIP fs-unqualified-refused reason=no tmpfs root on this host; Linux takes refuse one by name'
+  step transactions python3 -I tools/check-transactions
+fi
+if bash tools/check-transactions-privileged --available; then
+  step transactions-privileged bash tools/check-transactions-privileged
+else
+  echo 'SKIP transactions-privileged reason=no root route here (not root, no CI sudo, no container engine and image); owners stay logical'
+fi
 bash tools/check-trust-unit trust_json
 bash tools/check-trust-unit trust_metadata
 bash tools/check-trust-unit trust_state
