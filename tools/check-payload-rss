@@ -18,9 +18,37 @@ def wait(p,label):
         try: return p.communicate(timeout=30)
         except subprocess.TimeoutExpired:print(f'RSS waiting {label} pid={p.pid}',flush=True)
 
+
+def gnu_time():
+    """GNU time from PATH (never a fixed /usr/bin path: NixOS hosts keep it elsewhere), and
+    the floor it imposes. GNU time forks the measured child, whose peak starts at time's
+    own RSS (ru_maxrss survives exec), so every reading is max(floor, peak). The floor is
+    time's own high-water mark (VmHWM, per process image), read from /proc while it waits
+    on a one-second child; it bounds the RSS any child inherits at fork."""
+    import shutil, time as clock
+    found=shutil.which('time')
+    assert found,('rss-gnu-time-missing','GNU time must be on PATH for the -v peak report')
+    p=subprocess.Popen(['prlimit','--as=2147483648','--',found,'-v','sleep','1'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    floor=0
+    while p.poll() is None:
+        try:
+            status=Path(f'/proc/{p.pid}/status').read_text()
+        except OSError:
+            break
+        name=re.search(r'^Name:\s*(\S+)',status,re.M)
+        hwm=re.search(r'^VmHWM:\s*(\d+)',status,re.M)
+        if name and hwm and name[1]=='time':floor=max(floor,int(hwm[1]))
+        clock.sleep(0.05)
+    out,err=p.communicate()
+    assert p.returncode==0 and re.search(r'Maximum resident set size \(kbytes\):',err.decode()),('rss-gnu-time-not-gnu',found,p.returncode,err[-200:])
+    assert floor>0,('rss-gnu-time-floor-unread',found)
+    return found,floor
+
 def main():
     if platform.system() != 'Linux':
         raise SystemExit('FAIL F6-RSS-grows-with-payload: large RSS measurements are Linux-only')
+    TIME,FLOOR=gnu_time()
+    print(f'RSS rusage_parent={TIME} floor_kib={FLOOR}',flush=True)
     results=[]
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='rss-') as d:
         d=Path(d)
@@ -33,7 +61,7 @@ def main():
             path=d/'payload.tar'
             with path.open('wb') as f:
                 f.write(v.header(b'usr/blob',b'0',size,0o644));f.seek(size,1);f.write(bytes(1024))
-            args=['/usr/bin/time','-l' if platform.system()=='Darwin' else '-v',str(ROOT/'target/bin/larder'),'list-payload',str(path),'--length',str(path.stat().st_size),'--json']
+            args=[TIME,'-v',str(ROOT/'target/bin/larder'),'list-payload',str(path),'--length',str(path.stat().st_size),'--json']
             if platform.system() == 'Linux':args=['prlimit','--as=2147483648','--',*args]
             p=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             stdout,stderr=wait(p,str(size));assert p.returncode==0,('F6-RSS-grows-with-payload',p.returncode,stdout,stderr)
@@ -44,6 +72,7 @@ def main():
             results.append(rss)
             print(f'RSS platform={platform.system()} bytes={size} peak_kib={rss} sha256={expected}',flush=True)
             path.unlink();raw.unlink()
+    assert results[0] > FLOOR,('F6-RSS-floor-masks-peak',FLOOR,results)
     assert results[1]-results[0] < 8192,('F6-RSS-grows-with-payload',results)
     print('PASS F6-RSS-64MiB-1GiB exit=0',flush=True)
 if __name__=='__main__':main()
