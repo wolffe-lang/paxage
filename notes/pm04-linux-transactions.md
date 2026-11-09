@@ -93,6 +93,23 @@ what was built:
     - The hasu-built binary's loader lives under `/nix/store`, so it could not
       start in the container. The rows now mount `/nix/store` read-only where it
       exists; no verdict changes.
+    - The two RSS steps ran `/usr/bin/time`, which NixOS does not have. They now
+      resolve GNU time from PATH and check that it really is GNU time (`-v`).
+    - GNU time forks the measured child. Because ru_maxrss survives exec, the
+      child's peak starts at time's own RSS, so each reading is max(floor, peak).
+    - The floor is recorded as time's own VmHWM, read from `/proc/<pid>/status`
+      while it waits on a one-second child. VmHWM is per process image, so it is
+      time's peak alone. (A first try used `time -v true`. That measured NixOS's
+      multi-call `true`, 4.1 MiB, above the probe; it was replaced.)
+    - Each step now requires the 64 MiB reading to be strictly above the floor.
+      Both readings are then true peaks, and the floor cancels exactly in the
+      1 GiB − 64 MiB difference the gate checks. If that ever fails, the step
+      refuses `floor-masks-peak` rather than passing.
+    - On hasu (light slot, under the 2 GiB cap): floor 1692 and 1688 KiB. Chunk
+      reader 2704 → 2752 KiB (+48); full reader 3180 → 3268 KiB (+88).
+  - One dev job on hasu (block A, then slot, then light) ran every step the Mac
+    skips. trust-openssl-writer runs only on kasumi, off limits here, and prints
+    its SKIP.
 
 ## Evidence index
 
