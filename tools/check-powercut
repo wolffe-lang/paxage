@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""The power-cut witness (pm04b, prediction-pm04b.txt; docs/TRANSACTIONS.md X11).
+
+--host runs the recorder's protocol rows, the synthesizer's rows and the mark
+rows. They need no VM and run on the Mac as well.
+--vm runs the guest rows. They need Linux with /dev/kvm, qemu-system-x86_64,
+the staged Ubuntu 24.04 image (LARDER_GUEST_DIR, checked against the pins
+below) and a container image of the guest's release to build the guest's
+binaries in (LARDER_GUEST_BUILD_IMAGE).
+--available says whether this host can run --vm, and why not.
+--all keeps going after a FAIL, so a red take names every red row.
+Nothing is written outside target/powercut.
+"""
+import argparse
+import hashlib
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+BIN = ROOT / 'target/bin/larder'
+FPBIN = ROOT / 'target/bin/larder-failpoint'
+WORK = ROOT / 'target/powercut'
+RECORDER = TOOLS / 'nbd-recorder'
+SYNTH = TOOLS / 'powercut-synth'
+GUEST = TOOLS / 'powercut-guest'
+
+# The staged guest (release 20261017). SHA256SUMS carries a good signature from
+# the UEC Image Automatic Signing Key, D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81.
+GUEST_FILES = {
+    'ubuntu-24.04-server-cloudimg-amd64.img':
+        '04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94',
+    'ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic':
+        '41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f',
+    'ubuntu-24.04-server-cloudimg-amd64-initrd-generic':
+        'bf276ffc12872256080890698b42db0dc9c5a469c896d8b59af6bc4e723cd186',
+}
+FILESYSTEMS = ('ext4', 'ext3')
+VERBS = ('install', 'upgrade', 'remove')
+
+FAILED = []
+KEEP_GOING = False
+
+
+class RowFailed(Exception):
+    pass
+
+
+def emit(ok, row, detail=''):
+    if ok:
+        print(f'PASS {row}', flush=True)
+        return True
+    print(f'FAIL {row}' + (f' {detail}' if detail else ''), flush=True)
+    FAILED.append(row)
+    if not KEEP_GOING:
+        raise SystemExit(1)
+    raise RowFailed(row)
+
+
+def check(ok, row, detail=''):
+    return emit(bool(ok), row, detail)
+
+
+def missing(piece, rows):
+    """Every row of a group FAILs by name while the piece it drives is absent."""
+    if piece.exists():
+        return False
+    for name in rows:
+        try:
+            emit(False, name, f'missing {piece.relative_to(ROOT)}')
+        except RowFailed:
+            pass
+    return True
+
+
+def transactions_module():
+    """pm04a's harness, imported for its fixture repository, roots and digest."""
+    loader = importlib.machinery.SourceFileLoader('check_transactions', str(TOOLS / 'check-transactions'))
+    spec = importlib.util.spec_from_loader('check_transactions', loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    mod.KEEP_GOING = True
+    return mod
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------- host rows
+
+HOST = []
+
+
+def host(fn):
+    HOST.append(fn)
+    return fn
+
+
+NBD_ROWS = ['nbd-handshake-fixed-newstyle', 'nbd-option-unsupported', 'nbd-opt-go-info',
+            'nbd-opt-export-name', 'nbd-read-after-write', 'nbd-flush-orders-log', 'nbd-fua-logged',
+            'nbd-out-of-range-einval', 'nbd-two-exports-one-order', 'nbd-inject-eio', 'nbd-disconnect']
+SYNTH_ROWS = ['synth-prefix-durable', 'synth-volatile-all', 'synth-fua-durable', 'synth-tear-sector',
+              'synth-subset-seeded-deterministic', 'synth-dedup-keeps-labels', 'synth-window-labels']
+
+
+@host
+def nbd_rows():
+    if missing(RECORDER, NBD_ROWS):
+        return
+
+
+@host
+def synth_rows():
+    if missing(SYNTH, SYNTH_ROWS):
+        return
+
+
+@host
+def mark_rows():
+    ct = transactions_module()
+    ct.WORK = WORK / 'mark'
+    fixture = ct.fixture_dir(ct.WORK / 'fixture')
+    ct.fixture_dir(fixture / 'packages')
+    repo = ct.Repo(fixture)
+    repo.setup()
+    repo.publish(ct.universe())
+    roots = ct.Roots(repo)
+    try:
+        base, _old, new = ct.references(roots, 'install')
+    except ct.RowFailed as e:
+        emit(False, 'failpoint-mark-setup', f'pm04a fixture row {e} failed')
+    trace, names = ct.failpoints(roots, base, 'install')
+    check(trace.returncode == 0 and names, 'failpoint-mark-trace', ct.describe(trace))
+    try:
+        marked = roots.copy(base, 'marked')
+        record = WORK / 'mark' / 'mark-record'
+        p = ct.run_verb(marked, 'install', binary=FPBIN,
+                        env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
+        marks = [line.split(' ', 2)[1] for line in p.stderr.splitlines() if line.startswith('MARK ')]
+        last = record.read_bytes()[:512] if record.exists() else b''
+        good = (p.returncode == 0 and marks == names and len(last) == 512 and last.startswith(b'MARK done')
+                and ct.tree_digest(marked) == new)
+        check(good, 'failpoint-mark-every-hook',
+              '' if good else f'marks={marks[:4]}… trace={names[:4]}… last={last[:24]!r} {ct.describe(p)}')
+    except RowFailed:
+        pass
+    inert = roots.copy(base, 'inert')
+    record = WORK / 'mark' / 'inert-record'
+    p = ct.run_verb(inert, 'install', env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
+    good = p.returncode == 0 and not record.exists() and ct.tree_digest(inert) == new
+    check(good, 'failpoint-mark-shipped-inert', '' if good else ct.describe(p))
+
+
+# ---------------------------------------------------------------- vm rows
+
+VM = []
+
+
+def vm(fn):
+    VM.append(fn)
+    return fn
+
+
+def guest_dir():
+    return Path(os.environ.get('LARDER_GUEST_DIR', ''))
+
+
+def vm_available():
+    if sys.platform != 'linux':
+        return False, 'not Linux'
+    if not os.access('/dev/kvm', os.R_OK | os.W_OK):
+        return False, 'no read-write /dev/kvm'
+    if not shutil.which('qemu-system-x86_64'):
+        return False, 'no qemu-system-x86_64 in PATH'
+    d = guest_dir()
+    if not os.environ.get('LARDER_GUEST_DIR') or not all((d / f).is_file() for f in GUEST_FILES):
+        return False, 'LARDER_GUEST_DIR does not hold the staged Ubuntu 24.04 image'
+    if not os.environ.get('LARDER_GUEST_BUILD_IMAGE'):
+        return False, 'no LARDER_GUEST_BUILD_IMAGE to build the guest binaries in'
+    return True, ''
+
+
+@vm
+def inputs_digests():
+    d = guest_dir()
+    bad = [f'{f} {sha256_file(d / f)}' for f, want in GUEST_FILES.items() if sha256_file(d / f) != want]
+    check(not bad, 'vm-inputs-digests', f'refused: {bad}')
+
+
+@vm
+def guest_rows():
+    names = ['vm-boot', 'vm-binaries-match', 'vm-fs-ext4-qualified', 'vm-fs-ext3-qualified',
+             'vm-fs-ext2-refused', 'vm-fs-ext4-nojournal-refused']
+    for fs in FILESYSTEMS:
+        names += [f'vm-matrix-{fs}']
+        names += [f'powercut-{fs}-{verb}' for verb in VERBS]
+        names += [f'powercut-{fs}-rescue-undo', f'powercut-{fs}-rescue-finish']
+        names += [f'vm-eio-{fs}', f'vm-enospc-{fs}', f'vm-concurrent-{fs}']
+    names += ['vm-enospc-capacity']
+    for piece in (RECORDER, SYNTH, GUEST):
+        if not piece.exists():
+            missing(piece, names)
+            return
+
+
+def main():
+    global KEEP_GOING
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--host', action='store_true', help='the rows that need no VM')
+    ap.add_argument('--vm', action='store_true', help='the guest rows (Linux, KVM, the staged image)')
+    ap.add_argument('--available', action='store_true', help='can this host run --vm?')
+    ap.add_argument('--all', action='store_true', help='keep going after a FAIL')
+    args = ap.parse_args()
+    KEEP_GOING = args.all
+    if args.available:
+        ok, why = vm_available()
+        print('powercut: vm available' if ok else f'powercut: vm unavailable: {why}', flush=True)
+        return 0 if ok else 1
+    groups = (HOST if args.host or not args.vm else []) + (VM if args.vm else [])
+    if args.vm:
+        ok, why = vm_available()
+        if not ok:
+            print(f'FAIL vm-available {why}', flush=True)
+            return 1
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    for fn in groups:
+        try:
+            fn()
+        except RowFailed:
+            continue
+    if FAILED:
+        print(f'powercut: {len(FAILED)} red rows', flush=True)
+        return 1
+    print('PASS powercut', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
