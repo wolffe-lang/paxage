@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""tools/fetch-toolchain against a loopback server that answers 504 (pm04b).
+
+A GitHub release origin can answer 504 for minutes at a time. fetch_release
+(tools/lib-fetch.sh) must outlast six in a row, give up by name inside its
+bound, and leave the digest check to its caller. The rows use
+LARDER_FETCH_RETRY_DELAY=1 and LARDER_FETCH_RETRY_MAX_TIME=30, so they run in
+seconds. Nothing leaves 127.0.0.1, and nothing is written outside
+target/fetch-retry.
+"""
+import argparse
+import hashlib
+import http.server
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import threading
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+WORK = ROOT / 'target/fetch-retry'
+LIB = ROOT / 'tools/lib-fetch.sh'
+BODY = b'a release archive stand-in\n' * 64
+
+FAILED = []
+KEEP_GOING = False
+
+
+def emit(ok, row, detail=''):
+    if ok:
+        print(f'PASS {row}', flush=True)
+        return
+    print(f'FAIL {row}' + (f' {detail}' if detail else ''), flush=True)
+    FAILED.append(row)
+    if not KEEP_GOING:
+        raise SystemExit(1)
+
+
+class Origin(http.server.BaseHTTPRequestHandler):
+    hits = {}
+    failures = {'/ok-after-six': 6, '/always-504': 10 ** 9}
+
+    def do_GET(self):
+        n = Origin.hits.get(self.path, 0) + 1
+        Origin.hits[self.path] = n
+        if self.path in Origin.failures and n <= Origin.failures[self.path]:
+            self.send_response(504)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(BODY)))
+        self.end_headers()
+        self.wfile.write(BODY)
+
+    def log_message(self, *args):
+        pass
+
+
+def fetch(url, out):
+    env = dict(os.environ, LARDER_FETCH_RETRY_DELAY='1', LARDER_FETCH_RETRY_MAX_TIME='30')
+    script = '. "$1"; fetch_release "$2" "$3"'
+    start = time.monotonic()
+    p = subprocess.run(['sh', '-c', script, 'fetch', str(LIB), url, str(out)], capture_output=True, text=True,
+                       env=env, timeout=120)
+    return p, time.monotonic() - start
+
+
+def main():
+    global KEEP_GOING
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--all', action='store_true', help='keep going after a FAIL')
+    KEEP_GOING = ap.parse_args().all
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True)
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Origin)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f'http://127.0.0.1:{server.server_address[1]}'
+    try:
+        if not LIB.exists():
+            for row in ('fetch-retry-survives-504s', 'fetch-retry-gives-up-named'):
+                emit(False, row, f'missing {LIB.relative_to(ROOT)}')
+        else:
+            out = WORK / 'ok.tar.gz'
+            p, secs = fetch(f'{base}/ok-after-six', out)
+            good = p.returncode == 0 and out.exists() and out.read_bytes() == BODY and Origin.hits['/ok-after-six'] == 7
+            emit(good, 'fetch-retry-survives-504s',
+                 f'exit={p.returncode} hits={Origin.hits.get("/ok-after-six")} secs={secs:.1f} stderr={p.stderr[-300:]!r}')
+            url = f'{base}/always-504'
+            p, secs = fetch(url, WORK / 'never.tar.gz')
+            good = p.returncode != 0 and url in p.stderr and Origin.hits['/always-504'] > 7 and secs < 60
+            emit(good, 'fetch-retry-gives-up-named',
+                 f'exit={p.returncode} hits={Origin.hits.get("/always-504")} secs={secs:.1f} stderr={p.stderr[-300:]!r}')
+        # The digest stays the caller's: a scratch copy of the tools, never the checkout's .wolf-bin.
+        scratch = WORK / 'checkout'
+        (scratch / 'tools').mkdir(parents=True)
+        for name in ('fetch-toolchain', 'lib-toml.sh', 'lib-fetch.sh'):
+            if (ROOT / 'tools' / name).exists():
+                shutil.copy2(ROOT / 'tools' / name, scratch / 'tools' / name)
+        shutil.copy2(ROOT / 'wolf-toolchain.toml', scratch / 'wolf-toolchain.toml')
+        archives = WORK / 'archives'
+        archives.mkdir()
+        target = subprocess.run(['sh', '-c', '. tools/lib-toml.sh; host_target'], cwd=ROOT, capture_output=True,
+                                text=True, env=dict(os.environ, LARDER_ROOT=str(ROOT))).stdout.strip()
+        version = subprocess.run(['sh', '-c', '. tools/lib-toml.sh; toml_value wolf version'], cwd=ROOT,
+                                 capture_output=True, text=True, env=dict(os.environ, LARDER_ROOT=str(ROOT))).stdout.strip()
+        (archives / f'wolf-{version}-{target}.tar.gz').write_bytes(BODY)
+        p = subprocess.run([str(scratch / 'tools/fetch-toolchain')], capture_output=True, text=True, timeout=120,
+                           env=dict(os.environ, LARDER_ARCHIVE_DIR=str(archives), TMPDIR=str(WORK)))
+        have = hashlib.sha256(BODY).hexdigest()
+        good = p.returncode == 1 and f'sha256 {have}' in p.stderr and 'REFUSED' in p.stderr
+        emit(good, 'fetch-retry-digest-still-refuses', f'exit={p.returncode} stderr={p.stderr[-300:]!r}')
+    finally:
+        server.shutdown()
+    if FAILED:
+        print(f'fetch-retry: {len(FAILED)} red rows', flush=True)
+        return 1
+    print('PASS fetch-retry', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
