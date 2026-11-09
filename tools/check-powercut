@@ -15,10 +15,17 @@ import argparse
 import hashlib
 import importlib.machinery
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import shutil
+import socket
+import struct
+import subprocess
 import sys
+import tarfile
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / 'tools'
@@ -111,53 +118,265 @@ NBD_ROWS = ['nbd-handshake-fixed-newstyle', 'nbd-option-unsupported', 'nbd-opt-g
 SYNTH_ROWS = ['synth-prefix-durable', 'synth-volatile-all', 'synth-fua-durable', 'synth-tear-sector',
               'synth-subset-seeded-deterministic', 'synth-dedup-keeps-labels', 'synth-window-labels']
 
+NBDMAGIC, IHAVEOPT, REPLY_MAGIC = 0x4E42444D41474943, 0x49484156454F5054, 0x3E889045565A9
+REQUEST_MAGIC, SIMPLE_REPLY_MAGIC = 0x25609513, 0x67446698
+
+
+class Client:
+    """An NBD client written from the protocol specification, for the recorder's rows."""
+
+    def __init__(self, path):
+        self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.s.settimeout(10)
+        self.s.connect(str(path))
+        self.cookie = 0
+
+    def recv(self, n):
+        out = bytearray()
+        while len(out) < n:
+            chunk = self.s.recv(n - len(out))
+            if not chunk:
+                raise EOFError
+            out += chunk
+        return bytes(out)
+
+    def hello(self, flags=3):
+        magic, opt, hflags = struct.unpack('>QQH', self.recv(18))
+        self.s.sendall(struct.pack('>I', flags))
+        return magic, opt, hflags
+
+    def option(self, opt, data=b''):
+        self.s.sendall(struct.pack('>QII', IHAVEOPT, opt, len(data)) + data)
+
+    def option_reply(self):
+        magic, opt, kind, length = struct.unpack('>QIII', self.recv(20))
+        return magic, opt, kind, self.recv(length)
+
+    def go(self, name, opt=7, infos=()):
+        raw = name.encode()
+        self.option(opt, struct.pack('>I', len(raw)) + raw + struct.pack('>H', len(infos)) +
+                    b''.join(struct.pack('>H', i) for i in infos))
+        replies = []
+        while True:
+            r = self.option_reply()
+            replies.append(r)
+            if r[2] != 3:
+                return replies
+
+    def request(self, kind, offset=0, length=0, data=b'', flags=0):
+        self.cookie += 1
+        self.s.sendall(struct.pack('>IHHQQI', REQUEST_MAGIC, flags, kind, self.cookie, offset,
+                                   len(data) if kind == 1 else length) + (data if kind == 1 else b''))
+        if kind == 2:
+            return None
+        magic, error, cookie = struct.unpack('>IIQ', self.recv(16))
+        body = self.recv(length) if kind == 0 and error == 0 else b''
+        return magic, error, cookie == self.cookie, body
+
+    def close(self):
+        self.s.close()
+
+
+def short_dir(tag):
+    """A directory whose socket path stays well under the 104-byte unix limit (macOS)."""
+    d = WORK / tag
+    d.mkdir(parents=True, exist_ok=True)
+    if len(str(d / 'nbd.sock').encode()) >= 100:
+        raise SystemExit(f'FAIL powercut-socket-path {d} is too long for a unix socket')
+    return d
+
+
+def recorder(d, *extra, connections=1, exports=('data:1M', 'mark:1M')):
+    args = [sys.executable, '-I', str(RECORDER), '--socket', str(d / 'nbd.sock'), '--log', str(d / 'log'),
+            '--connections', str(connections), '--ready', str(d / 'ready'), '--timeout', '120', *extra]
+    for e in exports:
+        args += ['--export', e]
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + 15
+    while not (d / 'ready').exists() and time.monotonic() < deadline and proc.poll() is None:
+        time.sleep(0.05)
+    return proc
+
+
+def log_entries(d):
+    return [json.loads(line) for line in (d / 'log' / 'log.jsonl').read_text().splitlines() if line]
+
 
 @host
 def nbd_rows():
     if missing(RECORDER, NBD_ROWS):
         return
+    d = short_dir('nbd1')
+    proc = recorder(d, connections=4)
+    a = Client(d / 'nbd.sock')
+    magic, opt, hflags = a.hello()
+    check(magic == NBDMAGIC and opt == IHAVEOPT and hflags & 1, 'nbd-handshake-fixed-newstyle',
+          f'magic={magic:#x} opt={opt:#x} flags={hflags:#x}')
+    a.option(8)
+    r = a.option_reply()
+    check(r[0] == REPLY_MAGIC and r[1] == 8 and r[2] == (1 << 31) + 1, 'nbd-option-unsupported', repr(r[:3]))
+    info = a.go('data', opt=6, infos=(3,))
+    unknown = a.go('nope', opt=6)
+    export = [x for x in info if x[2] == 3 and struct.unpack('>H', x[3][:2])[0] == 0]
+    size, tflags = struct.unpack('>QH', export[0][3][2:]) if export else (0, 0)
+    go = a.go('data', opt=7)
+    check(info[-1][2] == 1 and size == 1 << 20 and tflags == 1 | 4 | 8 and unknown[-1][2] == (1 << 31) + 6
+          and go[-1][2] == 1, 'nbd-opt-go-info', f'size={size} flags={tflags:#x} unknown={unknown[-1][2]:#x}')
+    b = Client(d / 'nbd.sock')
+    b.hello(flags=3)
+    b.option(1, b'mark')
+    size_b, tflags_b = struct.unpack('>QH', b.recv(10))
+    check(size_b == 1 << 20 and tflags_b == 1 | 4 | 8, 'nbd-opt-export-name', f'size={size_b} flags={tflags_b:#x}')
+    pattern = bytes(range(256)) * 16
+    w = a.request(1, 4096, data=pattern)
+    rd = a.request(0, 4096, len(pattern))
+    check(w[1] == 0 and rd[1] == 0 and rd[3] == pattern and rd[2], 'nbd-read-after-write', repr((w[:2], rd[:3])))
+    a.request(1, 0, data=b'A' * 512)
+    a.request(1, 512, data=b'B' * 512)
+    fl = a.request(3)
+    a.request(1, 1024, data=b'C' * 512, flags=1)
+    b.request(1, 0, data=b'MARK lock\n'.ljust(512, b'\0'))
+    a.request(1, 1536, data=b'D' * 512)
+    bad_r = a.request(0, (1 << 20) - 256, 512)
+    bad_w = a.request(1, 1 << 20, data=b'E' * 512)
+    a.request(2)
+    b.request(2)
+    a.close()
+    b.close()
+    c = Client(d / 'nbd.sock')
+    c.hello()
+    c.option(2)
+    ack = c.option_reply()
+    c.close()
+    e = Client(d / 'nbd.sock')
+    e.hello()
+    e.option(1, b'missing')
+    try:
+        closed = e.recv(1) == b''
+    except EOFError:
+        closed = True
+    e.close()
+    rc = proc.wait(timeout=30)
+    log = log_entries(d)
+    cmds = [(x['export'], x['cmd'], x['off'], x.get('fua')) for x in log]
+    want = [('data', 'write', 4096, False), ('data', 'read', 4096, False), ('data', 'write', 0, False),
+            ('data', 'write', 512, False), ('data', 'flush', 0, False), ('data', 'write', 1024, True),
+            ('mark', 'write', 0, False), ('data', 'write', 1536, False)]
+    check(fl[1] == 0 and cmds[:8] == want and [x['seq'] for x in log] == list(range(len(log))),
+          'nbd-flush-orders-log', f'cmds={cmds[:8]}')
+    check(log[5]['fua'] is True and log[5]['sha256'] == hashlib.sha256(b'C' * 512).hexdigest(), 'nbd-fua-logged',
+          repr(log[5]))
+    check(bad_r[1] == 22 and bad_w[1] == 22, 'nbd-out-of-range-einval', f'read={bad_r[1]} write={bad_w[1]}')
+    check(log[6].get('mark') == 'MARK lock' and log[6]['seq'] == 6, 'nbd-two-exports-one-order', repr(log[6]))
+    check(ack[2] == 1 and closed and rc == 0 and (d / 'log' / 'DONE').exists() and cmds[-2:] ==
+          [('data', 'disc', 0, False), ('mark', 'disc', 0, False)], 'nbd-disconnect',
+          f'abort={ack[2]} closed={closed} rc={rc} tail={cmds[-2:]}')
+    good = True
+    detail = []
+    for cmd in ('write', 'flush'):
+        d = short_dir(f'nbd-eio-{cmd}')
+        proc = recorder(d, '--eio', 'MARK stage:' + cmd, connections=2)
+        a, b = Client(d / 'nbd.sock'), Client(d / 'nbd.sock')
+        for cl, name in ((a, 'data'), (b, 'mark')):
+            cl.hello()
+            cl.go(name)
+        early = a.request(1 if cmd == 'write' else 3, 0, data=b'F' * 512)
+        b.request(1, 0, data=b'MARK stage-two\n'.ljust(512, b'\0'))
+        not_yet = a.request(1 if cmd == 'write' else 3, 0, data=b'G' * 512)
+        b.request(1, 0, data=b'MARK stage\n'.ljust(512, b'\0'))
+        hit = a.request(1 if cmd == 'write' else 3, 512, data=b'H' * 512)
+        after = a.request(1 if cmd == 'write' else 3, 512, data=b'I' * 512)
+        back = a.request(0, 0, 1024)
+        a.request(2)
+        b.request(2)
+        rc = proc.wait(timeout=30)
+        ok = early[1] == 0 and not_yet[1] == 0 and hit[1] == 5 and after[1] == 0 and rc == 0
+        if cmd == 'write':
+            ok = ok and back[3][:512] == b'G' * 512 and back[3][512:] == b'I' * 512
+        good = good and ok
+        detail.append(f'{cmd}: early={early[1]} not_yet={not_yet[1]} hit={hit[1]} after={after[1]} rc={rc}')
+    check(good, 'nbd-inject-eio', '; '.join(detail))
+
+
+def synth_module():
+    loader = importlib.machinery.SourceFileLoader('powercut_synth', str(SYNTH))
+    spec = importlib.util.spec_from_loader('powercut_synth', loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def handmade_log(d, ops):
+    """ops: (export, cmd, off, bytes or None, fua); written as the recorder writes them."""
+    (d / 'log').mkdir(parents=True, exist_ok=True)
+    blob, lines = bytearray(), []
+    for seq, (export, cmd, off, data, fua) in enumerate(ops):
+        e = {'seq': seq, 'export': export, 'cmd': cmd, 'off': off, 'len': len(data or b''), 'fua': fua, 'conn': 1}
+        if data:
+            e['blob'] = len(blob)
+            e['sha256'] = hashlib.sha256(data).hexdigest()
+            blob += data
+            if export == 'mark':
+                e['mark'] = data.split(b'\n', 1)[0].rstrip(b'\0').decode()
+        lines.append(json.dumps(e, sort_keys=True))
+    (d / 'log' / 'log.jsonl').write_text('\n'.join(lines) + '\n')
+    (d / 'log' / 'blobs.bin').write_bytes(bytes(blob))
+    return d / 'log'
+
+
+def mk(text):
+    return ('mark', 'write', 0, (text + '\n').encode().ljust(512, b'\0'), False)
 
 
 @host
 def synth_rows():
     if missing(SYNTH, SYNTH_ROWS):
         return
-
-
-@host
-def mark_rows():
-    ct = transactions_module()
-    ct.WORK = WORK / 'mark'
-    fixture = ct.fixture_dir(ct.WORK / 'fixture')
-    ct.fixture_dir(fixture / 'packages')
-    repo = ct.Repo(fixture)
-    repo.setup()
-    repo.publish(ct.universe())
-    roots = ct.Roots(repo)
-    try:
-        base, _old, new = ct.references(roots, 'install')
-    except ct.RowFailed as e:
-        emit(False, 'failpoint-mark-setup', f'pm04a fixture row {e} failed')
-    trace, names = ct.failpoints(roots, base, 'install')
-    check(trace.returncode == 0 and names, 'failpoint-mark-trace', ct.describe(trace))
-    try:
-        marked = roots.copy(base, 'marked')
-        record = WORK / 'mark' / 'mark-record'
-        p = ct.run_verb(marked, 'install', binary=FPBIN,
-                        env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
-        marks = [line.split(' ', 2)[1] for line in p.stderr.splitlines() if line.startswith('MARK ')]
-        last = record.read_bytes()[:512] if record.exists() else b''
-        good = (p.returncode == 0 and marks == names and len(last) == 512 and last.startswith(b'MARK done')
-                and ct.tree_digest(marked) == new)
-        check(good, 'failpoint-mark-every-hook',
-              '' if good else f'marks={marks[:4]}… trace={names[:4]}… last={last[:24]!r} {ct.describe(p)}')
-    except RowFailed:
-        pass
-    inert = roots.copy(base, 'inert')
-    record = WORK / 'mark' / 'inert-record'
-    p = ct.run_verb(inert, 'install', env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': str(record)})
-    good = p.returncode == 0 and not record.exists() and ct.tree_digest(inert) == new
-    check(good, 'failpoint-mark-shipped-inert', '' if good else ct.describe(p))
+    sy = synth_module()
+    s1, s2, s3 = b'1' * 512, b'2' * 512, b'3' * 2048
+    log = sy.Log(handmade_log(WORK / 'synth1', [
+        mk('HARNESS setup upgrade'),
+        ('data', 'write', 0, s1, False), ('data', 'flush', 0, None, False),
+        ('data', 'write', 512, s2, False), ('data', 'write', 4096, s2, True),
+        mk('MARK lock'),
+        ('data', 'write', 1024, s3, False),
+        mk('HARNESS end upgrade')]))
+    ops = log.ops()
+    lock_seq = [seq for seq, text in log.marks() if text == 'MARK lock'][0]
+    end_seq = log.marks()[-1][0]
+    after = sy.image(log, 8192, sy.state(ops, lock_seq, []))
+    check(after[:512] == s1 and after[512:1024] == bytes(512), 'synth-prefix-durable', repr(after[:1024:256]))
+    _, _, vol = sy.split(ops, lock_seq)
+    full = sy.image(log, 8192, sy.state(ops, lock_seq, [[e['seq'], 0] for e in vol]))
+    check(full[512:1024] == s2, 'synth-volatile-all', repr(full[512:1024:128]))
+    check(after[4096:4608] == s2, 'synth-fua-durable', repr(after[4096:4608:128]))
+    s3_seq = [e['seq'] for e in ops if e['off'] == 1024][0]
+    torn = sy.image(log, 8192, sy.state(ops, end_seq, [[s3_seq, 2]]))
+    check(torn[1024:2048] == s3[:1024] and torn[2048:3072] == bytes(1024), 'synth-tear-sector',
+          repr(torn[1024:3072:256]))
+    writes = [('data', 'write', 512 * i, bytes([65 + i % 26]) * 1024, False) for i in range(40)]
+    log2 = sy.Log(handmade_log(WORK / 'synth2', [mk('HARNESS setup install')] + writes + [mk('HARNESS end install')]))
+    end2 = log2.marks()[-1][0]
+    a = sy.seeded(log2.ops(), end2, 'seed-a')
+    check(a == sy.seeded(log2.ops(), end2, 'seed-a') and a != sy.seeded(log2.ops(), end2, 'seed-b')
+          and any(k for _, k in a), 'synth-subset-seeded-deterministic', repr(a))
+    states, steps = sy.plan(log, 'upgrade', 'powercut-t')
+    labels = [lab for st in states for lab in st['labels']]
+    keyed = {st['key'] for st in states}
+    rows = {row for row, _ in labels}
+    check(len(keyed) == len(states) and any(len(st['labels']) > 1 for st in states)
+          and 'powercut-t-upgrade-lock-before' in rows and 'powercut-t-upgrade-end-after' in rows,
+          'synth-dedup-keeps-labels', f'states={len(states)} labels={len(labels)} rows={sorted(rows)[:4]}')
+    names = ['lock', 'capacity', 'stage', 'backup:0', 'intent-written', 'intent', 'apply:0:walk',
+             'apply:0:temp', 'apply:0:renamed', 'apply:0', 'generation', 'commit-written', 'commit-renamed',
+             'commit', 'cleanup:backup', 'done', 'end']
+    e = {n: (sy.expectation('upgrade', names, i, 'after'), sy.expectation('upgrade', names, i, 'subsets'))
+         for i, n in enumerate(names)}
+    good = (e['commit-written'] == ('old', 'old') and e['commit-renamed'] == ('either', 'either')
+            and e['commit'] == ('new', 'either') and e['cleanup:backup'] == ('new', 'new') and e['lock'][0] == 'old'
+            and sy.expectation('rescue-undo', names, 13, 'after') == 'old'
+            and sy.expectation('rescue-finish', names, 0, 'after') == 'new' and steps == ['lock', 'end'])
+    check(good, 'synth-window-labels', f'{e} steps={steps}')
 
 
 # ---------------------------------------------------------------- vm rows
@@ -196,20 +415,225 @@ def inputs_digests():
     check(not bad, 'vm-inputs-digests', f'refused: {bad}')
 
 
+DATA_SIZE = 64 << 20
+EIO_STEPS = ('backup:0', 'intent-written', 'apply:0:temp', 'generation', 'commit-written')
+RELAYED = []
+
+
+def guest_build():
+    """larder and larder-failpoint built in the guest's own release (R-pm04b-3), same commit and toolchain."""
+    out = WORK / 'guest-bin'
+    src = WORK / 'guest-src'
+    out.mkdir(parents=True)
+    shutil.copytree(ROOT, src, symlinks=True,
+                    ignore=shutil.ignore_patterns('target', '.wolf-bin', '.git', '.lu-cache', '__pycache__'))
+    engine = os.environ.get('LARDER_CONTAINER_ENGINE') or shutil.which('podman') or 'podman'
+    image = os.environ['LARDER_GUEST_BUILD_IMAGE']
+    cpus = os.environ.get('LARDER_CPUS', '')
+    pin = f'taskset -c {cpus} ' if cpus else ''
+    toolchain = (ROOT / '.wolf-bin').resolve()
+    args = [engine, 'run', '--rm', '--network', 'none', '--memory', os.environ.get('LARDER_CONTAINER_MEMORY', '8g'),
+            '-v', f'{src.resolve()}:/w', '-v', f'{toolchain}:/w/.wolf-bin:ro', '-v', f'{out.resolve()}:/out', image,
+            'bash', '-c', f'cd /w && {pin}tools/build > /out/build.log 2>&1 && '
+                          'cp target/bin/larder target/bin/larder-failpoint /out/']
+    p = subprocess.run(args, capture_output=True, text=True, timeout=1800)
+    built = {n: sha256_file(out / n) for n in ('larder', 'larder-failpoint') if (out / n).exists()}
+    tail = (out / 'build.log').read_text()[-400:] if (out / 'build.log').exists() else ''
+    check(p.returncode == 0 and len(built) == 2, 'vm-guest-build', f'rc={p.returncode} {p.stderr[-300:]!r} {tail!r}')
+    print(f'powercut: guest binaries {json.dumps(built, sort_keys=True)}', flush=True)
+    return out, built
+
+
+BOOT_SH = """#!/bin/sh
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sys /sys 2>/dev/null
+mount -t devtmpfs dev /dev 2>/dev/null
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/mnt/p TMPDIR=/mnt/p/tmp LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
+mkdir -p /mnt/p/tmp
+python3 -I /mnt/p/larder/tools/powercut-guest /mnt/p/job.json
+echo "GUEST exit $?"
+echo o > /proc/sysrq-trigger
+sleep 30
+"""
+
+
+def payload(d, job, bins, extra=()):
+    path = d / 'payload.tar'
+    with tarfile.open(path, 'w', format=tarfile.GNU_FORMAT) as t:
+        def add_bytes(name, data, mode=0o644):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(data), mode, 0
+            t.addfile(info, io.BytesIO(data))
+        add_bytes('boot.sh', BOOT_SH.encode(), 0o755)
+        add_bytes('job.json', json.dumps(job).encode())
+        for f in sorted((ROOT / 'tools').iterdir()):
+            if f.is_file():
+                t.add(f, f'larder/tools/{f.name}')
+        for n in ('larder', 'larder-failpoint'):
+            t.add(bins / n, f'larder/target/bin/{n}')
+        for arc, src in extra:
+            t.add(src, arc)
+    return path
+
+
+def boot(name, job, bins, recorded=False, eio='', scratch=False, matrix=False, extra=(), timeout=1800):
+    """One guest boot. Returns (relayed PASS/FAIL lines, GUEST lines, the recorder's log dir or None)."""
+    d = WORK / 'vm' / name
+    d.mkdir(parents=True)
+    sock = short_sock()
+    g = guest_dir()
+    rec = None
+    if recorded:
+        args = ['--export', f'data:{DATA_SIZE >> 20}M', '--export', 'mark:1M']
+        if eio:
+            args += ['--eio', eio]
+        rec = subprocess.Popen([sys.executable, '-I', str(RECORDER), '--socket', str(sock), '--log',
+                                str(d / 'log'), '--connections', '2', '--ready', str(d / 'ready'),
+                                '--timeout', str(timeout + 120), *args],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 15
+        while not (d / 'ready').exists() and time.monotonic() < deadline and rec.poll() is None:
+            time.sleep(0.05)
+    tar = payload(d, job, bins, extra)
+    cmdline = ('root=LABEL=cloudimg-rootfs ro console=ttyS0 quiet loglevel=1 fsck.mode=skip panic=-1 '
+               'init=/bin/sh -- -c "mount -t tmpfs -o size=2600m pc /mnt && mkdir /mnt/p && '
+               'tar -xf /dev/vdb -C /mnt/p && exec /bin/sh /mnt/p/boot.sh"')
+    qemu = ['qemu-system-x86_64', '-enable-kvm', '-cpu', 'host', '-m', '3584', '-smp', '2', '-display', 'none',
+            '-monitor', 'none', '-nodefaults', '-no-reboot', '-serial', f'file:{d / "console.log"}',
+            '-kernel', str(g / 'ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic'),
+            '-initrd', str(g / 'ubuntu-24.04-server-cloudimg-amd64-initrd-generic'), '-append', cmdline,
+            '-drive', f'if=none,id=root,format=qcow2,readonly=on,file={g / "ubuntu-24.04-server-cloudimg-amd64.img"}',
+            '-device', 'virtio-blk-pci,drive=root,serial=pcroot',
+            '-drive', f'if=none,id=payload,format=raw,readonly=on,file={tar}',
+            '-device', 'virtio-blk-pci,drive=payload,serial=pcpayload']
+    if recorded:
+        for export in ('data', 'mark'):
+            qemu += ['-blockdev', f'driver=nbd,node-name={export},server.type=unix,server.path={sock},'
+                     f'export={export}', '-device', f'virtio-blk-pci,drive={export},serial=pc{export},write-cache=on']
+    for flag, disk, size in ((scratch, 'scratch', 32 << 20), (matrix, 'matrix', 3 << 30)):
+        if flag:
+            img = d / f'{disk}.img'
+            with open(img, 'wb') as f:
+                f.truncate(size)
+            qemu += ['-drive', f'if=none,id={disk},format=raw,file={img}',
+                     '-device', f'virtio-blk-pci,drive={disk},serial=pc{disk},write-cache=on']
+    start = time.monotonic()
+    try:
+        q = subprocess.run(qemu, capture_output=True, text=True, timeout=timeout)
+        qrc = q.returncode
+        qerr = q.stderr[-400:]
+    except subprocess.TimeoutExpired:
+        qrc, qerr = 'timeout', f'qemu ran past {timeout}s'
+    secs = time.monotonic() - start
+    if rec is not None:
+        try:
+            rec.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            rec.terminate()
+    console = (d / 'console.log').read_text(errors='replace') if (d / 'console.log').exists() else ''
+    relayed, guest = [], []
+    for line in console.splitlines():
+        line = line.strip('\r')
+        if line.startswith('PASS ') or line.startswith('FAIL '):
+            relayed.append(line)
+            print(line, flush=True)
+            if line.startswith('FAIL '):
+                FAILED.append(line.split()[1])
+        elif line.startswith('GUEST '):
+            guest.append(line)
+    done = [x for x in guest if x.startswith('GUEST done')]
+    print(f'powercut: boot {name} secs={secs:.0f} qemu={qrc} rows={len(relayed)} '
+          f'{done[0] if done else "no GUEST done"}', flush=True)
+    if not done:
+        tail = '\n'.join(console.splitlines()[-12:])
+        emit(False, f'vm-boot-{name}', f'qemu={qrc} {qerr!r} console tail: {tail!r}')
+    return relayed, guest, (d / 'log') if recorded else None
+
+
+SOCKETS = []
+
+
+def short_sock():
+    """A unix socket path well under the 104-byte limit, whatever the checkout's depth."""
+    d = WORK / 'sk'
+    d.mkdir(parents=True, exist_ok=True)
+    SOCKETS.append(1)
+    path = d / f'{len(SOCKETS)}.sock'
+    if len(str(path).encode()) >= 100:
+        raise SystemExit(f'FAIL powercut-socket-path {path} is too long for a unix socket')
+    return path
+
+
+def guest_json(guest, prefix):
+    return [json.loads(x[len(prefix):]) for x in guest if x.startswith(prefix)]
+
+
+def eio_runs(fs, bins, run_log, sy):
+    """The EIO rows (R-pm04b-1, the recorder's NBD_EIO at a named mark). Separable: a different EIO ruling
+    replaces only this function and its rows."""
+    sets = []
+    scen = sy.scenarios(sy.Log(run_log))
+    targets = [('upgrade', 'upgrade', s) for s in EIO_STEPS] + [('rescue', 'rescue-undo', 'rescue:undo:0')]
+    for verb, scenario, step in targets:
+        marks = [text for _, text in scen.get(scenario, [])]
+        steps = [sy.step_of(t) for t in marks]
+        if step not in steps[1:]:
+            emit(False, f'vm-eio-{fs}-{verb}-{step}', f'no {step} mark in the {scenario} run: {steps}')
+            continue
+        before = ' '.join(marks[steps.index(step, 1) - 1].split()[:2])
+        for cmd in ('write', 'flush'):
+            row = f'{verb}-{step}-{cmd}'
+            name = f'eio-{verb}-{step.replace(":", "-")}-{cmd}'
+            job = {'phase': 'eio', 'fs': fs, 'scenario': name, 'verb': verb, 'row': row}
+            try:
+                _, guest, log = boot(f'{fs}-{name}', job, bins, recorded=True, eio=f'{before}:{cmd}', timeout=600)
+            except RowFailed:
+                continue
+            spent = 'eio_spent=True' in ((log / 'DONE').read_text() if (log / 'DONE').exists() else '')
+            try:
+                check(spent, f'vm-eio-{fs}-{row}-injected', f'armed after {before!r}; DONE says {spent}')
+            except RowFailed:
+                continue
+            for sc in guest_json(guest, 'GUEST SCENARIO '):
+                sets.append({'log': f'logs/{fs}-{name}', 'src': str(log), 'scenario': name, 'fs': fs,
+                             'root': sc['root'], 'old': sc['old'], 'new': sc['new'], 'preen': True,
+                             'states': sy.final(sy.Log(log), name, f'vm-eio-{fs}-{row}')})
+    return sets
+
+
 @vm
 def guest_rows():
-    names = ['vm-boot', 'vm-binaries-match', 'vm-fs-ext4-qualified', 'vm-fs-ext3-qualified',
-             'vm-fs-ext2-refused', 'vm-fs-ext4-nojournal-refused']
-    for fs in FILESYSTEMS:
-        names += [f'vm-matrix-{fs}']
-        names += [f'powercut-{fs}-{verb}' for verb in VERBS]
-        names += [f'powercut-{fs}-rescue-undo', f'powercut-{fs}-rescue-finish']
-        names += [f'vm-eio-{fs}', f'vm-enospc-{fs}', f'vm-concurrent-{fs}']
-    names += ['vm-enospc-capacity']
     for piece in (RECORDER, SYNTH, GUEST):
-        if not piece.exists():
-            missing(piece, names)
+        if missing(piece, ['vm-boot']):
             return
+    sy = synth_module()
+    bins, built = guest_build()
+    for fs in FILESYSTEMS:
+        job = {'phase': 'run', 'fs': fs, 'enospc': True, 'capacity': fs == 'ext4', 'qualify': fs == 'ext4',
+               'matrix': True}
+        _, guest, log = boot(f'{fs}-run', job, bins, recorded=True, scratch=True, matrix=True, timeout=3000)
+        seen = guest_json(guest, 'GUEST binaries ')
+        if fs == FILESYSTEMS[0]:
+            check(any(x.startswith('GUEST start') for x in guest), 'vm-boot', 'no GUEST start line')
+            try:
+                check(seen and seen[0] == built, 'vm-binaries-match', f'guest={seen} host={built}')
+            except RowFailed:
+                pass
+        sets = []
+        for sc in guest_json(guest, 'GUEST SCENARIO '):
+            states, steps = sy.plan(sy.Log(log), sc['name'], f'powercut-{fs}')
+            print(f'powercut: {fs} {sc["name"]} steps={len(steps)} states={len(states)}', flush=True)
+            sets.append({'log': f'logs/{fs}-run', 'src': str(log), 'scenario': sc['name'], 'fs': fs,
+                         'root': sc['root'], 'old': sc['old'], 'new': sc['new'], 'states': states})
+        sets += eio_runs(fs, bins, log, sy)
+        extra = []
+        for src in sorted({x['src'] for x in sets}):
+            arc = [x['log'] for x in sets if x['src'] == src][0]
+            extra += [(f'{arc}/log.jsonl', Path(src) / 'log.jsonl'), (f'{arc}/blobs.bin', Path(src) / 'blobs.bin')]
+        job = {'phase': 'check', 'size': DATA_SIZE, 'sets': [{k: v for k, v in x.items() if k != 'src'} for x in sets]}
+        total = sum(len(x['states']) for x in sets)
+        print(f'powercut: {fs} check boot: {len(sets)} sets, {total} states', flush=True)
+        boot(f'{fs}-check', job, bins, extra=extra, timeout=5400)
 
 
 def main():
