@@ -620,6 +620,19 @@ def upgrade(r):
         r.repo.publish(universe())
 
 
+@row('upgrade-replaces-modified')
+def upgrade_modified(r):
+    root = upgraded_root(r, 'upgrade-modified')
+    try:
+        (root / 'usr/share/alpha/data').write_bytes(b'edited\n')
+        p = lrd('upgrade', '--root', root, '--now', NOW)
+        ok(p, 'upgrade-replaces-modified-run')
+        check((root / 'usr/share/alpha/data').read_bytes() == b'data 2\n'
+              and 'replace-modified usr/share/alpha/data' in p.stdout, 'upgrade-replaces-modified', p.stdout)
+    finally:
+        r.repo.publish(universe())
+
+
 @row('config-upstream-unchanged-kept')
 def config_kept(r):
     # alpha 1-2 changes the program and keeps the packaged config bytes (N == B).
@@ -777,7 +790,7 @@ def failpoints(r, base, verb):
     return p, [name for name, _ in trace_points(p)]
 
 
-REQUIRED_PHASES = ['lock', 'stage', 'intent-written', 'intent', 'generation', 'commit-written',
+REQUIRED_PHASES = ['lock', 'capacity', 'stage', 'intent-written', 'intent', 'generation', 'commit-written',
                    'commit-renamed', 'commit', 'done']
 
 
@@ -864,25 +877,37 @@ def crash_rescue(r):
             continue
 
 
+def injected_matrix(r, verb):
+    base, old, new = references(r, verb)
+    _, names = failpoints(r, base, verb)
+    picks = [n for n in names if n.split(':')[0] in ('capacity', 'backup', 'intent-written', 'generation', 'commit-written')]
+    picks += [n for n in names if n.endswith(':temp')][:1] + [n for n in names if n.endswith(':renamed')][:1]
+    check(any(n.endswith(':temp') for n in picks) or verb == 'remove', f'injected-{verb}-temp-step-present', repr(picks))
+    for kind in ('eio', 'enospc'):
+        for name in picks:
+            root = r.copy(base, f'{kind}')
+            p = run_verb(root, verb, binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:{kind}'})
+            row_name = f'{kind}-{verb}-{name}'
+            try:
+                check(p.returncode == 1 and ('io' if kind == 'eio' else 'no-space') in p.stderr,
+                      f'{row_name}-refused', describe(p))
+                if name == 'capacity':
+                    check(not list((root / 'var/lib/larder/transactions').iterdir()), f'{row_name}-zero-writes')
+                recovered_twice(r, root, row_name, old)
+            except RowFailed:
+                continue
+
+
 @row('injected-errors')
 def injected(r):
     if not FPBIN.exists():
         emit(False, 'injected-errors', f'missing {FPBIN}')
-    base, old, new = references(r, 'remove')
-    _, names = failpoints(r, base, 'remove')
-    picks = [n for n in names if n.split(':')[0] in ('backup', 'intent-written', 'generation', 'commit-written')]
-    picks += [n for n in names if n.endswith(':temp')][:1] + [n for n in names if n.endswith(':renamed')][:1]
-    for kind in ('eio', 'enospc'):
-        for name in picks:
-            root = r.copy(base, f'{kind}')
-            p = run_verb(root, 'remove', binary=FPBIN, env={'LARDER_FAILPOINT': f'{name}:{kind}'})
-            row_name = f'{kind}-{name}'
-            try:
-                check(p.returncode == 1 and ('io' if kind == 'eio' else 'no-space') in p.stderr,
-                      f'{row_name}-refused', describe(p))
-                recovered_twice(r, root, row_name, old)
-            except RowFailed:
-                continue
+    injected_matrix(r, 'remove')
+    r.repo.publish(universe(upgraded=True))
+    try:
+        injected_matrix(r, 'upgrade')
+    finally:
+        r.repo.publish(universe())
 
 
 @row('rescue-entry')
