@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Crash states from an NBD recorder log (pm04b; prediction-pm04b.txt section 1).
+
+Imported by tools/check-powercut on the host and by tools/powercut-guest in the
+guest. It does no I/O but on the paths it is given.
+
+For a cut at log position c (the requests with seq < c have arrived):
+- durable(c): every data write before the last data FLUSH before c, plus every
+  FUA write before c;
+- volatile(c): every other data write before c.
+A state is zeros, then durable(c), then a chosen subset of volatile(c), applied
+in log order. A chosen write lands whole, or torn: only its first k 512-byte
+sectors. A write the recorder failed (NBD_EIO, NBD_EINVAL) never lands.
+
+Marks split a scenario into windows. Each window gives:
+- before: the durable state at the previous mark;
+- after: the durable state at this mark;
+- after-all: everything this mark has seen;
+- flush-<j>: the state at each data flush inside the window;
+- subset-<k>: K seeded subsets of one epoch's volatile writes, with tearing.
+States are keyed by what they apply, so identical states are checked once and
+keep every label.
+"""
+import hashlib
+import json
+from pathlib import Path
+import random
+
+SECTOR = 512
+K_SUBSETS = 4
+VERBS = ('install', 'upgrade', 'remove')
+
+
+class Log:
+    def __init__(self, logdir, export='data'):
+        self.dir = Path(logdir)
+        self.export = export
+        self.entries = [json.loads(line) for line in (self.dir / 'log.jsonl').read_text().splitlines() if line]
+        self._blobs = None
+
+    def payload(self, e):
+        if self._blobs is None:
+            self._blobs = (self.dir / 'blobs.bin').read_bytes()
+        return self._blobs[e['blob']:e['blob'] + e['len']]
+
+    def ops(self):
+        """The data export's applied writes and successful flushes, in order."""
+        return [e for e in self.entries
+                if e['export'] == self.export and e['cmd'] in ('write', 'flush') and not e.get('error')]
+
+    def marks(self):
+        return [(e['seq'], e['mark']) for e in self.entries
+                if e['export'] == 'mark' and e['cmd'] == 'write' and not e.get('error') and e.get('mark')]
+
+
+def split(ops, cut):
+    """(last flush seq or -1, durable writes after it (FUA), volatile writes after it)."""
+    last = -1
+    for e in ops:
+        if e['seq'] >= cut:
+            break
+        if e['cmd'] == 'flush':
+            last = e['seq']
+    fua, volatile = [], []
+    for e in ops:
+        if e['seq'] >= cut:
+            break
+        if e['seq'] > last and e['cmd'] == 'write':
+            (fua if e['fua'] else volatile).append(e)
+    return last, fua, volatile
+
+
+def state(ops, cut, picks):
+    """A state: the cut and the chosen volatile writes as [seq, sectors] (sectors 0 = whole)."""
+    last, fua, _ = split(ops, cut)
+    applied = sorted([(e['seq'], 0) for e in fua] + [tuple(p) for p in picks])
+    return {'cut': cut, 'flush': last, 'picks': [list(p) for p in picks],
+            'key': hashlib.sha256(json.dumps([last, applied]).encode()).hexdigest()[:24]}
+
+
+def seeded(ops, cut, seed_text):
+    """One seeded subset of volatile(cut): whole with p=1/2, torn with p=1/4, else dropped."""
+    _, _, volatile = split(ops, cut)
+    rng = random.Random(int(hashlib.sha256(seed_text.encode()).hexdigest(), 16))
+    picks = []
+    for e in volatile:
+        r = rng.random()
+        sectors = max(1, e['len'] // SECTOR)
+        if r < 0.5:
+            picks.append([e['seq'], 0])
+        elif r < 0.75 and sectors > 1:
+            picks.append([e['seq'], 1 + int(rng.random() * (sectors - 1))])
+    return picks
+
+
+def image(log, size, st, ops=None, base=None):
+    """The state's bytes. base, when given, is the image through st['flush'] already."""
+    ops = ops if ops is not None else log.ops()
+    img = bytearray(base) if base is not None else bytearray(size)
+    chosen = {seq: k for seq, k in st['picks']}
+    for e in ops:
+        if e['seq'] >= st['cut']:
+            break
+        if e['cmd'] != 'write':
+            continue
+        if base is not None and e['seq'] < st['flush']:
+            continue
+        durable = e['seq'] < st['flush'] or e['fua']
+        if not durable and e['seq'] not in chosen:
+            continue
+        data = log.payload(e)
+        k = 0 if durable else chosen[e['seq']]
+        if k:
+            data = data[:k * SECTOR]
+        img[e['off']:e['off'] + len(data)] = data
+    return img
+
+
+def through(log, size, flush_seq, ops=None):
+    """The image of every write before flush_seq (a durable prefix)."""
+    ops = ops if ops is not None else log.ops()
+    img = bytearray(size)
+    for e in ops:
+        if e['seq'] >= flush_seq:
+            break
+        if e['cmd'] == 'write':
+            data = log.payload(e)
+            img[e['off']:e['off'] + len(data)] = data
+    return img
+
+
+def step_of(text):
+    """'MARK apply:0:temp path=…' -> 'apply:0:temp'; 'HARNESS end upgrade' -> 'end'."""
+    parts = text.split()
+    if parts[0] == 'MARK' and len(parts) > 1:
+        return parts[1]
+    if parts[0] == 'HARNESS' and len(parts) > 1:
+        return parts[1]
+    return text
+
+
+def scenarios(log):
+    """{name: [(seq, text), ...]} from 'HARNESS setup NAME' through 'HARNESS end NAME'."""
+    out, current = {}, None
+    for seq, text in log.marks():
+        parts = text.split()
+        if parts[:2] == ['HARNESS', 'setup'] and len(parts) > 2:
+            current = parts[2]
+            out[current] = [(seq, text)]
+            continue
+        if current is None:
+            continue
+        out[current].append((seq, text))
+        if parts[:1] == ['HARNESS'] and parts[1:2] in (['end'], ['paused']) and parts[2:3] == [current]:
+            current = None
+    return out
+
+
+def expectation(name, steps, i, kind):
+    """old, new or either for window i (steps[i]) of scenario name, kind of state."""
+    if name in ('rescue-undo', 'concurrent') or name.startswith('eio-'):
+        return 'old'
+    if name == 'rescue-finish':
+        return 'new'
+    base = name.split('-')[0]
+    if base not in VERBS:
+        return 'either'
+    order = [s for s in steps]
+    if 'commit' not in order or 'commit-written' not in order:
+        return 'either'
+    cw, cm = order.index('commit-written'), order.index('commit')
+    if i <= cw:
+        return 'old'
+    if i < cm:
+        return 'either'
+    if i == cm:
+        return 'new' if kind in ('after', 'after-all') else 'either'
+    return 'new'
+
+
+def plan(log, name, prefix, k_subsets=K_SUBSETS):
+    """Every state of one scenario: [{key, cut, flush, picks, labels: [[row, expect], ...]}]."""
+    marks = scenarios(log).get(name)
+    if not marks or len(marks) < 2:
+        raise ValueError(f'scenario {name}: marks {marks!r}')
+    ops = log.ops()
+    flushes = [e['seq'] for e in ops if e['cmd'] == 'flush']
+    steps, seen = [], {}
+    for _, text in marks[1:]:
+        s = step_of(text)
+        seen[s] = seen.get(s, 0) + 1
+        steps.append(s if seen[s] == 1 else f'{s}#{seen[s]}')
+    states = {}
+
+    def add(st, row, want):
+        entry = states.setdefault(st['key'], dict(st, labels=[]))
+        entry['labels'].append([row, want])
+
+    for i in range(1, len(marks)):
+        lo, hi = marks[i - 1][0], marks[i][0]
+        step = steps[i - 1]
+        row = f'{prefix}-{name}-{step}'
+        idx = i - 1
+        add(state(ops, lo, []), f'{row}-before', expectation(name, steps, idx, 'before'))
+        add(state(ops, hi, []), f'{row}-after', expectation(name, steps, idx, 'after'))
+        _, _, volatile = split(ops, hi)
+        add(state(ops, hi, [[e['seq'], 0] for e in volatile]), f'{row}-after-all',
+            expectation(name, steps, idx, 'after-all'))
+        inside = [f for f in flushes if lo < f < hi]
+        for f in inside:
+            add(state(ops, f + 1, []), f'{row}-flushes', expectation(name, steps, idx, 'flushes'))
+        epochs = inside + [hi]
+        for k in range(k_subsets):
+            seed = f'{prefix}|{name}|{step}|{k}'
+            rng = random.Random(int(hashlib.sha256(seed.encode()).hexdigest(), 16))
+            cut = epochs[int(rng.random() * len(epochs))]
+            add(state(ops, cut, seeded(ops, cut, seed)), f'{row}-subsets', expectation(name, steps, idx, 'subsets'))
+    return list(states.values()), steps
+
+
+def final(log, name, prefix):
+    """The two states at a scenario's last mark (or the log's end): durable, and all."""
+    marks = scenarios(log).get(name) or []
+    ops = log.ops()
+    cut = marks[-1][0] if len(marks) > 1 else (log.entries[-1]['seq'] + 1 if log.entries else 0)
+    _, _, volatile = split(ops, cut)
+    out = {}
+    for kind, picks in (('after', []), ('after-all', [[e['seq'], 0] for e in volatile])):
+        st = state(ops, cut, picks)
+        entry = out.setdefault(st['key'], dict(st, labels=[]))
+        entry['labels'].append([f'{prefix}-{kind}', 'old'])
+    return list(out.values())
