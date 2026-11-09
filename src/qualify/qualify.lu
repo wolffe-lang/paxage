@@ -70,7 +70,10 @@ pub fn root(path: str) -> Verdict {
     if kind != 61267 { v.error = "unqualified-filesystem type={kind}"; return v }
     let majmin = "{major(st[9])}:{minor(st[9])}"
     let name = kernel_name(majmin)
-    if name == "" { v.error = "unqualified-filesystem ext journal unproven (device {majmin})"; return v }
+    if name == "" {
+        v.error = "unqualified-filesystem ext journal unproven (device {majmin})"
+        return v
+    }
     let journals = fs_read_dir("/proc/fs/jbd2") else |_| { List[str]() }
     for j in journals {
         if text.starts_with(j, "{name}-") {

@@ -36,7 +36,11 @@ fn wait(f: Fail) -> bool {
 /// cleanup of any kind); os_exit would need the exec capability larder never declares.
 pub fn hit(f: Fail, point: str, detail: str) -> str {
     if f.trace {
-        if detail == "" { eprint("FAILPOINT {point}") } else { eprint("FAILPOINT {point} {detail}") }
+        if detail == "" {
+            eprint("FAILPOINT {point}")
+        } else {
+            eprint("FAILPOINT {point} {detail}")
+        }
         return ""
     }
     if f.name == "" || f.name != point { return "" }

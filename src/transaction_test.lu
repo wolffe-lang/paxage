@@ -1,8 +1,8 @@
-use intent
 use database as db
 use failpoint
-use walk
+use intent
 use txn
+use walk
 
 fn row(ok: bool, name: str) -> bool {
     if ok { print("PASS {name}") } else { fs_write(2, "FAIL {name}\n") else |_| {} }
@@ -32,7 +32,14 @@ fn sample() -> intent.Intent {
     })
     var link = want("link", h)
     link.target = "usr/share/a b/data"
-    (mut ops).push(intent.Op { index: 1, action: "link", path: "usr/x", old: intent.nothing(), new: link, backup: false })
+    (mut ops).push(intent.Op {
+        index: 1,
+        action: "link",
+        path: "usr/x",
+        old: intent.nothing(),
+        new: link,
+        backup: false,
+    })
     intent.Intent { transaction: "t3", from: 2, to: 3, database: h, ops, error: "" }
 }
 
@@ -40,43 +47,126 @@ fn main() -> int {
     var ok = true
     let bytes = intent.render(sample())
     let back = intent.parse(bytes)
-    if !row(back.error == "" && back.ops.len == 2 && back.ops[0].path == "usr/share/a b/data" && back.ops[0].backup && back.ops[1].new.target == "usr/share/a b/data" && back.transaction == "t3" && back.from == 2, "X5-intent-roundtrip") { ok = false }
+    if !row(
+        back.error == "" &&
+            back.ops.len == 2 &&
+            back.ops[0].path == "usr/share/a b/data" &&
+            back.ops[0].backup &&
+            back.ops[1].new.target == "usr/share/a b/data" &&
+            back.transaction == "t3" &&
+            back.from == 2,
+        "X5-intent-roundtrip",
+    ) {
+        ok = false
+    }
     if !row(same(intent.render(back), bytes), "X5-intent-canonical") { ok = false }
     var tampered = copy bytes
     tampered[20] = 88 as byte
-    if !row(intent.parse(tampered).error == "rescue-malformed-intent digest", "X5-intent-digest-refused") { ok = false }
+    if !row(
+        intent.parse(tampered).error == "rescue-malformed-intent digest",
+        "X5-intent-digest-refused",
+    ) {
+        ok = false
+    }
     let torn = bytes[0..bytes.len - 5]
     if !row(intent.parse(torn).error != "", "X5-intent-torn-refused") { ok = false }
     let empty_one = List[byte]()
     if !row(intent.parse(empty_one).error != "", "X5-intent-empty-refused") { ok = false }
-    if !row(intent.decimal("") == -1 && intent.decimal("12") == 12 && intent.decimal("1x") == -1 && intent.decimal("1234567890123456789") == -1, "X5-intent-decimal-bounds") { ok = false }
+    if !row(
+        intent.decimal("") == -1 &&
+            intent.decimal("12") == 12 &&
+            intent.decimal("1x") == -1 &&
+            intent.decimal("1234567890123456789") == -1,
+        "X5-intent-decimal-bounds",
+    ) {
+        ok = false
+    }
 
     var g = db.empty("x86_64", "default", "/repo {{q}}\"", "logical")
     g.generation = 4
     g.transaction = "t4"
-    (mut g.packages).push(db.Installed { name: "alpha", version: "1-1", arch: "x86_64", slot: "default", reason: "explicit", manifest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" })
+    (mut g.packages).push(db.Installed {
+        name: "alpha",
+        version: "1-1",
+        arch: "x86_64",
+        slot: "default",
+        reason: "explicit",
+        manifest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    })
     (mut g.residuals).push(db.Residual { path: "etc/a{{b}}.conf", package: "alpha" })
     (mut g.accounts).push(db.Account { name: "pm04-daemon", uid: 901, gid: 901, package: "alpha" })
     let text = db.render(g)
     let parsed = db.parse(text.bytes())
-    if !row(parsed.error == "" && db.render(parsed) == text && parsed.repository == "/repo {{q}}\"" && parsed.residuals[0].path == "etc/a{{b}}.conf", "X4-database-roundtrip") { ok = false }
+    if !row(
+        parsed.error == "" &&
+            db.render(parsed) == text &&
+            parsed.repository == "/repo {{q}}\"" &&
+            parsed.residuals[0].path == "etc/a{{b}}.conf",
+        "X4-database-roundtrip",
+    ) {
+        ok = false
+    }
     var bad = copy g
     bad.ownership = "root"
-    if !row(db.parse(db.render(bad).bytes()).error != "", "X4-database-ownership-refused") { ok = false }
+    if !row(db.parse(db.render(bad).bytes()).error != "", "X4-database-ownership-refused") {
+        ok = false
+    }
     var reason = copy g
     reason.packages[0].reason = "maybe"
-    if !row(db.parse(db.render(reason).bytes()).error != "", "X4-database-reason-refused") { ok = false }
-    let cur = db.Current { generation: 4, database: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", transaction: "t4", error: "" }
+    if !row(db.parse(db.render(reason).bytes()).error != "", "X4-database-reason-refused") {
+        ok = false
+    }
+    let cur = db.Current {
+        generation: 4,
+        database: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        transaction: "t4",
+        error: "",
+    }
     let cback = db.parse_current(db.render_current(cur).bytes())
-    if !row(cback.error == "" && cback.generation == 4 && cback.transaction == "t4", "X4-current-roundtrip") { ok = false }
+    if !row(
+        cback.error == "" && cback.generation == 4 && cback.transaction == "t4",
+        "X4-current-roundtrip",
+    ) {
+        ok = false
+    }
     let zero = List[byte]()
-    if !row(db.parse_current(zero).error == "current-invalid", "X4-current-empty-refused") { ok = false }
+    if !row(db.parse_current(zero).error == "current-invalid", "X4-current-empty-refused") {
+        ok = false
+    }
 
-    if !row(failpoint.parse("apply:3:temp:crash", "").name == "apply:3:temp" && failpoint.parse("apply:3:temp:crash", "").action == "crash", "X8-failpoint-name") { ok = false }
-    if !row(failpoint.parse("trace", "").trace && !failpoint.valid("lock:explode", failpoint.parse("lock:explode", "")), "X8-failpoint-actions") { ok = false }
-    if !row(failpoint.hit(failpoint.none(), "commit", "") == "" && failpoint.hit(failpoint.parse("commit:eio", ""), "commit", "") == "io" && failpoint.hit(failpoint.parse("commit:enospc", ""), "generation", "") == "", "X8-failpoint-inject") { ok = false }
+    if !row(
+        failpoint.parse("apply:3:temp:crash", "").name == "apply:3:temp" &&
+            failpoint.parse("apply:3:temp:crash", "").action == "crash",
+        "X8-failpoint-name",
+    ) {
+        ok = false
+    }
+    if !row(
+        failpoint.parse("trace", "").trace &&
+            !failpoint.valid("lock:explode", failpoint.parse("lock:explode", "")),
+        "X8-failpoint-actions",
+    ) {
+        ok = false
+    }
+    if !row(
+        failpoint.hit(failpoint.none(), "commit", "") == "" &&
+            failpoint.hit(failpoint.parse("commit:eio", ""), "commit", "") == "io" &&
+            failpoint.hit(failpoint.parse("commit:enospc", ""), "generation", "") == "",
+        "X8-failpoint-inject",
+    ) {
+        ok = false
+    }
 
-    if !row(walk.parent_of("usr/share/a") == "usr/share" && walk.parent_of("usr") == "" && walk.base_of("usr/share/a") == "a" && walk.components("").len == 0 && walk.join("", "a") == "a", "X3-walk-paths") { ok = false }
+    if !row(
+        walk.parent_of("usr/share/a") == "usr/share" &&
+            walk.parent_of("usr") == "" &&
+            walk.base_of("usr/share/a") == "a" &&
+            walk.components("").len == 0 &&
+            walk.join("", "a") == "a",
+        "X3-walk-paths",
+    ) {
+        ok = false
+    }
 
     var live = walk.absent()
     live.kind = "file"
@@ -86,10 +176,22 @@ fn main() -> int {
     live.length = 3
     live.sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     let w = want("file", live.sha256)
-    if !row(txn.matches(live, w, true) && !txn.matches(live, w, false), "X9-identity-owners-logical-only") { ok = false }
+    if !row(
+        txn.matches(live, w, true) && !txn.matches(live, w, false),
+        "X9-identity-owners-logical-only",
+    ) {
+        ok = false
+    }
     var other = copy w
     other.mode = 493
-    if !row(!txn.matches(live, other, true) && !txn.matches(walk.absent(), w, true) && txn.matches(walk.absent(), intent.nothing(), false), "X9-identity-mode-and-absence") { ok = false }
+    if !row(
+        !txn.matches(live, other, true) &&
+            !txn.matches(walk.absent(), w, true) &&
+            txn.matches(walk.absent(), intent.nothing(), false),
+        "X9-identity-mode-and-absence",
+    ) {
+        ok = false
+    }
     if ok { return 0 }
     1
 }

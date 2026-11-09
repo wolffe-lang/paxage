@@ -232,7 +232,13 @@ pub fn parse(bytes: List[byte]) -> Db {
     }
     if db.packages.len > 24 { return bad("snapshot-limit") }
     for c in rows(d, "baselines") {
-        let e = schema.shape(d, c, "baseline", ["path", "package", "sha256"], ["string", "string", "string"])
+        let e = schema.shape(
+            d,
+            c,
+            "baseline",
+            ["path", "package", "sha256"],
+            ["string", "string", "string"],
+        )
         if e != "" { return bad(e) }
         (mut db.baselines).push(Baseline {
             path: schema.string(d, c, "path"),
@@ -249,7 +255,13 @@ pub fn parse(bytes: List[byte]) -> Db {
         })
     }
     for c in rows(d, "proposals") {
-        let e = schema.shape(d, c, "proposal", ["path", "package", "sha256"], ["string", "string", "string"])
+        let e = schema.shape(
+            d,
+            c,
+            "proposal",
+            ["path", "package", "sha256"],
+            ["string", "string", "string"],
+        )
         if e != "" { return bad(e) }
         (mut db.proposals).push(Proposal {
             path: schema.string(d, c, "path"),
@@ -258,7 +270,13 @@ pub fn parse(bytes: List[byte]) -> Db {
         })
     }
     for c in rows(d, "accounts") {
-        let e = schema.shape(d, c, "account", ["name", "uid", "gid", "package"], ["string", "int", "int", "string"])
+        let e = schema.shape(
+            d,
+            c,
+            "account",
+            ["name", "uid", "gid", "package"],
+            ["string", "int", "int", "string"],
+        )
         if e != "" { return bad(e) }
         (mut db.accounts).push(Account {
             name: schema.string(d, c, "name"),
@@ -276,7 +294,13 @@ pub fn parse(bytes: List[byte]) -> Db {
         })
     }
     for c in rows(d, "pending") {
-        let e = schema.shape(d, c, "pending", ["kind", "name", "package"], ["string", "string", "string"])
+        let e = schema.shape(
+            d,
+            c,
+            "pending",
+            ["kind", "name", "package"],
+            ["string", "string", "string"],
+        )
         if e != "" { return bad(e) }
         (mut db.pending).push(Pending {
             kind: schema.string(d, c, "kind"),

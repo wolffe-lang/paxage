@@ -11,6 +11,9 @@ fn main() -> int {
     let spec = env_get("LARDER_FAILPOINT") else |_| { "" }
     let fifo = env_get("LARDER_FAILPOINT_FIFO") else |_| { "" }
     let f = failpoint.parse(spec, fifo)
-    if !failpoint.valid(spec, f) { eprint("larder-failpoint: bad LARDER_FAILPOINT {spec}"); return 2 }
+    if !failpoint.valid(spec, f) {
+        eprint("larder-failpoint: bad LARDER_FAILPOINT {spec}")
+        return 2
+    }
     root_cli.run(a, f)
 }

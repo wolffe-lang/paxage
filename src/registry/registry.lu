@@ -21,7 +21,15 @@ pub fn account(name: str) -> Account {
             error: "",
         }
     }
-    Account { name, uid: 0, gid: 0, gecos: "", home: "", shell: "", error: "unknown-action account {name}" }
+    Account {
+        name,
+        uid: 0,
+        gid: 0,
+        gecos: "",
+        home: "",
+        shell: "",
+        error: "unknown-action account {name}",
+    }
 }
 
 /// The directory registered under name, or error unknown-action.

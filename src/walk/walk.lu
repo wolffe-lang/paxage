@@ -95,7 +95,11 @@ pub fn open_root(path: str) -> Root {
         r.error = "root-stat"
         return r
     }
-    if rec[0] != 1 { fs_close(fd) else |_| {}; r.error = "root-not-directory"; return r }
+    if rec[0] != 1 {
+        fs_close(fd) else |_| {}
+        r.error = "root-not-directory"
+        return r
+    }
     r.fd = fd
     r.dev = rec[9]
     r.ino = rec[10]

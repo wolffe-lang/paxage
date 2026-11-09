@@ -59,10 +59,26 @@ fn parse(a: List[str]) -> Opts {
     var i = 1
     while i < a.len {
         let f = a[i]
-        if f == "--dry-run" { o.dry_run = true; i += 1; continue }
-        if f == "--purge" { o.purge = true; i += 1; continue }
-        if f == "--yes" { o.yes = true; i += 1; continue }
-        if f == "--json" { o.as_json = true; i += 1; continue }
+        if f == "--dry-run" {
+            o.dry_run = true
+            i += 1
+            continue
+        }
+        if f == "--purge" {
+            o.purge = true
+            i += 1
+            continue
+        }
+        if f == "--yes" {
+            o.yes = true
+            i += 1
+            continue
+        }
+        if f == "--json" {
+            o.as_json = true
+            i += 1
+            continue
+        }
         if text.starts_with(f, "--") {
             if i + 1 >= a.len || a[i + 1] == "" { o.error = "missing value for {f}"; return o }
             let v = a[i + 1]
@@ -95,7 +111,9 @@ fn parse(a: List[str]) -> Opts {
 
 fn usage(message: str) -> int {
     eprint("larder: {message}")
-    eprint("Usage: larder (lrd) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR")
+    eprint(
+        "Usage: larder (lrd) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
+    )
     2
 }
 
@@ -145,7 +163,11 @@ fn take_lock(c: txn.Ctx) -> Open {
     let sd = walk.dir(c.root, txn.state())
     if sd.error != "" {
         out.code = 1
-        if walk.missing(sd) { out.error = "no-state: {txn.state()} is not initialized" } else { out.error = sd.error }
+        if walk.missing(sd) {
+            out.error = "no-state: {txn.state()} is not initialized"
+        } else {
+            out.error = sd.error
+        }
         return out
     }
     var missing = false
@@ -154,10 +176,28 @@ fn take_lock(c: txn.Ctx) -> Open {
         _ => { -1 },
     }
     walk.close(sd)
-    if missing { out.code = 1; out.error = "lock-missing: {txn.state()}/lock (made only by init)"; return out }
-    if fd < 0 { out.code = 1; out.error = "lock-inode: {txn.state()}/lock is not a regular file"; return out }
-    let rec = fs_fstat_record(fd) else |_| { fs_close(fd) else |_| {}; out.code = 1; out.error = "lock-inode"; return out }
-    if rec[0] != 0 { fs_close(fd) else |_| {}; out.code = 1; out.error = "lock-inode: {txn.state()}/lock is not a regular file"; return out }
+    if missing {
+        out.code = 1
+        out.error = "lock-missing: {txn.state()}/lock (made only by init)"
+        return out
+    }
+    if fd < 0 {
+        out.code = 1
+        out.error = "lock-inode: {txn.state()}/lock is not a regular file"
+        return out
+    }
+    let rec = fs_fstat_record(fd) else |_| {
+        fs_close(fd) else |_| {}
+        out.code = 1
+        out.error = "lock-inode"
+        return out
+    }
+    if rec[0] != 0 {
+        fs_close(fd) else |_| {}
+        out.code = 1
+        out.error = "lock-inode: {txn.state()}/lock is not a regular file"
+        return out
+    }
     var busy = false
     fs_lock(fd, 2) else |e| match e {
         busy => { busy = true },
@@ -181,16 +221,31 @@ fn release(o: Open) {
 /// Load current, its generation and its packages; refuse a mode mismatch.
 fn load(mut o: Open) {
     o.cur = txn.current(o.c)
-    if o.cur.error != "" { o.code = 1; o.error = o.cur.error; return }
+    if o.cur.error != "" {
+        o.code = 1
+        o.error = o.cur.error
+        return
+    }
     o.g = txn.load(o.c, o.cur)
-    if o.g.error != "" { o.code = 1; o.error = o.g.error; return }
-    if o.g.ownership == "privileged" && !o.c.privileged || o.g.ownership == "logical" && o.c.privileged {
+    if o.g.error != "" {
+        o.code = 1
+        o.error = o.g.error
+        return
+    }
+    if o.g.ownership == "privileged" && !o.c.privileged ||
+        o.g.ownership == "logical" && o.c.privileged {
         o.code = 1
         o.error = "ownership-mode-mismatch: this root is {o.g.ownership}"
         return
     }
     o.pkgs = txn.installed(o.c, o.g)
-    for p in o.pkgs { if p.name == "" { o.code = 1; o.error = "database-invalid manifest"; return } }
+    for p in o.pkgs {
+        if p.name == "" {
+            o.code = 1
+            o.error = "database-invalid manifest"
+            return
+        }
+    }
 }
 
 fn check_state(c: txn.Ctx) -> str {
@@ -198,8 +253,12 @@ fn check_state(c: txn.Ctx) -> str {
     if sd.error != "" { return sd.error }
     let held = fs_fstat_record(sd.fd) else |_| { walk.close(sd); return "path-race {txn.state()}" }
     walk.close(sd)
-    let byname = fs_lstat("{c.root.path}/{txn.state()}") else |_| { return "path-race {txn.state()}" }
-    if byname[9] != held[9] || byname[10] != held[10] || byname[0] != 1 { return "path-race {txn.state()}" }
+    let byname = fs_lstat("{c.root.path}/{txn.state()}") else |_| {
+        return "path-race {txn.state()}"
+    }
+    if byname[9] != held[9] || byname[10] != held[10] || byname[0] != 1 {
+        return "path-race {txn.state()}"
+    }
     ""
 }
 
@@ -231,7 +290,10 @@ fn mkdir_rel(c: txn.Ctx, rel: str, mode: int) -> str {
 fn create_rel(c: txn.Ctx, rel: str, bytes: List[byte], mode: int) -> str {
     let pd = walk.dir(c.root, walk.parent_of(rel))
     if pd.error != "" { return pd.error }
-    let fd = fs_open_at(pd.fd, walk.base_of(rel), 20, 384) else |_| { walk.close(pd); return "create {rel}" }
+    let fd = fs_open_at(pd.fd, walk.base_of(rel), 20, 384) else |_| {
+        walk.close(pd)
+        return "create {rel}"
+    }
     var e = ""
     fs_write_chunk(fd, bytes) else |_| { e = "write {rel}" }
     if e == "" { fs_set_mode_fd(fd, mode) else |_| { e = "mode {rel}" } }
@@ -257,10 +319,19 @@ fn init(o: Opts) -> int {
     let v = qualify.root(c.root.path)
     if v.error != "" { walk.close_root(c.root); return fail(v.error) }
     let uid = os_euid() else |_| { -1 }
-    let top = fs_fstat_record(c.root.fd) else |_| { walk.close_root(c.root); return fail("root-stat") }
-    if !c.privileged && top[6] != uid { walk.close_root(c.root); return fail("root-owner: an unprivileged root must be the caller's") }
+    let top = fs_fstat_record(c.root.fd) else |_| {
+        walk.close_root(c.root)
+        return fail("root-stat")
+    }
+    if !c.privileged && top[6] != uid {
+        walk.close_root(c.root)
+        return fail("root-owner: an unprivileged root must be the caller's")
+    }
     let existing = walk.look_path(c.root, txn.state(), false)
-    if existing.kind != "absent" { walk.close_root(c.root); return fail("state-exists: {txn.state()}") }
+    if existing.kind != "absent" {
+        walk.close_root(c.root)
+        return fail("state-exists: {txn.state()}")
+    }
     let input = io.read(o.pinned, 65536)
     if input.error != "" { walk.close_root(c.root); return fail("pinned-root: {input.error}") }
     let pinned = meta.parse(input.bytes, "root")
@@ -272,11 +343,25 @@ fn init(o: Opts) -> int {
     for d in ["var", "var/lib"] {
         if e == "" && walk.look_path(c.root, d, false).kind == "absent" { e = mkdir_rel(c, d, 493) }
     }
-    for d in [txn.state(), "{txn.state()}/generations", "{txn.state()}/generations/0", "{txn.state()}/generations/0/manifests", "{txn.state()}/transactions", "{txn.state()}/trust"] {
+    for d in [
+        txn.state(),
+        "{txn.state()}/generations",
+        "{txn.state()}/generations/0",
+        "{txn.state()}/generations/0/manifests",
+        "{txn.state()}/transactions",
+        "{txn.state()}/trust",
+    ] {
         if e == "" { e = mkdir_rel(c, d, 448) }
     }
-    if e == "" && walk.look_path(c.root, "var/cache", false).kind == "absent" { e = mkdir_rel(c, "var/cache", 493) }
-    for d in ["var/cache/larder", "var/cache/larder/.part", "var/cache/larder/objects", "var/cache/larder/objects/sha256"] {
+    if e == "" && walk.look_path(c.root, "var/cache", false).kind == "absent" {
+        e = mkdir_rel(c, "var/cache", 493)
+    }
+    for d in [
+        "var/cache/larder",
+        "var/cache/larder/.part",
+        "var/cache/larder/objects",
+        "var/cache/larder/objects/sha256",
+    ] {
         if e == "" { e = mkdir_rel(c, d, 448) }
     }
     if e == "" { e = create_rel(c, "{txn.state()}/lock", List[byte](), 384) }
@@ -288,7 +373,8 @@ fn init(o: Opts) -> int {
     let g0 = db.empty(o.arch, o.slot, repo, ownership)
     let bytes = db.render(g0).bytes()
     if e == "" { e = create_rel(c, "{txn.state()}/generations/0/db.lrd", bytes, 420) }
-    let record = db.render_current(db.Current { generation: 0, database: meta.digest(bytes), transaction: "", error: "" })
+    let record = db.render_current(db.
+        Current { generation: 0, database: meta.digest(bytes), transaction: "", error: "" })
     if e == "" { e = create_rel(c, "{txn.state()}/current", record.bytes(), 384) }
     walk.close_root(c.root)
     if e != "" { return fail("init: {e}") }
@@ -325,17 +411,29 @@ fn universe(o: Open, now: int) -> Universe {
         e = cache.fetch(repo, cache_dir(c), t)
         if e != "" { break }
         let input = io.read("{cache_dir(c)}/objects/sha256/{t.digest}", 1048576)
-        if input.error != "" || meta.digest(input.bytes) != t.digest { e = "manifest-hash {t.path}"; break }
+        if input.error != "" || meta.digest(input.bytes) != t.digest {
+            e = "manifest-hash {t.path}"
+            break
+        }
         let d = literal.parse(input.bytes)
         if d.error != "" { e = "{t.path}: {d.error}"; break }
         let valid = schema.manifest(d, 0)
         if valid != "" { e = "{t.path}: {valid}"; break }
         var p = txn.decode(input.bytes, "dependency")
-        if p.name != t.name || p.version != t.package_version || p.arch != t.arch { e = "target-identity {t.path}"; break }
+        if p.name != t.name || p.version != t.package_version || p.arch != t.arch {
+            e = "target-identity {t.path}"
+            break
+        }
         var bound = false
         for b in loaded.value.targets.entries {
-            if b.kind == "buildinfo" && b.name == t.name && b.package_version == t.package_version && b.arch == t.arch {
-                if schema.string(d, 0, "buildinfo") != b.digest { e = "buildinfo-hash {t.path}"; break }
+            if b.kind == "buildinfo" &&
+                b.name == t.name &&
+                b.package_version == t.package_version &&
+                b.arch == t.arch {
+                if schema.string(d, 0, "buildinfo") != b.digest {
+                    e = "buildinfo-hash {t.path}"
+                    break
+                }
                 e = cache.fetch(repo, cache_dir(c), b)
                 bound = true
             }
@@ -355,7 +453,10 @@ fn fetch_payload(c: txn.Ctx, repo: str, entries: List[meta.Entry], mut p: txn.Pk
     if clock < 0 { return "cache-locked" }
     var e = "target-incomplete {p.name}"
     for t in entries {
-        if t.kind == "payload" && t.name == p.name && t.package_version == p.version && t.arch == p.arch {
+        if t.kind == "payload" &&
+            t.name == p.name &&
+            t.package_version == p.version &&
+            t.arch == p.arch {
             e = cache.fetch(repo, cache_dir(c), t)
             p.payload = "{cache_dir(c)}/objects/sha256/{t.digest}"
             p.payload_length = t.length
@@ -417,10 +518,19 @@ fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -
     var all = copy u.pkgs
     for p in o.pkgs {
         var seen = false
-        for q in all { if q.digest == p.digest || q.name == p.name && q.version == p.version && q.arch == p.arch && q.slot == p.slot { seen = true } }
+        for q in all {
+            if q.digest == p.digest ||
+                q.name == p.name && q.version == p.version && q.arch == p.arch && q.slot == p.slot {
+                seen = true
+            }
+        }
         if !seen { (mut all).push(copy p) }
     }
-    if all.len > 24 { out.code = 1; out.error = "snapshot-limit"; return out }
+    if all.len > 24 {
+        out.code = 1
+        out.error = "snapshot-limit"
+        return out
+    }
     var s = model.Snapshot {
         packages: List[model.Package](),
         installed: List[str](),
@@ -432,10 +542,22 @@ fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -
     for p in all { (mut s.packages).push(copy p.model) }
     for p in o.pkgs { (mut s.installed).push(model.id(p.model)) }
     let plan = solver.resolve(s, wants)
-    if plan.status == "unsatisfiable" { out.code = 3; out.error = "unsatisfiable: {plan.explanation}"; return out }
-    if plan.status == "budget-exceeded" { out.code = 4; out.error = "budget-exceeded: {plan.explanation}"; return out }
+    if plan.status == "unsatisfiable" {
+        out.code = 3
+        out.error = "unsatisfiable: {plan.explanation}"
+        return out
+    }
+    if plan.status == "budget-exceeded" {
+        out.code = 4
+        out.error = "budget-exceeded: {plan.explanation}"
+        return out
+    }
     let checked = checker.check(s, wants, plan.selected)
-    if checked != "" { out.code = 5; out.error = "internal-plan-error: {checked}"; return out }
+    if checked != "" {
+        out.code = 5
+        out.error = "internal-plan-error: {checked}"
+        return out
+    }
     for i in plan.selected {
         var p = copy all[i]
         p.reason = "dependency"
@@ -459,14 +581,22 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
     let c = open_root(opts.root, fp)
     if c.root.error != "" { return fail(c.root.error) }
     var o = take_lock(c)
-    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    if o.code != 0 {
+        walk.close_root(c.root)
+        eprint("larder: {o.error}")
+        return o.code
+    }
     let hooked = failpoint.hit(fp, "lock", "")
     if hooked != "" { return finish_open(o, 1, "lock: {hooked}") }
     let guard = check_state(c)
     if guard != "" { return finish_open(o, 1, guard) }
     let waiting = txn.pending(c)
     if waiting != "" {
-        return finish_open(o, 8, "recovery-needed: {waiting} pending; run lrd rescue --root {c.root.path}")
+        return finish_open(
+            o,
+            8,
+            "recovery-needed: {waiting} pending; run lrd rescue --root {c.root.path}",
+        )
     }
     let v = qualify.root(c.root.path)
     if v.error != "" { return finish_open(o, 1, v.error) }
@@ -476,8 +606,12 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
     var purge = List[str]()
     var entries = List[meta.Entry]()
     if verb == "install" || verb == "upgrade" {
-        if verb == "install" && opts.names.len == 0 { return finish_open(o, 2, "install needs at least one package") }
-        if verb == "upgrade" && opts.names.len != 0 { return finish_open(o, 2, "upgrade takes no names (whole snapshot)") }
+        if verb == "install" && opts.names.len == 0 {
+            return finish_open(o, 2, "install needs at least one package")
+        }
+        if verb == "upgrade" && opts.names.len != 0 {
+            return finish_open(o, 2, "upgrade takes no names (whole snapshot)")
+        }
         let now = now_of(opts)
         if now < 0 { return finish_open(o, 1, "metadata-time") }
         let u = universe(o, now)
@@ -488,7 +622,8 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         for p in o.pkgs {
             if p.reason == "explicit" {
                 (mut explicit).push(p.name)
-                (mut wants).push(model.Need { name: p.name, op: "any", version: "", arch: o.g.arch, slot: o.g.slot })
+                (mut wants).push(model.
+                    Need { name: p.name, op: "any", version: "", arch: o.g.arch, slot: o.g.slot })
             }
         }
         for s in opts.names {
@@ -518,7 +653,9 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
                 for r in news { if provides(r.model, need) { met = true } }
                 if met { continue }
                 for p in o.pkgs {
-                    if provides(p.model, need) { return finish_open(o, 1, "remove {p.name} refused: required-by {q.name}") }
+                    if provides(p.model, need) {
+                        return finish_open(o, 1, "remove {p.name} refused: required-by {q.name}")
+                    }
                 }
             }
         }
@@ -553,7 +690,9 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         if orphans.len == 0 { print("autoremove ok nothing to do"); return finish_open(o, 0, "") }
         if !opts.yes {
             for p in orphans { print("orphan {p.name} {p.version}") }
-            print("autoremove preview: {orphans.len} orphans; rerun with --yes to remove them together")
+            print(
+                "autoremove preview: {orphans.len} orphans; rerun with --yes to remove them together",
+            )
             return finish_open(o, 0, "")
         }
     }
@@ -567,7 +706,9 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         return finish_open(o, 0, "")
     }
     if opts.dry_run {
-        print("{verb} dry-run: {plan.ops.len} operations, generation {plan.next.generation} not written")
+        print(
+            "{verb} dry-run: {plan.ops.len} operations, generation {plan.next.generation} not written",
+        )
         return finish_open(o, 0, "")
     }
     for k in 0..plan.stage.len {
@@ -654,9 +795,17 @@ fn verify(opts: Opts) -> int {
     let c = open_root(opts.root, failpoint.none())
     if c.root.error != "" { return fail(c.root.error) }
     let waiting = txn.pending(c)
-    if waiting != "" { walk.close_root(c.root); eprint("larder: recovery-needed: {waiting} pending"); return 8 }
+    if waiting != "" {
+        walk.close_root(c.root)
+        eprint("larder: recovery-needed: {waiting} pending")
+        return 8
+    }
     var o = take_lock(c)
-    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    if o.code != 0 {
+        walk.close_root(c.root)
+        eprint("larder: {o.error}")
+        return o.code
+    }
     load(mut o)
     if o.error != "" { return finish_open(o, o.code, o.error) }
     var drift = 0
@@ -687,7 +836,11 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
     let c = open_root(opts.root, fp)
     if c.root.error != "" { return fail(c.root.error) }
     var o = take_lock(c)
-    if o.code != 0 { walk.close_root(c.root); eprint("larder: {o.error}"); return o.code }
+    if o.code != 0 {
+        walk.close_root(c.root)
+        eprint("larder: {o.error}")
+        return o.code
+    }
     let guard = check_state(c)
     if guard != "" { return finish_open(o, 9, "rescue-unknown-state {guard}") }
     o.cur = txn.current(c)
@@ -699,19 +852,31 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
         print("rescue: nothing to do")
         return finish_open(o, 0, "")
     }
-    if text.contains(waiting, ",") { return finish_open(o, 9, "rescue-ambiguous-generation (transactions {waiting})") }
+    if text.contains(waiting, ",") {
+        return finish_open(o, 9, "rescue-ambiguous-generation (transactions {waiting})")
+    }
     let t = waiting
     let n = intent.decimal(version.part(t, 1, t.len))
-    if !text.starts_with(t, "t") || n < 1 { return finish_open(o, 9, "rescue-ambiguous-generation ({t})") }
+    if !text.starts_with(t, "t") || n < 1 {
+        return finish_open(o, 9, "rescue-ambiguous-generation ({t})")
+    }
     if o.cur.transaction == t && o.cur.generation == n {
         let e = txn.finish(c, t)
         if e != "" { return finish_open(o, 9, "rescue: finish {t}: {e}") }
         print("rescue: finished {t}")
         return finish_open(o, 0, "")
     }
-    if n != o.cur.generation + 1 { return finish_open(o, 9, "rescue-ambiguous-generation ({t} after generation {o.cur.generation})") }
+    if n != o.cur.generation + 1 {
+        return finish_open(
+            o,
+            9,
+            "rescue-ambiguous-generation ({t} after generation {o.cur.generation})",
+        )
+    }
     let present = walk.look_path(c.root, "{txn.state()}/transactions/{t}/intent", false)
-    if present.kind == "error" { return finish_open(o, 9, "rescue-unknown-state ({present.error})") }
+    if present.kind == "error" {
+        return finish_open(o, 9, "rescue-unknown-state ({present.error})")
+    }
     if present.kind == "absent" {
         let e = txn.undo_unprepared(c, t, n)
         if e != "" { return finish_open(o, 9, e) }
@@ -720,7 +885,9 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
     }
     let it = intent.parse(txn.read_rel(c, "{txn.state()}/transactions/{t}/intent", 268435456))
     if it.error != "" { return finish_open(o, 9, it.error) }
-    if it.transaction != t || it.from != o.cur.generation { return finish_open(o, 9, "rescue-ambiguous-generation (intent {it.transaction})") }
+    if it.transaction != t || it.from != o.cur.generation {
+        return finish_open(o, 9, "rescue-ambiguous-generation (intent {it.transaction})")
+    }
     let e = txn.undo(c, it)
     if e != "" { return finish_open(o, 9, e) }
     print("rescue: undone {t}")

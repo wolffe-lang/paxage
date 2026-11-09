@@ -17,7 +17,9 @@ pub struct Op { index: int, action: str, path: str, old: Want, new: Want, backup
 pub struct Intent { transaction: str, from: int, to: int, database: str, ops: List[Op], error: str }
 
 /// An absent name.
-pub fn nothing() -> Want { Want { kind: "absent", mode: 0, uid: 0, gid: 0, length: 0, sha256: "", target: "" } }
+pub fn nothing() -> Want {
+    Want { kind: "absent", mode: 0, uid: 0, gid: 0, length: 0, sha256: "", target: "" }
+}
 
 fn sub(s: str, a: int, b: int) -> str { text.get(s, a, b) else |_| { "" } }
 
@@ -66,11 +68,22 @@ fn want_at(f: List[str], at: int) -> Want {
 
 fn want_ok(w: Want) -> bool {
     if w.mode < 0 || w.uid < 0 || w.gid < 0 || w.length < 0 { return false }
-    w.kind == "absent" || w.kind == "file" || w.kind == "dir" || w.kind == "symlink" || w.kind == "link"
+    w.kind == "absent" ||
+        w.kind == "file" ||
+        w.kind == "dir" ||
+        w.kind == "symlink" ||
+        w.kind == "link"
 }
 
 fn malformed(why: str) -> Intent {
-    Intent { transaction: "", from: -1, to: -1, database: "", ops: List[Op](), error: "rescue-malformed-intent {why}" }
+    Intent {
+        transaction: "",
+        from: -1,
+        to: -1,
+        database: "",
+        ops: List[Op](),
+        error: "rescue-malformed-intent {why}",
+    }
 }
 
 /// Parse and authenticate an intent by its trailer; any deviation refuses by name.
@@ -115,7 +128,7 @@ pub fn parse(bytes: List[byte]) -> Intent {
             new: want_at(f, 11),
             backup: f[18] == "1",
         }
-        if !want_ok(op.old) || !want_ok(op.new) || (f[18] != "0" && f[18] != "1") || op.path == "" {
+        if !want_ok(op.old) || !want_ok(op.new) || f[18] != "0" && f[18] != "1" || op.path == "" {
             return malformed("op {k}")
         }
         (mut out.ops).push(op)
