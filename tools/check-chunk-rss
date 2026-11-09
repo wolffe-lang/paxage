@@ -15,12 +15,40 @@ if __name__ == '__main__': sys.excepthook = _named_failure
 ROOT=Path(__file__).resolve().parents[1]
 PROBE=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'target/bin/chunk-probe'
 assert platform.system()=='Linux','memory-growing chunk witness is Linux-only'
+
+def gnu_time():
+    """GNU time from PATH (never a fixed /usr/bin path: NixOS hosts keep it elsewhere), and
+    the floor it imposes. GNU time forks the measured child, whose peak starts at time's
+    own RSS (ru_maxrss survives exec), so every reading is max(floor, peak). The floor is
+    time's own high-water mark (VmHWM, per process image), read from /proc while it waits
+    on a one-second child; it bounds the RSS any child inherits at fork."""
+    import shutil, time as clock
+    found=shutil.which('time')
+    assert found,('rss-gnu-time-missing','GNU time must be on PATH for the -v peak report')
+    p=subprocess.Popen(['prlimit','--as=2147483648','--',found,'-v','sleep','1'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    floor=0
+    while p.poll() is None:
+        try:
+            status=Path(f'/proc/{p.pid}/status').read_text()
+        except OSError:
+            break
+        name=re.search(r'^Name:\s*(\S+)',status,re.M)
+        hwm=re.search(r'^VmHWM:\s*(\d+)',status,re.M)
+        if name and hwm and name[1]=='time':floor=max(floor,int(hwm[1]))
+        clock.sleep(0.05)
+    out,err=p.communicate()
+    assert p.returncode==0 and re.search(r'Maximum resident set size \(kbytes\):',err.decode()),('rss-gnu-time-not-gnu',found,p.returncode,err[-200:])
+    assert floor>0,('rss-gnu-time-floor-unread',found)
+    return found,floor
+
+TIME,FLOOR=gnu_time()
+print(f'larder-only-reader rusage_parent={TIME} floor_kib={FLOOR}',flush=True)
 results=[]
 with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') as temp:
     path=Path(temp)/'payload'
     for size in [64*1024**2,1024**3]:
         path.touch();os.truncate(path,size)
-        cmd=['prlimit','--as=2147483648','--','/usr/bin/time','-v',str(PROBE),str(path),str(size)]
+        cmd=['prlimit','--as=2147483648','--',TIME,'-v',str(PROBE),str(path),str(size)]
         p=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         while True:
             try:stdout,stderr=p.communicate(timeout=30);break
@@ -31,5 +59,6 @@ with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') a
         results.append(rss)
         print(f'larder-only-reader bytes={size} peak_kib={rss} cap_bytes=2147483648 digest_calls=0',flush=True)
         path.unlink()
+assert results[0] > FLOOR,('larder-chunk-RSS-floor-masks-peak',FLOOR,results)
 assert results[1]-results[0] < 8192,('larder-chunk-RSS-grows-with-payload',results)
 print('PASS larder-only-chunk-RSS exit=0',flush=True)
