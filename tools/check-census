@@ -31,6 +31,7 @@ RECORDS = (
     'notes/pm03-trust-and-file-repository.md',
     'notes/pm04-linux-transactions.md',
     'notes/pm04b-recovery-and-power-cuts.md',
+    'notes/pm05a-the-rename.md',
     'notes/provenance.txt',
     'prediction.txt',
     'prediction-pm02.txt',
