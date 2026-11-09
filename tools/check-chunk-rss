@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larder-only reader RSS witness: no hashes, parsing or writes in measured child.
+"""Paxage-only reader RSS witness: no hashes, parsing or writes in measured child.
 Uses the production read_into byte pump. Every measured run is Linux-only, capped.
 """
 from pathlib import Path
@@ -7,7 +7,7 @@ import os, platform, re, subprocess, sys, tempfile
 import sys
 
 def _named_failure(kind, value, traceback):
-    print("FAIL larder-only-chunk-RSS", file=sys.stderr, flush=True)
+    print("FAIL paxage-only-chunk-RSS", file=sys.stderr, flush=True)
     sys.__excepthook__(kind, value, traceback)
 
 if __name__ == '__main__': sys.excepthook = _named_failure
@@ -42,7 +42,7 @@ def gnu_time():
     return found,floor
 
 TIME,FLOOR=gnu_time()
-print(f'larder-only-reader rusage_parent={TIME} floor_kib={FLOOR}',flush=True)
+print(f'paxage-only-reader rusage_parent={TIME} floor_kib={FLOOR}',flush=True)
 results=[]
 with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') as temp:
     path=Path(temp)/'payload'
@@ -52,13 +52,13 @@ with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'],prefix='chunk-rss-') a
         p=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         while True:
             try:stdout,stderr=p.communicate(timeout=30);break
-            except subprocess.TimeoutExpired:print(f'larder-only RSS waiting bytes={size} pid={p.pid}',flush=True)
-        assert p.returncode==0,('larder-chunk-RSS-cap',size,p.returncode,stderr)
+            except subprocess.TimeoutExpired:print(f'paxage-only RSS waiting bytes={size} pid={p.pid}',flush=True)
+        assert p.returncode==0,('paxage-chunk-RSS-cap',size,p.returncode,stderr)
         assert stdout==f'digest-free reader bytes={size}\n'.encode(),stdout
         rss=int(re.search(r'Maximum resident set size \(kbytes\):\s*(\d+)',stderr.decode())[1])
         results.append(rss)
-        print(f'larder-only-reader bytes={size} peak_kib={rss} cap_bytes=2147483648 digest_calls=0',flush=True)
+        print(f'paxage-only-reader bytes={size} peak_kib={rss} cap_bytes=2147483648 digest_calls=0',flush=True)
         path.unlink()
-assert results[0] > FLOOR,('larder-chunk-RSS-floor-masks-peak',FLOOR,results)
-assert results[1]-results[0] < 8192,('larder-chunk-RSS-grows-with-payload',results)
-print('PASS larder-only-chunk-RSS exit=0',flush=True)
+assert results[0] > FLOOR,('paxage-chunk-RSS-floor-masks-peak',FLOOR,results)
+assert results[1]-results[0] < 8192,('paxage-chunk-RSS-grows-with-payload',results)
+print('PASS paxage-only-chunk-RSS exit=0',flush=True)
