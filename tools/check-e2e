@@ -25,13 +25,21 @@ def run(args,code=0,out=None,err=None,binary=BINARY):
     if err is not None: assert p.stderr==err.encode(), (args,'stderr',p.stderr,err)
     return p
 
-usage='Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nMutating verbs install, remove, upgrade, sync are refused until pm04.\n'
+usage='Usage: larder (lrd) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo file:///PATH --root FILE --state DIR | update --repo file:///PATH --state DIR | fetch --repo file:///PATH --state DIR --cache DIR --target NAME [--stage DIR] [--now UTC]\nRoot: init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S | install --root DIR SPEC... | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR\n'
 for binary in [BINARY,LINK]:
-    run(['version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage)\n',err='',binary=binary)
-    run(['--version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage)\n',err='',binary=binary)
+    run(['version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
+    run(['--version'],out='larder 0.1.0 (lrd; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
     run(['--help'],out=usage,err='',binary=binary)
-    for verb in ['install','remove','upgrade','sync']:
-        run([verb,'--root','/do-not-touch'],6,out='',err=f'larder: {verb} refused: mutation arrives in pm04\n',binary=binary)
+    # C2: sync stays refused by name; the root verbs never touch the live root or a missing one.
+    run(['sync','--root','/do-not-touch'],6,out='',err='larder: sync refused: upgrade is the one refresh-and-upgrade operation\n',binary=binary)
+    for verb in ['install','remove','upgrade']:
+        names=[] if verb=='upgrade' else ['alpha']
+        run([verb,'--root','/do-not-touch',*names],1,out='',err='larder: root-missing\n',binary=binary)
+        run([verb,'--root','/',*names],1,out='',err='larder: live-root-is-pm05\n',binary=binary)
+        assert not Path('/do-not-touch').exists(), 'C2-no-root-created'
+    for verb in ['init','status','verify','rescue','autoremove']:
+        run([verb,'--root','/'],code={'init':2}.get(verb,1),binary=binary)
+        run([verb],2,out='',binary=binary)
     for args in [[],['unknown'],['compare','1-1'],['version','extra'],['resolve'],['resolve','--snapshot'],['resolve','--json','--json']]:
         p=run(args,2,binary=binary)
         assert p.stdout==b'' and p.stderr.startswith(b'larder: ') and usage.encode() in p.stderr
