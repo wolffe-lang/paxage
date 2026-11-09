@@ -24,10 +24,11 @@ pub fn parse(spec: str, fifo: str) -> Fail {
 /// True when the spec named a known action or trace.
 pub fn valid(spec: str, f: Fail) -> bool { spec == "" || f.trace || f.action != "" }
 
-fn wait(f: Fail) {
-    let fd = fs_open_mode(f.fifo, 0) else |_| { return }
-    let _line = fs_read_chunk(fd, 64) else |_| { List[byte]() }
+fn wait(f: Fail) -> bool {
+    let fd = fs_open_mode(f.fifo, 0) else |_| { return false }
+    let line = fs_read_chunk(fd, 64) else |_| { List[byte]() }
     fs_close(fd) else |_| {}
+    line.len >= 5 && line[0] == 99 as byte && line[1] == 114 as byte && line[2] == 97 as byte
 }
 
 /// Pass a named transition. Returns "" to continue, or the injected error's name.
@@ -47,7 +48,12 @@ pub fn hit(f: Fail, point: str, detail: str) -> str {
     if f.action == "enospc" { return "no-space" }
     if f.action == "pause" {
         eprint("PAUSED {point}")
-        wait(f)
+        // "crash" on the fifo ends the paused owner by a trap, so a lock row can show
+        // an abrupt owner death without the test signalling any process.
+        if wait(f) {
+            eprint("CRASH {point}")
+            assert(false, "failpoint crash after pause")
+        }
     }
     ""
 }
