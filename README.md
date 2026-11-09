@@ -3,8 +3,10 @@
 PAX's package manager, also invoked as `lrd`. This repository is **private**.
 The current 0.1.0 implementation validates formats, orders versions, plans
 dependencies, packs canonical payloads, publishes test-only signed file repositories,
-and bootstraps/updates/fetches through a bounded TUF profile before isolated staging.
-It cannot install, remove, upgrade or sync. Signing keys must be marked `test-only`;
+bootstraps/updates/fetches through a bounded TUF profile, and installs, upgrades and
+removes packages as durable transactions over a synthetic Linux root (`--root`),
+with a rescue entry. The live root `/` is refused until PAX's boot recovery.
+`sync` is refused: `upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
 production signing remains out of scope. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
@@ -17,18 +19,23 @@ Supported CI hosts: Linux x86-64 and macOS arm64. No other runtime dependencies
 beyond the digest-pinned Wolf release/runtime and std tree.
 
 ```sh
-mkdir -p "$HOME/lanes/pm03/tmp"
-export TMPDIR="$HOME/lanes/pm03/tmp"
+mkdir -p "$HOME/lanes/pm04/tmp"
+export TMPDIR="$HOME/lanes/pm04/tmp"
 tools/fetch-toolchain
 tools/build
 target/bin/larder version
 target/bin/lrd check-manifest tests/manifests/valid.manifest
 target/bin/larder compare 1~rc-1 1-1
 target/bin/larder resolve --snapshot tests/snapshots/basic --want app --json
+# A synthetic root from a file:// repository (see TRANSACTIONS):
+target/bin/lrd init --root ROOT --repo file:///REPO --pinned-root ROOT.json --arch x86_64 --slot default
+target/bin/lrd install --root ROOT NAME
+target/bin/lrd status --root ROOT
+target/bin/lrd rescue --root ROOT
 ```
 
-`tools/build` produces one native executable and an `lrd` symbolic link; no
-system installation is performed. Both names have identical behavior and every
+`tools/build` produces one native executable, an `lrd` symbolic link and the
+test-only `larder-failpoint`; no system installation is performed. Both names have identical behavior and every
 diagnostic is prefixed `larder:`. On shared development hosts, build a committed
 copy behind its host lock and memory/disk gates; see the lane contract.
 
@@ -44,6 +51,9 @@ copy behind its host lock and memory/disk gates; see the lane contract.
   policy and budget refusal distinct from exhaustive unsatisfiability.
 - [TRUST](docs/TRUST.md): canonical signed spans, four-role metadata, rotation,
   clock/version floors, atomic generations, verified cache and test-only keys.
+- [TRANSACTIONS](docs/TRANSACTIONS.md): the lock inode, qualification (ext3/ext4
+  with an active journal), the descriptor walk, generations, the intent, undo and
+  rescue, actions, ownership and config rules, and the old-or-new check.
 - [CLI](docs/CLI.md): verbs, request syntax and exit codes.
 
 A checked manifest is syntactically valid, **not authenticated**. `stage` accepts
@@ -54,13 +64,16 @@ swap race; use a private empty caller-owned staging directory. [CLI C4–C7](doc
 details the interface, safety refusals, failure state and large-file measurement policy.
 `fetch --stage` authenticates payload, manifest and buildinfo through signed
 metadata and binds the manifest again at staging consumption. The client supports
-only literal `file://` URLs and a caller-supplied pinned root. Transactions and
-network transports remain later work. Trusted local state must not be coherently
+only literal `file://` URLs and a caller-supplied pinned root. Network transports
+remain later work. Transactions (TRANSACTIONS X1–X10) write a root only through
+handles held from its root directory, take the root's persistent lock, refuse an
+unjournalled filesystem, and recover every interrupted step to the old or the new
+generation. Process cuts are witnessed here; power cuts under QEMU are pm04b's. Trusted local state must not be coherently
 replaced by an actor able to write it; T20 documents this limit. Malformed state
 refuses without repair, directing an explicit re-bootstrap into a new empty directory.
-Reserved paths
-`/var/lib/larder/`, `/var/cache/larder/`, `/etc/larder/` and `.larder-new` are
-specification only; this program writes none of them.
+A root's state lives in `ROOT/var/lib/larder/` and its cache in
+`ROOT/var/cache/larder/`; `.larder-new` names config proposals. `/etc/larder/`
+remains reserved and unwritten.
 
 ## Tests and contributing
 
@@ -94,6 +107,16 @@ the pinned offline unprivileged kasumi container. Mac runs use bounded rows and
 the payload roundtrip-only path, retaining the canonical-payload identity artifact;
 growth/fuzz/timing skips are explicit. Coherent local-storage replay has a labelled
 limit witness, not a claimed protection gate.
+
+Transaction rows (`tools/check-transactions`) build a signed fixture repository and
+drive every root verb. Each named hook of install, upgrade, remove and rescue is
+crashed in turn (a runtime trap), and `rescue` runs twice. The digests must be
+identical and equal the untouched root's or the completed run's. Injected EIO and
+ENOSPC, ancestor swaps for links, lock contention and lock-owner death, conflicts,
+the three config cases, residuals, purge and an orphan cycle are covered too.
+They run as the caller (owners logical) on every host. A second take runs as root
+(owners applied): in a rootless container on hasu, or under `sudo` on CI Linux.
+The Mac skips the root take and the tmpfs refusal loudly.
 
 Unlabelled PRs run one cheap job. The `ci` or `full-matrix` label runs the
 full platform-aware gate on Linux x86-64 and macOS arm64. Trunk pushes run it
