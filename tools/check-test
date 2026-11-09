@@ -5,7 +5,7 @@ export LARDER_ROOT
 cd "$LARDER_ROOT"
 . tools/lib-toolchain.sh
 mkdir -p target/tests
-for row in version literal solver payload; do
+for row in version literal solver payload transaction; do
     rm -rf "$LARDER_ROOT/src/.lu-cache"
     echo "RUN unit-$row"
     result=0
