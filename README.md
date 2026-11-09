@@ -53,7 +53,8 @@ copy behind its host lock and memory/disk gates; see the lane contract.
   clock/version floors, atomic generations, verified cache and test-only keys.
 - [TRANSACTIONS](docs/TRANSACTIONS.md): the lock inode, qualification (ext3/ext4
   with an active journal), the descriptor walk, generations, the intent, undo and
-  rescue, actions, ownership and config rules, and the old-or-new check.
+  rescue, actions, ownership and config rules, the old-or-new check, and the
+  power-cut witness (X11).
 - [CLI](docs/CLI.md): verbs, request syntax and exit codes.
 
 A checked manifest is syntactically valid, **not authenticated**. `stage` accepts
@@ -65,10 +66,10 @@ details the interface, safety refusals, failure state and large-file measurement
 `fetch --stage` authenticates payload, manifest and buildinfo through signed
 metadata and binds the manifest again at staging consumption. The client supports
 only literal `file://` URLs and a caller-supplied pinned root. Network transports
-remain later work. Transactions (TRANSACTIONS X1–X10) write a root only through
+remain later work. Transactions (TRANSACTIONS X1–X11) write a root only through
 handles held from its root directory, take the root's persistent lock, refuse an
 unjournalled filesystem, and recover every interrupted step to the old or the new
-generation. Process cuts are witnessed here; power cuts under QEMU are pm04b's. Trusted local state must not be coherently
+generation, after a process cut or a power cut. Trusted local state must not be coherently
 replaced by an actor able to write it; T20 documents this limit. Malformed state
 refuses without repair, directing an explicit re-bootstrap into a new empty directory.
 A root's state lives in `ROOT/var/lib/larder/` and its cache in
@@ -117,6 +118,15 @@ the three config cases, residuals, purge and an orphan cycle are covered too.
 They run as the caller (owners logical) on every host. A second take runs as root
 (owners applied): in a rootless container on hasu, or under `sudo` on CI Linux.
 The Mac skips the root take and the tmpfs refusal loudly.
+
+The power-cut witness (`tools/check-powercut`, TRANSACTIONS X11) runs on a Linux
+take with KVM and the staged Ubuntu 24.04 guest. An NBD recorder logs every block
+write and flush the guest issues. Crash states are built at and between every
+durable step, with torn sectors, on ext4 and ext3. Each state must recover to the
+old or the new generation, twice identically and fsck-clean. Real EIO and ENOSPC,
+two writers, the ext2 refusal and the transaction rows in the guest are covered
+too. Its host rows (the recorder's protocol and the crash-state synthesis) run
+everywhere. CI and the Mac skip the guest loudly.
 
 Unlabelled PRs run one cheap job. The `ci` or `full-matrix` label runs the
 full platform-aware gate on Linux x86-64 and macOS arm64. Trunk pushes run it
