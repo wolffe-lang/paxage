@@ -1,6 +1,8 @@
-# larder
+# paxage
 
-PAX's package manager, also invoked as `lrd`. This repository is **private**.
+formerly larder, renamed 2026-11-09
+
+PAX's package manager, also invoked as `pxg`. This repository is **private**.
 The current 0.1.0 implementation validates formats, orders versions, plans
 dependencies, packs canonical payloads, publishes test-only signed file repositories,
 bootstraps/updates/fetches through a bounded TUF profile, and installs, upgrades and
@@ -23,20 +25,20 @@ mkdir -p "$HOME/lanes/pm04/tmp"
 export TMPDIR="$HOME/lanes/pm04/tmp"
 tools/fetch-toolchain
 tools/build
-target/bin/larder version
-target/bin/lrd check-manifest tests/manifests/valid.manifest
-target/bin/larder compare 1~rc-1 1-1
-target/bin/larder resolve --snapshot tests/snapshots/basic --want app --json
+target/bin/paxage version
+target/bin/pxg check-manifest tests/manifests/valid.manifest
+target/bin/paxage compare 1~rc-1 1-1
+target/bin/paxage resolve --snapshot tests/snapshots/basic --want app --json
 # A synthetic root from a file:// repository (see TRANSACTIONS):
-target/bin/lrd init --root ROOT --repo file:///REPO --pinned-root ROOT.json --arch x86_64 --slot default
-target/bin/lrd install --root ROOT NAME
-target/bin/lrd status --root ROOT
-target/bin/lrd rescue --root ROOT
+target/bin/pxg init --root ROOT --repo file:///REPO --pinned-root ROOT.json --arch x86_64 --slot default
+target/bin/pxg install --root ROOT NAME
+target/bin/pxg status --root ROOT
+target/bin/pxg rescue --root ROOT
 ```
 
-`tools/build` produces one native executable, an `lrd` symbolic link and the
-test-only `larder-failpoint`; no system installation is performed. Both names have identical behavior and every
-diagnostic is prefixed `larder:`. On shared development hosts, build a committed
+`tools/build` produces one native executable, a `pxg` symbolic link and the
+test-only `paxage-failpoint`; no system installation is performed. Both names have identical behavior and every
+diagnostic is prefixed `paxage:`. On shared development hosts, build a committed
 copy behind its host lock and memory/disk gates; see the lane contract.
 
 ## Format and boundaries
@@ -44,7 +46,7 @@ copy behind its host lock and memory/disk gates; see the lane contract.
 - [FORMAT](docs/FORMAT.md): three immutable targets, strict Wolf-literal data,
   complete manifest/file records and the restricted POSIX pax reader/writer.
 - [RECIPE](docs/RECIPE.md): declared inputs/environment/argv, no install scripts.
-- [VERSION](docs/VERSION.md): epoch:upstream-release, larder's own order, not
+- [VERSION](docs/VERSION.md): epoch:upstream-release, paxage's own order, not
   Arch/RPM/Debian compatibility. Digit runs never use a bounded integer.
 - [SOLVER](docs/SOLVER.md): immutable bounded snapshots, complete backtracking,
   latest compatible choices, independent checker, holds/ABI/optional/replacement
@@ -72,8 +74,8 @@ unjournalled filesystem, and recover every interrupted step to the old or the ne
 generation, after a process cut or a power cut. Trusted local state must not be coherently
 replaced by an actor able to write it; T20 documents this limit. Malformed state
 refuses without repair, directing an explicit re-bootstrap into a new empty directory.
-A root's state lives in `ROOT/var/lib/larder/` and its cache in
-`ROOT/var/cache/larder/`; `.larder-new` names config proposals. `/etc/larder/`
+A root's state lives in `ROOT/var/lib/paxage/` and its cache in
+`ROOT/var/cache/paxage/`; `.paxage-new` names config proposals. `/etc/paxage/`
 remains reserved and unwritten.
 
 ## Tests and contributing
@@ -84,7 +86,11 @@ tools/gauntlet
 
 The stopping gauntlet prints flat `START` / `END ... exit=N secs=S` steps,
 retains subtest PASS/FAIL names, and runs fmt, build, unit
-properties and CLI fixture e2e. Units exhaustively enumerate 64 subsets for each
+properties and CLI fixture e2e. `census` fails if the former name or its short
+command reappears in a tracked file or path outside the records it lists (the lane
+notes and predictions); `names` holds the executables, the `paxage:` prefix, the
+state, cache and reserved config paths, the `.paxage-new` proposal, the intent
+header, the temporaries and `PAXAGE_FAILPOINT`, with no old name as an alias. Units exhaustively enumerate 64 subsets for each
 of 10,000 seeded small graphs, independently comparing the abstract oracle,
 checker and solver; the seed is printed. Hand-derived version vectors have no
 foreign implementation oracle. CLI fixtures exercise both executable names,
@@ -143,7 +149,7 @@ A deliberate off-line break belongs on its own lane-prefixed `*-plant-*` branch,
 pushed without a PR. Record its named failing row locally; never merge a plant.
 No foreign package-manager, comparator, resolver, archiver,
 compressor or signature implementation source may be consulted, whatever its
-licence. The org's own wolf/std/larder sources are permitted; golden vectors derive
+licence. The org's own wolf/std/paxage sources are permitted; golden vectors derive
 from specifications alone.
 
 ## Licence

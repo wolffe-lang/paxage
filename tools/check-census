@@ -42,6 +42,7 @@ RECORDS = (
 
 # Exact lines a live file may carry: (path, the whole line).
 LINES = (
+    ('README.md', 'formerly larder, renamed 2026-11-09'),
 )
 
 
