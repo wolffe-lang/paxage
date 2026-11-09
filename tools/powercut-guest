@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""The guest side of the power-cut witness (pm04b, prediction-pm04b.txt section 1).
+
+It runs as root in the staged Ubuntu 24.04 guest, under /mnt/p/boot.sh, which
+init= starts from the payload tar on the second virtio disk. Disks are found by
+serial in /sys/block/vd*/serial:
+- pcdata, the recorder's data export;
+- pcmark, the recorder's mark export;
+- pcscratch, a plain disk for the ENOSPC and qualification rows;
+- pcmatrix, a plain disk for pm04a's matrix.
+It prints PASS and FAIL rows with their final names, and GUEST lines that the host
+driver (tools/check-powercut) reads. Phases (job.json):
+- run: the recorded scenarios, the matrix, ENOSPC and qualification;
+- eio: one recorded scenario with the recorder armed to fail one request;
+- check: rebuild every planned crash state, recover it twice and judge it.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+HERE = Path(__file__).resolve().parent
+LARDER = HERE.parent
+P = Path('/mnt/p')
+MOUNT_OPTS = 'data=ordered,noauto_da_alloc,noatime'
+
+
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+ct = load('check_transactions', HERE / 'check-transactions')
+ct.KEEP_GOING = True
+synth = load('powercut_synth', HERE / 'powercut-synth')
+FAILED = []
+
+
+def say(line):
+    print(line, flush=True)
+
+
+def emit(ok, row, detail=''):
+    if ok:
+        say(f'PASS {row}')
+    else:
+        say(f'FAIL {row}' + (f' {detail}' if detail else ''))
+        FAILED.append(row)
+    return ok
+
+
+def run(*args, timeout=600, env=None):
+    return subprocess.run([str(a) for a in args], capture_output=True, text=True, timeout=timeout, env=env)
+
+
+def disks():
+    out = {}
+    for d in sorted(Path('/sys/block').glob('vd*')):
+        try:
+            out[(d / 'serial').read_text().strip()] = f'/dev/{d.name}'
+        except OSError:
+            pass
+    return out
+
+
+def mark(dev, text):
+    fd = os.open(dev, os.O_WRONLY)
+    try:
+        os.pwrite(fd, (text + '\n').encode().ljust(512, b'\0')[:512], 0)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def mkfs(fs, dev, *extra):
+    lazy = [] if fs == 'ext2' else ['-E', 'lazy_itable_init=0,lazy_journal_init=0']
+    p = run(f'mkfs.{fs}', '-q', '-F', *lazy, *extra, dev)
+    if p.returncode != 0:
+        raise SystemExit(f'FAIL vm-mkfs-{fs} {p.stderr[-300:]!r}')
+
+
+def mount(fs, dev, at, opts=MOUNT_OPTS, loop=False):
+    Path(at).mkdir(parents=True, exist_ok=True)
+    o = ('loop,' if loop else '') + (opts if fs != 'ext2' else 'noatime')
+    return run('mount', '-t', fs, '-o', o, dev, at)
+
+
+def umount(at):
+    return run('umount', at)
+
+
+def setup_repo():
+    fixture = ct.fixture_dir(P / 'fixture')
+    ct.fixture_dir(fixture / 'packages')
+    repo = ct.Repo(fixture)
+    repo.setup()
+    repo.publish(ct.universe())
+    return repo
+
+
+def roots_on(repo, work):
+    ct.WORK = Path(work)
+    roots = ct.Roots(repo)
+    roots.outside.mkdir(parents=True, exist_ok=True)
+    return roots
+
+
+def paused(root, failpoint, *args):
+    fifo = P / f'fifo-{time.monotonic_ns()}'
+    os.mkfifo(fifo, 0o600)
+    env = dict(os.environ, LARDER_FAILPOINT=f'{failpoint}:pause', LARDER_FAILPOINT_FIFO=str(fifo))
+    proc = subprocess.Popen([str(ct.FPBIN), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
+    line = ''
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        line = proc.stderr.readline()
+        if line.startswith('PAUSED ') or not line:
+            break
+    return proc, fifo, line.strip()
+
+
+def resume(proc, fifo, word='go'):
+    with open(fifo, 'w') as f:
+        f.write(word + '\n')
+    out, err = proc.communicate(timeout=300)
+    os.unlink(fifo)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+def marked(verb_args, markdev):
+    return ct.lrd(*verb_args, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'mark', 'LARDER_FAILPOINT_MARK': markdev})
+
+
+def scenario_line(**kw):
+    say('GUEST SCENARIO ' + json.dumps(kw, sort_keys=True))
+
+
+def trace_names(roots, base, args):
+    probe = roots.copy(base, 'trace')
+    p = ct.lrd(*args(probe), binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'trace'})
+    return [name for name, _ in ct.trace_points(p)]
+
+
+def recorded(name, root, args, markdev, fs, expect_rc=0, old=None):
+    """setup mark, old digest, the marked run, end mark, new digest."""
+    os.sync()
+    mark(markdev, f'HARNESS setup {name}')
+    ref_old = old if old is not None else ct.tree_digest(root)
+    p = marked(args, markdev)
+    mark(markdev, f'HARNESS end {name}')
+    new = ct.tree_digest(root)
+    marks = [line.split(' ', 2)[1] for line in p.stderr.splitlines() if line.startswith('MARK ')]
+    failed = [line for line in p.stderr.splitlines() if line.startswith('MARK-FAILED')]
+    scenario_line(name=name, fs=fs, root=str(Path(root).relative_to('/mnt/d')), old=ref_old, new=new,
+                  rc=p.returncode, marks=marks)
+    emit(p.returncode == expect_rc and marks and not failed, f'powercut-{fs}-{name}-run',
+         f'rc={p.returncode} marks={len(marks)} failed={failed[:2]} stderr={p.stderr[-300:]!r}')
+    return ref_old, new, p
+
+
+def phase_run(job):
+    fs, d = job['fs'], disks()
+    markdev = d['pcmark']
+    mkfs(fs, d['pcdata'])
+    p = mount(fs, d['pcdata'], '/mnt/d')
+    if p.returncode != 0:
+        raise SystemExit(f'FAIL vm-mount-{fs} {p.stderr!r}')
+    repo = setup_repo()
+    roots = roots_on(repo, '/mnt/d')
+    root, p = roots.init('qualified')
+    emit(p.returncode == 0, f'vm-fs-{fs}-qualified', ct.describe(p))
+    NOW = ct.NOW
+    # install, remove and the rescue that undoes a crashed remove, on the base universe.
+    base = roots.ready('pc-install')
+    recorded('install', base, ['install', '--root', base, 'alpha', '--now', NOW], markdev, fs)
+    base = roots.ready('pc-remove', 'alpha')
+    recorded('remove', base, ['remove', '--root', base, 'alpha'], markdev, fs)
+    stuck = roots.ready('pc-rescue-undo', 'alpha')
+    old = ct.tree_digest(stuck)
+    names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
+    cut = [n for n in names if n.startswith('apply:')][-1]
+    q = ct.lrd('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+    emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-undo-crash', ct.describe(q))
+    _, after, _ = recorded('rescue-undo', stuck, ['rescue', '--root', stuck], markdev, fs, old=old)
+    emit(after == old, f'powercut-{fs}-rescue-undo-restores-old', f'after={after[:12]} old={old[:12]}')
+    # upgrade, and the rescue that finishes a committed upgrade.
+    repo.publish(ct.universe(upgraded=True))
+    base = roots.ready('pc-upgrade', 'alpha=1-1')
+    _, upgraded, _ = recorded('upgrade', base, ['upgrade', '--root', base, '--now', NOW], markdev, fs)
+    done = roots.ready('pc-rescue-finish', 'alpha=1-1')
+    old = ct.tree_digest(done)
+    q = ct.lrd('upgrade', '--root', done, '--now', NOW, binary=ct.FPBIN, env={'LARDER_FAILPOINT': 'commit:crash'})
+    emit(q.returncode == ct.CRASH_EXIT, f'powercut-{fs}-rescue-finish-crash', ct.describe(q))
+    _, finished, _ = recorded('rescue-finish', done, ['rescue', '--root', done], markdev, fs, old=old)
+    emit(finished == upgraded, f'powercut-{fs}-rescue-finish-completes',
+         f'finished={finished[:12]} upgraded={upgraded[:12]}')
+    # Two writers; the power goes while the owner holds the lock.
+    base = roots.ready('pc-concurrent')
+    os.sync()
+    mark(markdev, 'HARNESS setup concurrent')
+    old = ct.tree_digest(base)
+    owner, fifo, line = paused(base, 'apply:0:temp', 'install', '--root', base, 'alpha', '--now', NOW)
+    start = time.monotonic()
+    second = ct.lrd('install', '--root', base, 'lone', '--now', NOW)
+    secs = time.monotonic() - start
+    emit(line.startswith('PAUSED') and second.returncode == 7 and secs < 5, f'vm-concurrent-{fs}-contention',
+         f'owner={line!r} second={ct.describe(second)} secs={secs:.2f}')
+    mark(markdev, 'HARNESS paused concurrent')
+    resume(owner, fifo, 'crash')
+    mark(markdev, 'HARNESS end concurrent')
+    scenario_line(name='concurrent', fs=fs, root=str(Path(base).relative_to('/mnt/d')), old=old, new=old, rc=0,
+                  marks=['paused'])
+    if job.get('enospc'):
+        enospc(job, repo, d['pcscratch'])
+    if job.get('qualify'):
+        qualify(repo, d['pcscratch'])
+    if job.get('matrix'):
+        matrix(fs, d['pcmatrix'])
+
+
+def fill(path, leave=0):
+    """Fill the filesystem holding path until ENOSPC (or until `leave` bytes stay free)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        for chunk in (1 << 20, 1 << 16, 4096, 512):
+            buf = b'\0' * chunk
+            while True:
+                if leave:
+                    st = os.statvfs(os.path.dirname(path))
+                    if st.f_bavail * st.f_frsize - chunk < leave:
+                        break
+                try:
+                    os.write(fd, buf)
+                except OSError:
+                    break
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    finally:
+        os.close(fd)
+
+
+def enospc(job, repo, dev):
+    fs = job['fs']
+    mkfs(fs, dev, '-m', '0')
+    if mount(fs, dev, '/mnt/e').returncode != 0:
+        raise SystemExit(f'FAIL vm-enospc-{fs}-mount')
+    roots = roots_on(repo, '/mnt/e')
+    NOW = ct.NOW
+    for step in ('backup:0', 'apply:0:temp', 'generation'):
+        root = roots.ready(f'enospc-{step.replace(":", "-")}', 'alpha=1-1')
+        old = ct.tree_digest(root)
+        proc, fifo, line = paused(root, step, 'upgrade', '--root', root, '--now', NOW)
+        filler = Path('/mnt/e/filler')
+        fill(str(filler))
+        p = resume(proc, fifo)
+        filler.unlink()
+        os.sync()
+        row = f'vm-enospc-{fs}-upgrade-{step}'
+        emit(line.startswith('PAUSED') and p.returncode == 1 and 'no-space' in p.stderr, row,
+             f'paused={line!r} {ct.describe(p)}')
+        first = ct.lrd('rescue', '--root', root)
+        one = ct.tree_digest(root)
+        second = ct.lrd('rescue', '--root', root)
+        two = ct.tree_digest(root)
+        emit(first.returncode == 0 and second.returncode == 0 and one == two == old, f'{row}-recovered',
+             f'first={ct.describe(first)} same={one == two} old={one == old}')
+    if job.get('capacity'):
+        root = roots.ready('capacity', 'alpha=1-1')
+        old = ct.tree_digest(root)
+        filler = Path('/mnt/e/filler')
+        fill(str(filler), leave=48 << 10)
+        p = ct.lrd('upgrade', '--root', root, '--now', NOW)
+        filler.unlink()
+        left = list((Path(root) / 'var/lib/larder/transactions').iterdir())
+        emit(p.returncode == 1 and 'no-space: need' in p.stderr and not left and ct.tree_digest(root) == old,
+             'vm-enospc-capacity', f'left={left} {ct.describe(p)}')
+    umount('/mnt/e')
+
+
+def qualify(repo, dev):
+    for fs, extra, row in (('ext2', (), 'vm-fs-ext2-refused'), ('ext4', ('-O', '^has_journal'), 'vm-fs-ext4-nojournal-refused')):
+        mkfs(fs, dev, *extra)
+        p = mount(fs, dev, '/mnt/q')
+        if p.returncode != 0:
+            emit(False, row, f'mount {p.stderr!r}')
+            continue
+        roots = roots_on(repo, '/mnt/q')
+        root, q = roots.init('unqualified')
+        emit(q.returncode == 1 and 'unqualified-filesystem' in q.stderr, row, ct.describe(q))
+        umount('/mnt/q')
+
+
+def matrix(fs, dev):
+    mkfs(fs, dev)
+    if mount(fs, dev, '/mnt/m').returncode != 0:
+        raise SystemExit(f'FAIL vm-matrix-{fs}-mount')
+    checkout = Path('/mnt/m/larder')
+    (checkout / 'target').mkdir(parents=True)
+    run('cp', '-a', LARDER / 'tools', checkout / 'tools')
+    run('cp', '-a', LARDER / 'target/bin', checkout / 'target/bin')
+    unq = P / 'unqualified'
+    unq.mkdir()
+    env = dict(os.environ, LARDER_UNQUALIFIED_ROOT=str(unq))
+    proc = subprocess.Popen(['python3', '-I', str(checkout / 'tools/check-transactions'), '--all'],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    passes, fails = 0, 0
+    for line in proc.stdout:
+        line = line.rstrip('\n')
+        if line.startswith('PASS ') or line.startswith('FAIL '):
+            word, rest = line.split(' ', 1)
+            passes += word == 'PASS'
+            fails += word == 'FAIL'
+            if word == 'FAIL':
+                say(f'FAIL vm-matrix-{fs}:{rest}')
+                FAILED.append(f'vm-matrix-{fs}:{rest.split()[0]}')
+        elif line.startswith('transactions:'):
+            say(f'GUEST matrix-{fs} {line}')
+    rc = proc.wait()
+    emit(rc == 0 and fails == 0, f'vm-matrix-{fs}', f'rc={rc} pass={passes} fail={fails}')
+    say(f'GUEST matrix-{fs} pass={passes} fail={fails}')
+    umount('/mnt/m')
+
+
+def phase_eio(job):
+    fs, d = job['fs'], disks()
+    markdev = d['pcmark']
+    mkfs(fs, d['pcdata'])
+    if mount(fs, d['pcdata'], '/mnt/d').returncode != 0:
+        raise SystemExit(f'FAIL vm-mount-{fs}')
+    repo = setup_repo()
+    roots = roots_on(repo, '/mnt/d')
+    NOW = ct.NOW
+    name = job['scenario']
+    if job['verb'] == 'rescue':
+        stuck = roots.ready('eio-rescue', 'alpha')
+        old = ct.tree_digest(stuck)
+        names = trace_names(roots, stuck, lambda r: ['remove', '--root', r, 'alpha'])
+        cut = [n for n in names if n.startswith('apply:')][-1]
+        ct.lrd('remove', '--root', stuck, 'alpha', binary=ct.FPBIN, env={'LARDER_FAILPOINT': f'{cut}:crash'})
+        root, args = stuck, ['rescue', '--root', stuck]
+    else:
+        repo.publish(ct.universe(upgraded=True))
+        root = roots.ready('eio-upgrade', 'alpha=1-1')
+        old = ct.tree_digest(root)
+        args = ['upgrade', '--root', root, '--now', NOW]
+    os.sync()
+    mark(markdev, f'HARNESS setup {name}')
+    p = marked(args, markdev)
+    try:
+        mark(markdev, f'HARNESS end {name}')
+    except OSError:
+        pass
+    kernel = run('dmesg').stdout
+    aborted = 'Aborting journal' in kernel or 'Detected aborted journal' in kernel
+    scenario_line(name=name, fs=fs, root=str(Path(root).relative_to('/mnt/d')), old=old, new=old,
+                  rc=p.returncode, marks=[], aborted=aborted)
+    emit(p.returncode != 0 and 'larder' in p.stderr, f'vm-eio-{fs}-{job["row"]}-refused',
+         f'aborted={aborted} {ct.describe(p)}')
+
+
+def recover(fs, img, rel, want, old, new, preen):
+    """Mount (journal replay), rescue twice, remount, and judge one state."""
+    detail = []
+    if preen:
+        p = run('e2fsck', '-p', img)
+        if p.returncode > 1:
+            return False, f'preen rc={p.returncode} {p.stdout[-200:]!r}'
+    m = '/mnt/s/m'
+    p = mount(fs, img, m, loop=True)
+    if p.returncode != 0:
+        return False, f'mount {p.stderr.strip()!r}'
+    try:
+        root = Path(m) / rel
+        if not root.is_dir():
+            return False, f'root {rel} missing'
+        first = ct.lrd('rescue', '--root', root)
+        one = ct.tree_digest(root)
+        second = ct.lrd('rescue', '--root', root)
+        two = ct.tree_digest(root)
+        verify = ct.lrd('verify', '--root', root)
+        pending = [x.name for x in (root / 'var/lib/larder/transactions').iterdir()] \
+            if (root / 'var/lib/larder/transactions').is_dir() else ['(no transactions dir)']
+        temps = [str(q.relative_to(root)) for q in root.rglob('.larder-t*')]
+    finally:
+        umount(m)
+    p = mount(fs, img, m, loop=True)
+    if p.returncode != 0:
+        return False, f'remount {p.stderr.strip()!r}'
+    try:
+        three = ct.tree_digest(Path(m) / rel)
+    finally:
+        umount(m)
+    fsck = run('e2fsck', '-fn', img)
+    want_ok = {'old': one == old, 'new': one == new, 'either': one in (old, new)}[want]
+    good = (first.returncode == 0 and second.returncode == 0 and 'nothing to do' in second.stdout
+            and one == two == three and want_ok and verify.returncode == 0 and not pending and not temps
+            and fsck.returncode == 0)
+    if not good:
+        detail = (f'first={ct.describe(first)} second_rc={second.returncode} same12={one == two} '
+                  f'same13={one == three} want={want} is_old={one == old} is_new={one == new} '
+                  f'verify={verify.returncode} pending={pending} temps={temps[:3]} fsck={fsck.returncode}')
+    return good, detail
+
+
+def phase_check(job):
+    size = job['size']
+    Path('/mnt/s').mkdir(exist_ok=True)
+    img = '/mnt/s/state.img'
+    for s in job['sets']:
+        log = synth.Log(P / s['log'])
+        ops = log.ops()
+        rows = {}
+        base, base_flush = bytearray(size), -1
+        states = sorted(s['states'], key=lambda st: (st['flush'], st['cut']))
+        say(f'GUEST check {s["scenario"]} fs={s["fs"]} states={len(states)}')
+        for st in states:
+            if st['flush'] != base_flush:
+                for e in ops:
+                    if e['cmd'] == 'write' and base_flush <= e['seq'] < st['flush']:
+                        data = log.payload(e)
+                        base[e['off']:e['off'] + len(data)] = data
+                base_flush = st['flush']
+            data = synth.image(log, size, st, ops, base=base)
+            with open(img, 'wb') as f:
+                f.write(data)
+            verdicts = {}
+            for row, want in st['labels']:
+                if want not in verdicts:
+                    verdicts[want] = recover(s['fs'], img, s['root'], want, s['old'], s['new'], s.get('preen', False))
+                    with open(img, 'wb') as f:
+                        f.write(data)
+                good, detail = verdicts[want]
+                prev = rows.get(row)
+                if prev is None or (prev[0] and not good):
+                    rows[row] = (good, f'key={st["key"]} cut={st["cut"]} picks={len(st["picks"])} {detail}')
+        for row, (good, detail) in rows.items():
+            emit(good, row, detail)
+        say(f'GUEST checked {s["scenario"]} fs={s["fs"]} rows={len(rows)} red={sum(1 for g, _ in rows.values() if not g)}')
+
+
+def main():
+    job = json.loads(Path(sys.argv[1]).read_text())
+    say(f'GUEST start phase={job["phase"]} kernel={os.uname().release}')
+    bins = {name: hashlib.sha256((LARDER / 'target/bin' / name).read_bytes()).hexdigest()
+            for name in ('larder', 'larder-failpoint')}
+    say('GUEST binaries ' + json.dumps(bins, sort_keys=True))
+    try:
+        {'run': phase_run, 'eio': phase_eio, 'check': phase_check}[job['phase']](job)
+    except SystemExit as e:
+        say(str(e) if e.code not in (None, 0, 1) else f'FAIL guest-phase-{job["phase"]} exit={e.code}')
+        FAILED.append('guest-phase')
+    except Exception as e:  # a harness fault is a red row, never a silent pass
+        say(f'FAIL guest-phase-{job["phase"]} {type(e).__name__}: {e}')
+        FAILED.append('guest-phase')
+    say(f'GUEST done phase={job["phase"]} red={len(FAILED)}')
+    return 1 if FAILED else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
