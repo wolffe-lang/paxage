@@ -25,7 +25,7 @@ Diagnostics start `paxage:` regardless of invocation name. Usage names both.
 
 `sync` refuses by name, exit 6: `upgrade` is the one refresh-and-upgrade operation.
 `install`, `remove` and `upgrade` act only on a `--root` synthetic root (C12–C16);
-`--root /` refuses `live-root-is-pm05`. `<file>.larder-new` is a three-way config
+`--root /` refuses `live-root-is-pm05`. `<file>.paxage-new` is a three-way config
 proposal (TRANSACTIONS X9).
 
 Exit 0 success; 1 malformed data, I/O or safety refusal; 2 usage; 3 proven

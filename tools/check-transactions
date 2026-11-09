@@ -627,7 +627,7 @@ def upgraded_root(r, label, local_conf=None, delete_conf=False, proposal=False, 
     if delete_conf:
         conf.unlink()
     if proposal:
-        (root / 'etc/alpha.conf.larder-new').write_bytes(b'mine\n')
+        (root / 'etc/alpha.conf.paxage-new').write_bytes(b'mine\n')
     r.repo.publish(universe(upgraded=True, alphas=alphas))
     return root
 
@@ -668,7 +668,7 @@ def config_kept(r):
         ok(pxg('upgrade', '--root', root, '--now', NOW), 'config-upstream-unchanged-kept-run')
         check((root / 'usr/bin/alpha').read_bytes() == b'alpha 1.2\n'
               and (root / 'etc/alpha.conf').read_bytes() == b'mine\n'
-              and not (root / 'etc/alpha.conf.larder-new').exists(), 'config-upstream-unchanged-kept')
+              and not (root / 'etc/alpha.conf.paxage-new').exists(), 'config-upstream-unchanged-kept')
     finally:
         r.repo.publish(universe())
 
@@ -679,9 +679,9 @@ def config_proposal(r):
     try:
         ok(pxg('upgrade', '--root', root, '--now', NOW), 'config-both-changed-run')
         check((root / 'etc/alpha.conf').read_bytes() == b'mine\n'
-              and (root / 'etc/alpha.conf.larder-new').read_bytes() == b'setting=2\n', 'config-both-changed-proposal')
+              and (root / 'etc/alpha.conf.paxage-new').read_bytes() == b'setting=2\n', 'config-both-changed-proposal')
         s = status(root) or {}
-        check(any(x.get('path') == 'etc/alpha.conf.larder-new' for x in s.get('proposals', [])),
+        check(any(x.get('path') == 'etc/alpha.conf.paxage-new' for x in s.get('proposals', [])),
               'config-proposal-recorded', json.dumps(s))
     finally:
         r.repo.publish(universe())
@@ -703,7 +703,7 @@ def config_proposal_exists(r):
     try:
         before = tree_digest(root)
         refused(pxg('upgrade', '--root', root, '--now', NOW), 'config-proposal-exists', 1,
-                'proposal-exists etc/alpha.conf.larder-new')
+                'proposal-exists etc/alpha.conf.paxage-new')
         check(tree_digest(root) == before, 'config-proposal-exists-no-writes')
     finally:
         r.repo.publish(universe())

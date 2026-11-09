@@ -55,7 +55,7 @@ process-wide working directory is sound.
   - the installed packages, each with its reason (explicit or dependency) and the
     SHA-256 of its manifest;
   - config baselines;
-  - residuals and owned `.larder-new` proposals;
+  - residuals and owned `.paxage-new` proposals;
   - declared accounts, action-created directories and pending actions.
 
   `generations/<N>/manifests/<sha256>` holds each installed manifest's exact
@@ -187,7 +187,7 @@ The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
   - L absent: the file stays absent;
   - L == B: N is installed;
   - N == B, or L == N: L is kept;
-  - otherwise L is kept and `PATH.larder-new` = N is written as an owned
+  - otherwise L is kept and `PATH.paxage-new` = N is written as an owned
     proposal. An unowned file of that name refuses `proposal-exists`.
 - **Removal.** Remove deletes owned paths whose live identity is the recorded one.
   A modified file, config or not, stays as a recorded residual. A directory goes

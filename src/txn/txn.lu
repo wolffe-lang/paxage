@@ -603,7 +603,7 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                     continue
                 }
                 if n == b || l == n { continue }
-                let ppath = "{r.path}.larder-new"
+                let ppath = "{r.path}.paxage-new"
                 let plive = walk.look_path(c.root, ppath, true)
                 let mine_prop = proposal_of(old, ppath)
                 if plive.kind != "absent" && mine_prop < 0 {

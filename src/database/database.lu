@@ -14,7 +14,7 @@ pub struct Baseline { path: str, package: str, sha256: str }
 /// A modified file left behind when its package was removed.
 pub struct Residual { path: str, package: str }
 
-/// An owned PATH.larder-new proposal written by the three-way rule.
+/// An owned PATH.paxage-new proposal written by the three-way rule.
 pub struct Proposal { path: str, package: str, sha256: str }
 
 /// An account an action declared; never deleted, kept after its package leaves.
