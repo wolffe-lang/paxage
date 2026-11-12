@@ -470,7 +470,7 @@ RELAYED = []
 
 
 def guest_build():
-    """paxage and paxage-failpoint built in the guest's own release (R-pm04b-3), same commit and toolchain."""
+    """paxage and paxage-failpoint built in the guest's own release, same commit and toolchain."""
     out = WORK / 'guest-bin'
     src = WORK / 'guest-src'
     out.mkdir(parents=True)
@@ -618,7 +618,7 @@ def guest_json(guest, prefix):
 
 
 def eio_runs(fs, bins, run_log, sy):
-    """The EIO rows (R-pm04b-1, the recorder's NBD_EIO at a named mark). Separable: a different EIO ruling
+    """The EIO rows (the recorder's NBD_EIO at a named mark). Separable: a different EIO ruling
     replaces only this function and its rows."""
     sets = []
     scen = sy.scenarios(sy.Log(run_log))

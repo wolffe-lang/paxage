@@ -17,7 +17,7 @@ what make a write durable in the crash-state model (tools/powercut-synth).
 
 --eio TEXT:CMD answers the first CMD (write or flush) on a non-mark export that
 comes after a mark record whose first words are TEXT's words with NBD_EIO, and
-does not apply it (R-pm04b-1). It is armed once.
+does not apply it. It is armed once.
 The server exits 0 after --connections connections have closed. It exits 2 on
 a protocol violation, and 3 when --timeout passes first.
 """

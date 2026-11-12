@@ -210,7 +210,7 @@ def phase_run(job):
     _, finished, _ = recorded('rescue-finish', done, ['rescue', '--root', done], markdev, fs, old=old)
     emit(finished == upgraded, f'powercut-{fs}-rescue-finish-completes',
          f'finished={finished[:12]} upgraded={upgraded[:12]}')
-    # Two writers; the power goes while the owner holds the lock.
+    # Two writers; the power goes while the lock holder holds the lock.
     base = roots.ready('pc-concurrent')
     names = trace_names(roots, base, lambda r: ['install', '--root', r, 'alpha', '--now', NOW])
     hold = ([n for n in names if n.endswith(':temp')] + ['intent'])[0]

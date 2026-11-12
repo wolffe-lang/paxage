@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Flat top-level records accepted by planning's gauntlet-record.sh (68dae09).
+# Emit flat top-level records for the gauntlet recorder.
 set -eu
 cd "$(dirname "$0")/.."
 . tools/rig-profile

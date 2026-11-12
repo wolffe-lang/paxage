@@ -22,14 +22,14 @@ def container(command,mounts):
     args=[engine,'run','--rm','--network','none','--memory','2g','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--user',f'{os.getuid()}:{os.getgid()}']
     if engine.endswith('podman'):args+=['--userns=keep-id','--read-only-tmpfs=false']
     for source,target,mode in mounts:args+=['-v',f'{source}:{target}:{mode}']
-    # A paxage built on a NixOS host (hasu) asks for its loader and libraries under
+    # A paxage built on a NixOS host asks for its loader and libraries under
     # /nix/store; mounting that read-only lets the same binary run here and changes no verdict.
     if Path('/nix/store').is_dir():args+=['-v','/nix/store:/nix/store:ro']
     cpus=os.environ.get('PAXAGE_CONTAINER_CPUS')
     if cpus:command=f'exec taskset -c {cpus} /usr/bin/bash -c '+__import__('shlex').quote(command)
     # The 2 GiB address-space cap is the archivers' and paxage's, inside the container. podman
     # (a Go program) is not capped: under the cap its runtime failed to map 4 MiB blocks
-    # ("runtime: out of memory") on satoyama, with the image already warm.
+    # ("runtime: out of memory") on a Linux host, with the image already warm.
     command=f'ulimit -v {CAP_KIB} && '+command
     args +=[IMAGE,'/usr/bin/bash','-c',command]
     p=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,timeout=60)

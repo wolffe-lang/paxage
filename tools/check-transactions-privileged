@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-transactions-privileged — the X-rows as root, so owners are applied by
-# handle (R-pm04-5). Three routes, chosen by the gauntlet (tools/gauntlet prints the
+# handle. Three routes, chosen by the gauntlet (tools/gauntlet prints the
 # column-0 SKIP when none is available):
 #   * already root: run the rows here;
 #   * GitHub Actions on Linux with passwordless sudo: run them under sudo;
