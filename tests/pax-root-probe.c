@@ -27,6 +27,17 @@ static void available(const char *name, int fd) {
     row(name, fd >= 0 ? 0 : -errno, 0);
     if (fd < 0) exit(2);
 }
+/* A missing dirfd rename must not poison the independent link/metadata rows.
+ * Exercise the transaction's pinned-cwd stand-in and still keep the raw call red. */
+static void move_name(int d, const char *from, const char *to, const char *name) {
+    long got = result(renameat(d, from, d, to));
+    row(name, got, 0);
+    if (got != 0) {
+        row("rename-standin-fchdir", result(fchdir(d)), 0);
+        row("rename-standin", result(rename(from, to)), 0);
+        row("rename-standin-unpin", result(chdir("/")), 0);
+    }
+}
 static void print_file(const char *path) {
     char b[4096];
     int fd = open(path, O_RDONLY | O_NOFOLLOW);
@@ -74,7 +85,7 @@ int main(int argc, char **argv) {
     row("fsync-directory", result(fsync(p)), 0);
     struct stat before = {0}, after = {0};
     row("fstat", result(fstat(f, &before)), 0);
-    row("renameat", result(renameat(p, "file", p, "renamed")), 0);
+    move_name(p, "file", "renamed", "renameat");
     row("newfstatat", result(fstatat(p, "renamed", &after, AT_SYMLINK_NOFOLLOW)), 0);
     row("rename-preserves-inode", before.st_dev == after.st_dev && before.st_ino == after.st_ino, 1);
     row("symlinkat", result(symlinkat("parent", d, "alias")), 0);
@@ -85,7 +96,13 @@ int main(int argc, char **argv) {
     x = openat(p, "sym", O_RDONLY | O_NOFOLLOW);
     row("nofollow-final-symlink", x < 0 ? -errno : 0, -ELOOP);
     if (x >= 0) close(x);
-    row("fchownat-nofollow", result(fchownat(p, "sym", 123, 456, AT_SYMLINK_NOFOLLOW)), 0);
+    long owner = result(fchownat(p, "sym", 123, 456, AT_SYMLINK_NOFOLLOW));
+    row("fchownat-nofollow", owner, 0);
+    if (owner != 0) {
+        row("owner-standin-fchdir", result(fchdir(p)), 0);
+        row("lchown-standin", result(lchown("sym", 123, 456)), 0);
+        row("owner-standin-unpin", result(chdir("/")), 0);
+    }
     row("lstat-symlink", result(fstatat(p, "sym", &after, AT_SYMLINK_NOFOLLOW)), 0);
     row("symlink-owner-applied", after.st_uid == 123 && after.st_gid == 456 && S_ISLNK(after.st_mode), 1);
     row("link-target-owner-unchanged", result(fstat(f, &after)), 0);
@@ -100,7 +117,7 @@ int main(int argc, char **argv) {
     available("replacement-create", replacement);
     row("replacement-write", result(write(replacement, "new\n", 4)), 4);
     row("replacement-sync", result(fsync(replacement)), 0);
-    row("rename-over-existing", result(renameat(p, "replacement", p, "renamed")), 0);
+    move_name(p, "replacement", "renamed", "rename-over-existing");
     row("rename-parent-sync", result(fsync(p)), 0);
     char data[4];
     row("old-handle-seek", result(lseek(f, 0, SEEK_SET)), 0);
