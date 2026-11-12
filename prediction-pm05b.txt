@@ -1,0 +1,45 @@
+pm05b prediction (2026-11-12)
+
+Inputs: trunk 816d457985535a32247f73ff0478448868c5d1a8; PAX trunk
+0e2843cff2bd8712317190bb02c632e87cd29bb9. Read the binding contract,
+shared rules, track rulings, design/matrix, format/trust/transaction docs,
+earlier lane notes, transaction adapters and harness, image pins, installed
+manifest and journal notes before changing code. No Mac builds.
+
+Before any mutation support, measure an installer-created QEMU root, not an
+initramfs or a tools/mkdisk journalled playground substituted for it. Predict
+plain ext2, no active journal. statfs magic 0xef53 is insufficient; PAX does
+not document Linux's /proc/fs/jbd2 device qualification. Keep mutations refused.
+The root '/' refusal remains until a separately qualified maintenance/rescue
+entry exists. No install/upgrade/remove or adoption implementation before the
+owner rules on the measured capability table and adoption options.
+
+Measure: root mount identity and ext superblock features, statfs/fstatfs,
+openat O_DIRECTORY/O_NOFOLLOW at each ancestor, exclusive file creation,
+file and directory fsync, renameat identity/replacement, fchownat no-follow,
+fchmod/fchown, mkdirat/symlinkat/linkat/readlinkat/newfstatat/unlinkat/getdents,
+flock contention and release, cwd pinning. Successful sync is syscall evidence,
+not a power-cut claim. Compare with Linux using the same probe binary. File
+kernel/std gaps only through the owner with plain public issue prose.
+
+Predict pm04's parser/version/solver rows remain portable, but its Python guest
+runner and Linux /proc/fs/jbd2 qualification do not run unchanged on PAX. None
+of the mutation/config/crash rows is a passing PAX transaction merely because
+individual ABI probes pass. The NBD recorder can stay on the Linux QEMU host;
+the Linux cloud-init/loop-mount/e2fsck guest driver needs a PAX boot/reboot driver.
+
+Adoption options for ruling: one filtered base package; per-tool exact-inventory
+adoption with the residual base retained by pax-upgrade; or a disjoint prefix.
+Recommend per-tool adoption only after both writers enforce disjoint ownership,
+with exact trusted image hashes/types/modes/owners/link topology, no file rewrite,
+and refusal on local changes. Boot/kernel/passwords/homes remain image-owned or
+user-owned. A full image inventory cannot be imported as F5: boot/var paths and
+set-ID bits are prohibited, and generated files differ per installation.
+
+The PAX public tree must never disclose the private source repository, source
+commit or lane/host/planning paths. A private source fetch patterned on a public
+program pin would disclose it. Ask for a public binary-digest input interface
+versus private CI source staging before item 2's image integration.
+
+Plant after implementation only: a capability lie must make the named refusal
+row fail. No weakening of ext2 refusal; no live system, network host or real key.
