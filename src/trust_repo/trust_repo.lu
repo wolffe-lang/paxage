@@ -31,7 +31,7 @@ pub fn load_keys(dir: str) -> Keys {
             marker < 0 ||
             d.nodes[marker].kind != "bool" ||
             d.nodes[marker].number != 1 {
-            out.error = "Real repository keys need std's constant-time signing review and the maintainer's ceremony (R-pm00-7)"
+            out.error = "Real repository keys require a constant-time signing review and a production key ceremony"
             return out
         }
         let seed_hex = meta.text(d, 0, "seed")

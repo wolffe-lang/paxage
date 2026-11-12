@@ -67,7 +67,7 @@ def main():
     key_bytes = unmarked.read_bytes(); key_data = json.loads(key_bytes); key_data['test-only'] = False
     unmarked.write_text(json.dumps(key_data))
     run('T15-unmarked-key-refused', 'repo', 'init', '--repo', url, '--keys', keys, '--now', NOW,
-        error="Real repository keys need std's constant-time signing review and the maintainer's ceremony (R-pm00-7)")
+        error="Real repository keys require a constant-time signing review and a production key ceremony")
     check(not list((repo / 'metadata').iterdir()), 'T15-unmarked-key-no-signatures')
     unmarked.write_bytes(key_bytes)
     run('T15-init', 'repo', 'init', '--repo', url, '--keys', keys, '--now', NOW, last='repo init ok')
