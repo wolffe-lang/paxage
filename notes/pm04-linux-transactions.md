@@ -2,7 +2,7 @@
 
 Footprint: cross-cutting (the toolchain pin, tools and the gauntlet).
 
-pm04 was split at its prediction, as ruled (R-pm04-15 A). pm04a is everything
+pm04 was split at its prediction, by design. pm04a is everything
 except the QEMU power cuts: the lock, qualification, the database and
 generations, install, upgrade and remove, config and accounts, orphans,
 status, verify and rescue, and the failpoint matrix. pm04b is the journalled-guest
@@ -11,7 +11,7 @@ claimed at pm04b's merge, not here.
 
 ## Forbidden
 
-- Private repository; never named in public text. The one upstream issue,
+- The one upstream issue,
   wolf-lang#1084, is plain prose with no project or host names.
 - The clean room. Sources were documentation, specifications and man pages only:
   rename(2), fsync(2), flock(2), openat(2), statfs(2), proc(5) mountinfo, the sysfs
@@ -20,18 +20,16 @@ claimed at pm04b's merge, not here.
   No package manager's, archiver's or filesystem's source was read. wolf's own
   `spec/11-os.md` (the org's) supplied the descriptor-walk surface.
 - Never host `/`: every root is synthetic (`--root`), and `/` refuses by name.
-- Nothing in `/tmp`; signals never sent to a host process (the owner-death row
-  ends the holder by its own trap); kasumi and the 860 untouched; never signed on
-  hasu. No label, merge, tag or close; no attribution trailers.
+- Nothing in `/tmp`; signals never sent to a host process (the lock-holder-death row
+  ends the holder by its own trap); the FHS Linux host and the 860 untouched; never signed on
+  the NixOS Linux host. No label, merge, tag or close; no attribution trailers.
 
 ## Inputs, verified
 
-- Contract: planning `ae10893c`, `sprints/pm/04-linux-transactions`; lane rules 1031
-  with every Added item; `sprints/pm/index.md`. The design is pax trunk
-  `db516c69` `notes/pm00-the-design.md` (R-pm00-6, -9, -10, the inventory, the
-  pm04 row).
-- Base larder `d5017a210424`, branch `pm04`.
-- Toolchain (R-pm04-1 A): wolf 0.2.38 (`95ae0827`) and lupin 0.1.60 (`17bd5223`).
+- Contract: commit `ae10893c`; the design is pax trunk
+  `db516c69` `notes/pm00-the-design.md` (the inventory and the pm04 row).
+- Base commit `d5017a210424`, branch `pm04`.
+- Toolchain: wolf 0.2.38 (`95ae0827`) and lupin 0.1.60 (`17bd5223`).
   Each archive's SHA-256 was read twice, once from the release API and once from a
   downloaded copy:
   - wolf darwin `66a2c313…`, wolf linux `8447a579…`;
@@ -41,7 +39,7 @@ claimed at pm04b's merge, not here.
   CLI fixtures pass on both hosts. 0.2.38 adds the ten descriptor calls (s277).
   Still absent: renameat, readlinkat, fchownat and fchdir, filed as
   wolf-lang#1084.
-- Guest image for pm04b, staged and digest-checked on hasu; not used here: Ubuntu
+- Guest image for pm04b, staged and digest-checked on the NixOS Linux host; not used here: Ubuntu
   24.04 release-20261017, `.img` `04e8f246…`, vmlinuz `41ba36d8…`, initrd
   `bf276ffc…`.
 
@@ -65,8 +63,8 @@ what was built:
   - A `capacity` step (space and inodes for backups, payloads and new files, with
     headroom) refuses before the first durable write.
   - The failpoint crash is a runtime trap (exit 134), not an exit call: `os_exit`
-    would need the `exec` capability larder never declares.
-  - `rescue-foreign-temp` was not needed: only larder's own temporary names are
+    would need the `exec` capability the program never declares.
+  - `rescue-foreign-temp` was not needed: only the program's own temporary names are
     removed.
 - **Found.**
   - pm03's `repo keygen` refuses root by design. A root take publishes its fixture
@@ -78,19 +76,19 @@ what was built:
     - the old version line and usage;
     - install, remove and upgrade refused with exit 6.
 
-    The first final take (at `60c756b`) went red at `END cli exit=1` on hasu and on
+    The first final take (at `60c756b`) went red at `END cli exit=1` on the NixOS Linux host and on
     the Mac; both records are void. The fixture now expects:
     - the new line;
     - `sync` refused by name;
     - `root-missing` and `live-root-is-pm05` for the three root verbs;
     - usage errors for root verbs without `--root`.
-  - pm02's container rows had been recorded only on kasumi, an FHS host. On hasu
+  - pm02's container rows had been recorded only on the FHS Linux host. On the NixOS Linux host
     (NixOS) they failed twice:
     - podman's first `--userns=keep-id` use of the archlinux image builds an
       ID-mapped layer copy. Under the step's 2 GiB address-space cap that copy hit
       `pthread_create` EAGAIN, then the test's 60 s limit. It was warmed once
       outside the gauntlet (135 s).
-    - The hasu-built binary's loader lives under `/nix/store`, so it could not
+    - The binary built on the NixOS Linux host's loader lives under `/nix/store`, so it could not
       start in the container. The rows now mount `/nix/store` read-only where it
       exists; no verdict changes.
     - The two RSS steps ran `/usr/bin/time`, which NixOS does not have. They now
@@ -105,25 +103,25 @@ what was built:
       Both readings are then true peaks, and the floor cancels exactly in the
       1 GiB − 64 MiB difference the gate checks. If that ever fails, the step
       refuses `floor-masks-peak` rather than passing.
-    - On hasu (light slot, under the 2 GiB cap): floor 1692 and 1688 KiB. Chunk
+    - On the NixOS Linux host (light slot, under the 2 GiB cap): floor 1692 and 1688 KiB. Chunk
       reader 2704 → 2752 KiB (+48); full reader 3180 → 3268 KiB (+88).
   - The CI root take (`sudo` on GitHub's Linux runner) went red at the fixture
     publication. The harness dropped those commands to uid 65534, but the runner
-    keeps the checkout under `/home/runner` (0750, the runner's own), so 65534 could
-    not exec `target/bin/larder` (EACCES).
-    - hasu's container take never saw it. It copies the tree under podman's
+    keeps the checkout under its home directory (0750, owned by the runner), so 65534 could
+    not execute the built binary in `target/bin` (EACCES).
+    - The NixOS Linux host's container take never saw it. It copies the tree under podman's
       bind-mount path, whose directories are 0755, and that copy is root-owned
       with 0755 binaries.
     - It reproduced red in `localhost/pm04-sudo:1`, a lane image (px75 plus `sudo`,
       a uid-1001 `runner`, a 0750 home, passwordless sudo) running
       `tools/check-transactions-privileged` with `GITHUB_ACTIONS=true` from
-      `/home/runner/work/larder/larder`: the same `PermissionError` on the same path.
+      the runner’s checkout path: the same `PermissionError` on the same path.
     - The fixture is now published as the checkout's owner (sudo's caller, then
       65534 only for a root-owned checkout), behind a named preflight
       (`fixture-identity-reach`). Both routes then pass 938 rows: the sudo route as
       uid 1001, the container route as 65534.
-  - One dev job on hasu (block A, then slot, then light) ran every step the Mac
-    skips. trust-openssl-writer runs only on kasumi, off limits here, and prints
+  - One dev job on the NixOS Linux host (block A, then slot, then light) ran every step the Mac
+    skips. trust-openssl-writer runs only on the FHS Linux host, off limits here, and prints
     its SKIP.
 
 ## Evidence index
@@ -143,13 +141,13 @@ what was built:
 
 Takes:
 - **Logical (owners not applied).** As the caller on every host: the Mac (APFS
-  development root) and hasu natively.
-- **Root (owners applied).** In a rootless container on hasu: `px75-ubuntu:2`, the
+  development root) and the NixOS Linux host natively.
+- **Root (owners applied).** In a rootless container on the NixOS Linux host: `px75-ubuntu:2`, the
   tree copied to the same ext4 bind mount, a tmpfs for the unqualified row. On CI
   Linux the same take runs under passwordless `sudo`.
 - **Skips.** The Mac prints SKIP for the root take and the tmpfs refusal.
 
-The final-head records (Linux on hasu under its block's two locks, the Mac behind
+The final-head records (Linux on the NixOS Linux host under its block's two locks, the Mac behind
 its lock) and the plant record are cited in the PR. They are not repeated here,
 so this note does not have to change after the head it describes.
 
@@ -160,18 +158,18 @@ undo and the root is neither old nor new.
 
 ### Rulings (all A, 2026-11-09 ~02:0xZ)
 
-R-pm04-1 pin 0.2.38; R-pm04-2 pinned working directory and the upstream issue
-(wolf-lang#1084); R-pm04-3 only rescue acts on a pending transaction; R-pm04-4 a
-test-only failpoint executable; R-pm04-5 privileged and logical roots; R-pm04-6
-ext3/ext4 with an active journal, macOS development roots; R-pm04-7 `/` refused;
-R-pm04-8 pm02's stage as root only into the transaction directory; R-pm04-9 a
-compiled registry; R-pm04-10 cache actions pending only; R-pm04-11 the
-modified-file rules; R-pm04-12 F2 records and a framed intent; R-pm04-13 exits 7, 8
-and 9; R-pm04-14 the power-cut model (pm04b); R-pm04-15 the split.
+The selected design pins 0.2.38; uses a pinned working directory (with
+wolf-lang#1084 filed upstream); permits only rescue to act on a pending
+transaction; uses a test-only failpoint executable; tests privileged and logical
+roots; qualifies journalled ext3/ext4 and macOS development roots; refuses `/`;
+runs pm02's stage as root only inside the transaction directory; uses a compiled
+registry; leaves cache actions pending; applies the modified-file rules; uses F2
+records and a framed intent; and assigns exits 7, 8 and 9. The power-cut model
+is covered by pm04b, the second part of the split.
 
 ### Limits, stated
 
-- pm03's trust and cache I/O is path-based. Under the root lock, larder brackets
+- pm03's trust and cache I/O is path-based. Under the root lock, the package manager brackets
   it with a check of the state directory's identity by handle and by path. A
   writer who can swap `ROOT/var/lib` is the root's owner.
 - Process cuts cannot show a missing barrier; pm04b's power cuts can.

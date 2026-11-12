@@ -6,7 +6,7 @@ Footprint: cross-cutting
 
 ## Forbidden
 
-Private repository. No install, privileged run, live-root mutation, HTTP/DNS transport, real signing keys, registry publication, issue action, labels, merge or tag. No foreign package-manager, TUF, crypto or canonicalizer implementation source was consulted. Sources: TUF 1.0.37 text, its cited OLPC canonical JSON description, RFC 8032, and owned Wolf/std/larder code. OpenSSL CLI ran only inside the pinned offline, unprivileged kasumi container. No local curve arithmetic or blacklist was added. No attribution trailers.
+No install, privileged run, live-root mutation, HTTP/DNS transport, real signing keys, registry publication, issue action, labels, merge or tag. No foreign package-manager, TUF, crypto or canonicalizer implementation source was consulted. Sources: TUF 1.0.37 text, its cited OLPC canonical JSON description, RFC 8032, and owned Wolf, standard library and project code. OpenSSL CLI ran only inside the pinned offline, unprivileged container on the FHS Linux host. No local curve arithmetic or blacklist was added. No attribution trailers.
 
 ## Inputs, verified
 
@@ -39,7 +39,7 @@ The ruled strict reader is independent of std.json, not a pre-parser. Std.json w
 
 The original prediction forecast eighteen clauses and 1–50 ms native verification. R6 and R7 explicitly added T19/T20. The 16-signature ceiling is retained from the 1 MiB measurement, not an unbounded signature loop. The initial primitive qualification failed both named small-order identity rows; the same rows pass through std verify_strict, with all 5 RFC and 151 Wycheproof verdicts preserved.
 
-Red-first records include the reader, state/clock checks, real CLI entrypoints, write cuts, committed corruption, same-root stage regression, manifest replacement at consumption, nonempty bootstrap and root-chain allocation ordering. Original pre-rebase records remain under /Users/mfwolffe/lanes/pm03/evidence/; they are historical evidence, not final-head records.
+Red-first records include the reader, state/clock checks, real CLI entrypoints, write cuts, committed corruption, same-root stage regression, manifest replacement at consumption, nonempty bootstrap and root-chain allocation ordering. Original pre-rebase records remain under evidence/; they are historical evidence, not final-head records.
 
 The deliberate off-line plant is described below. It is not part of pm03 and has no PR.
 
@@ -97,9 +97,9 @@ Final main head: 13e167b1e04bc38aad943c36082762c2739d38f3. Both records were ind
 
 Trust fuzz: 20038 verified updates / 79962 named refusals, 100000 total. Payload fuzz: 9359 accepted / 90641 refused, 100000 total. Final Linux 1 MiB strict cost: median 23.629633 ms/signature, range 23.602201–23.781660. Whole-reader RSS: 3276 KiB at 64 MiB, 3352 KiB at 1 GiB (+76 KiB). Canonical payload digest on both hosts: 5c3e99659affd3370210b28108617b5f6f66773ead7956bd30634056ed9df9aa.
 
-OpenSSL verified all 107 signatures across 39 writer metadata files for each host. Mac-writer contrast record: /Users/mfwolffe/lanes/pm03/evidence/interop-mac-writer-13e167b.record.
+OpenSSL verified all 107 signatures across 39 writer metadata files for each host. Mac-writer contrast record: evidence/interop-mac-writer-13e167b.record.
 
-/Users/mfwolffe/lanes/pm03/evidence/green-linux-13e167b.record
+evidence/green-linux-13e167b.record
 
 ```text
 END fmt exit=0 secs=0
@@ -136,7 +136,7 @@ END trust-local-replay-limit exit=0 secs=0
 RECORD-END worst=0 steps=31 end=2026-11-03T11:01:55Z
 ```
 
-/Users/mfwolffe/lanes/pm03/evidence/green-mac-13e167b.record
+evidence/green-mac-13e167b.record
 
 ```text
 END fmt exit=0 secs=0
@@ -169,7 +169,7 @@ END trust-cli-e2e exit=0 secs=3
 END trust-corruption exit=0 secs=1
 END trust-independent exit=0 secs=6
 SKIP trust-large-metadata reason=three byte-limit cases run only on capped Linux
-SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container
+SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the FHS Linux host container
 SKIP trust-fuzz reason=Linux-only capped 100000 mutations; never on the Mac
 END trust-local-replay-limit exit=0 secs=1
 RECORD-END worst=0 steps=23 end=2026-11-03T10:56:22Z
@@ -177,7 +177,7 @@ RECORD-END worst=0 steps=23 end=2026-11-03T10:56:22Z
 
 Plant branch `pm03-plant-timestamp-13e167b`, head 979e536ccf1853ffd4482f53d1f1b77567b714f8: one commit, one file, one hunk on the main head. It omits only timestamp rollback refusal; the independent attack accepts an older timestamp and the expected-refusal row fails. The plant never lands on pm03.
 
-/Users/mfwolffe/lanes/pm03/evidence/red-plant-979e536.record
+evidence/red-plant-979e536.record
 
 ```text
 END plant-build exit=0 secs=1
@@ -189,13 +189,13 @@ RECORD-END worst=1 steps=3 end=2026-11-03T11:04:28Z
 
 ### R-list and limits
 
-- R-pm03-1 A ruled: require a canonical signed span; verify its own bytes. No arbitrary writer-import goal.
-- R-pm03-2 B ruled: local strict bounded reader; std.json untouched.
-- R-pm03-3: built with timestamp 48 h, snapshot 14 d, targets 90 d, root 365 d defaults; confirmation remains owed.
-- R-pm03-4 ruled: timestamp alone is atomically replaced, last; other outputs remain create-only.
-- R-pm03-5 A ruled: pin std's additive verify_strict; no local blacklist or point arithmetic.
-- R-pm03-6 A ruled: candidate fuzz protects accepted state; committed corruption refuses without repair. B, a recovery anchor/redundancy policy, remains later work.
-- R-pm03-7 A ruled: a writer of trusted local storage can coherently replace it, root included. This is outside v1. An independent monotonic anchor (B) belongs to pm04/pm05; production state will be root-owned.
+- Selected approach: require a canonical signed span; verify its own bytes. No arbitrary writer-import goal.
+- Selected approach: local strict bounded reader; std.json untouched.
+- Built with timestamp 48 h, snapshot 14 d, targets 90 d, root 365 d defaults; confirmation remains owed.
+- Selected approach: timestamp alone is atomically replaced, last; other outputs remain create-only.
+- Selected approach: pin std's additive verify_strict; no local blacklist or point arithmetic.
+- Selected approach: candidate fuzz protects accepted state; committed corruption refuses without repair. B, a recovery anchor/redundancy policy, remains later work.
+- Selected approach: a writer of trusted local storage can coherently replace it, root included. This is outside v1. An independent monotonic anchor (B) belongs to pm04/pm05; production state will be root-owned.
 
 Existing same-uid staging ancestor races remain documented; this is not an installer or a security certification. Interruption rows are deterministic syscall-boundary failures, not physical power-cut tests. The wrapper's earlier compile-status masking was corrected and separately witnessed; superseded records are not substituted for final-head greens.
 
@@ -218,4 +218,4 @@ Test checklist:
 
 No issue was filed or closed. No branch is to be merged by this lane. This PR body carries the five report sections; the coordinator may materialize the lane note after merge.
 
-Audit executed once after opening: local/plant/head/report/fast-forward checks passed. The audit observed cheap-only run 41624939995, completed success, which is not cross-cutting merge evidence. Exact final line: `AUDIT FAIL (footprint: cross-cutting)`. No CI polling, label action or audit rerun was performed. Audit log: /Users/mfwolffe/lanes/pm03/lane-audit-pr8.log.
+Audit executed once after opening: local/plant/head/report/fast-forward checks passed. The audit observed cheap-only run 41624939995, completed success, which is not cross-cutting merge evidence. Exact final line: `AUDIT FAIL (footprint: cross-cutting)`. No CI polling, label action or audit rerun was performed. Audit log: lane-audit-pr8.log.

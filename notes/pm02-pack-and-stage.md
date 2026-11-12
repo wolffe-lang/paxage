@@ -6,13 +6,13 @@ Footprint: cross-cutting
 
 ## Forbidden
 
-Private repo. No live-root mutation/promotion, privileged run, install, signing, runtime fetch/HTTP, registry publication, labels, merge, tag or issue action. No foreign package-manager/archiver/compressor/signature implementation source read. Inputs: POSIX.1-2017 pax, FORMAT F1–F6, pm00 and owned wolf/std/larder code. GNU tar/bsdtar run only as unprivileged, network-disabled container black boxes; F6 supplies verdicts. SHA-256 is std's, never reimplemented.
+No live-root mutation/promotion, privileged run, install, signing, runtime fetch/HTTP, registry publication, labels, merge, tag or issue action. No foreign package-manager/archiver/compressor/signature implementation source read. Inputs: POSIX.1-2017 pax, FORMAT F1–F6, pm00 and owned Wolf, standard library and project code. GNU tar/bsdtar run only as unprivileged, network-disabled container black boxes; F6 supplies verdicts. SHA-256 is std's, never reimplemented.
 
 The wrapper disallows the `.md` lane note. These five sections are its fallback; the coordinator writes `notes/pm02-pack-and-stage.md` at merge.
 
 ## Inputs, verified
 
-Authority: pm02 contract at planning `914c529`; lane rules/additions, RULES §1–§10, pm rulings, pm00 design at pax `5da8daaf`. Base larder `eef47678ec62948fd45ef16e606739ec04d4200c`; baseline source/spec/harness/fixtures read.
+Authority: pm02 contract at commit `914c529`; lane rules/additions, RULES §1–§10, pm rulings, pm00 design at pax `5da8daaf`. Base commit `eef47678ec62948fd45ef16e606739ec04d4200c`; baseline source/spec/harness/fixtures read.
 
 Final head: `c16048ca9f8093c8cd581801ca7821256949fc00`. Wolf 0.2.36 (`5adf3d9`) / lupin 0.1.58 (`a5378e3`) unchanged; std explicitly pinned to merged `5b3a59942b2ee69b99682544341ce8a12c984e9e` (bounded SHA-2, unchanged API/digests). Compiler/interpreter archive digests unchanged.
 
@@ -31,7 +31,7 @@ Selected commits:
 
 ## Evidence index
 
-CLI C4–C7 documents `pack SOURCE TEMPLATE OUTDIR --epoch N`, `verify-payload`, `list-payload [--json]`, `stage ... --length N --sha256 HEX --manifest FILE --into DIR`, exits and failure state. `lrd` is the same executable. Mutating install/remove/upgrade/sync remain named exit-6 refusals. Numeric owners normalize to zero in package metadata; staged on-disk ownership remains the unprivileged caller's.
+CLI C4–C7 documents `pack SOURCE TEMPLATE OUTDIR --epoch N`, `verify-payload`, `list-payload [--json]`, `stage ... --length N --sha256 HEX --manifest FILE --into DIR`, exits and failure state. The short command is a link to the same executable. Mutating install/remove/upgrade/sync remain named exit-6 refusals. Numeric owners normalize to zero in package metadata; staged on-disk ownership remains the unprivileged caller's.
 
 | Rule | Tests |
 |---|---|
@@ -50,10 +50,10 @@ CLI C4–C7 documents `pack SOURCE TEMPLATE OUTDIR --epoch N`, `verify-payload`,
 
 ### Final records and measurements
 
-Planning recorder is exact `tools/gauntlet-record.sh` at `68dae09`. Records independently verify head/tree/time and step exits:
-- Mac: `/Users/mfwolffe/lanes/pm02/evidence/green-mac-c16048c.record`, worst 0, six steps; four loud Linux-only SKIPs (container, maximum-inventory measurement, reader RSS, full RSS). Large RSS never runs on Mac.
-- Linux: `/Users/mfwolffe/lanes/pm02/evidence/green-linux-c16048c.record`, worst 0, ten steps, all cold CLI/test builds plus fixture/fuzz/container/memory rows.
-- Plant: `/Users/mfwolffe/lanes/pm02/evidence/red-linux-7009635.record`, worst 1; literal named FAIL inside nonzero unit step, verified one-break ancestry.
+The recorder is exact `tools/gauntlet-record.sh` at `68dae09`. Records independently verify head/tree/time and step exits:
+- Mac: `evidence/green-mac-c16048c.record`, worst 0, six steps; four loud Linux-only SKIPs (container, maximum-inventory measurement, reader RSS, full RSS). Large RSS never runs on Mac.
+- Linux: `evidence/green-linux-c16048c.record`, worst 0, ten steps, all cold CLI/test builds plus fixture/fuzz/container/memory rows.
+- Plant: `evidence/red-linux-7009635.record`, worst 1; literal named FAIL inside nonzero unit step, verified one-break ancestry.
 
 100000 mutations: Mac 7125 verified trees / 92875 refusals; Linux 9359 verified trees / 90641 refusals. Both gates pass. Every END line is included in the hand-back, not inferred from wrapper success.
 
@@ -67,9 +67,9 @@ Linux under 2 GiB address-space cap:
 
 Unchanged requirement: full-reader growth <8192 KiB. Both full-reader digests equal independent sha256sum results. Original correct-hash Mac RSS was 1424016 / 13038720 KiB; that growing version was not rerun on Mac. Large fixtures are generated/used/deleted within each job.
 
-Raw Mac/Linux canonical payloads compare byte-for-byte; each host's two insertion-order outputs also compare equal. Both SHA-256: `5c3e99659affd3370210b28108617b5f6f66773ead7956bd30634056ed9df9aa`. Raw copies: `/Users/mfwolffe/lanes/pm02/evidence/canonical-{mac,linux}-c16048c.payload.tar`.
+Raw Mac/Linux canonical payloads compare byte-for-byte; each host's two insertion-order outputs also compare equal. Both SHA-256: `5c3e99659affd3370210b28108617b5f6f66773ead7956bd30634056ed9df9aa`. Raw copies: `evidence/canonical-{mac,linux}-c16048c.payload.tar`.
 
-Contrast, never oracle: GNU pax and BSD zero-mtime archives accepted. BSD negative-time bytes at regular-header offset 1024, mtime offset 136 are `ffffffffffffffffffffff20`, despite a valid local `mtime=-1`; high-bit numeric encoding is forbidden by F6.2, so expected `header-number` refusal. No reader weakening. Source-byte log: `/Users/mfwolffe/lanes/pm02/bsd-bytes.log`.
+Contrast, never oracle: GNU pax and BSD zero-mtime archives accepted. BSD negative-time bytes at regular-header offset 1024, mtime offset 136 are `ffffffffffffffffffffff20`, despite a valid local `mtime=-1`; high-bit numeric encoding is forbidden by F6.2, so expected `header-number` refusal. No reader weakening. Source-byte log: `bsd-bytes.log`.
 
 Jobs moved on coordinator instruction at 04:18:41Z from waiting 8–11 to 4–7: old waiters 1213590/2909496 verified WRITE*, terminated individually; sh35 holder untouched. Fresh logs `moved-current-69cbf69` / `moved-proof-832ec92` record the move. Obsolete main compile failures are not final-head evidence.
 
@@ -90,15 +90,15 @@ Language citations: wolf-lang `7d026c6`, `spec/11-os.md`; std `78b9d3c`, `std/fs
 | Full fd metadata | Available device/inode/type/mode: spec:3971–4007, std:2331 |
 | Directory fsync | Available via fs_sync(fd), spec:3747/std:2166; Unix directory opens spec:3001; path sync_dir std:2194 |
 
-Each missing row is an issue title/call/unblocked larder row; coordinator files seven, including #707 extension. No shell workaround. Remaining race: a third party with access can swap an ancestor between check/use, and final-name chmod can race without fchmod. Pinned cwd, caller-owned empty private stage and euid-0 refusal bound but do not eliminate it. Same-device bind mounts are undetectable. A failed stage leaves its partial tree; no recursive cleanup outside it and no promotion.
+Each missing row is an issue title/call/unblocked project row; coordinator files seven, including #707 extension. No shell workaround. Remaining race: a third party with access can swap an ancestor between check/use, and final-name chmod can race without fchmod. Pinned cwd, caller-owned empty private stage and euid-0 refusal bound but do not eliminate it. Same-device bind mounts are undetectable. A failed stage leaves its partial tree; no recursive cleanup outside it and no promotion.
 
 ### Runtime and rulings
 
-Three-line trap/normal-return witnesses are in `tests/runtime/`; runner builds both cold. On Mac and Linux wolf 0.2.36, preceding stderr is present, assert message absent. No stderr-loss bug reproduced; coordinator filed the real assert-message defect. Only larder's own failure harness changed.
+Three-line trap/normal-return witnesses are in `tests/runtime/`; runner builds both cold. On Mac and Linux wolf 0.2.36, preceding stderr is present, assert message absent. No stderr-loss bug reproduced; coordinator filed the real assert-message defect. Only the project's own failure harness changed.
 
-- R-pm02-1 inapplicable: incremental std API exists.
-- R-pm02-2 A implemented via merged std pin; no interim bound/waiver or local SHA implementation.
-- R-pm02-3 A implemented as F6.1 strict EOF. F6.2 names the existing binary-number refusal.
+- The incremental-API fallback was inapplicable: incremental std API exists.
+- The selected approach was implemented via merged std pin; no interim bound/waiver or local SHA implementation.
+- The selected approach was implemented as F6.1 strict EOF. F6.2 names the existing binary-number refusal.
 - Verb flags and explicit epoch are engineering choices, documented in CLI.
 
 ## Done-when

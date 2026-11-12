@@ -3,7 +3,7 @@
 Footprint: cross-cutting (the gauntlet, `tools/fetch-toolchain` and the
 container step change; the CI runs the gauntlet).
 
-pm04b is the second half of M-PM1, split at pm04's prediction (R-pm04-15 A). It
+pm04b is the second half of M-PM1, split at pm04's prediction. It
 adds the durability witness that a process-crash matrix cannot be: power cuts on
 a journalled filesystem in a KVM guest, real device errors, a really full disk,
 and the refusal of an unjournalled filesystem. Its prediction is
@@ -12,9 +12,9 @@ and the refusal of an unjournalled filesystem. Its prediction is
 ## The claim
 
 This is the one place that states M-PM1's claim. Its scope is ruled, and
-M-PM1 was met at larder#10's merge (trunk `4e6fda1`):
+M-PM1 was met at PR #10’s merge (trunk `4e6fda1`):
 
-> larder's transactions on a synthetic Linux root, from a `file://` repository,
+> The package manager’s transactions on a synthetic Linux root, from a `file://` repository,
 > reach the old or the new generation only, recovered twice identically, after a
 > crash at any transition, a crash during rescue, and a power cut before or
 > after any durable step, with torn sectors. The power cuts are witnessed on
@@ -36,7 +36,7 @@ What it does not claim yet:
 
 ## Forbidden
 
-- Private repository; never named in public text. No upstream issue was needed.
+- No upstream issue was needed.
 - The clean room. Sources: the NBD protocol specification (`doc/proto.md`,
   sha256 `4b4eda49…`), QEMU's documentation, fsync(2), rename(2), mount(8),
   ext4(5), e2fsck(8), mkfs.ext4(8), the kernel's kernel-parameters document,
@@ -45,32 +45,32 @@ What it does not claim yet:
   server's or client's source.
 - Never host `/`. Nothing in `/tmp`, with one slip, stated: three public files
   (Ubuntu's SHA256SUMS, its unpacked SUMS and the UEC signing key) were copied
-  to satoyama's `/tmp` for about a minute on 11-09 at 10:07Z, and removed at
-  once. Never signed on hasu. kasumi and the 860 untouched. On satoyama: the
+  to the Arch Linux host's `/tmp` for about a minute on 11-09 at 10:07Z, and removed at
+  once. Never signed on the NixOS Linux host. The FHS Linux host and the 860 untouched. On the Arch Linux host: the
   GPU, llama-rpc, ollama and the FreeBSD VM untouched; podman only through
-  `satoyama-env/bin/podman` (scratch stores under the lane for the cold-store
+  `the designated podman wrapper` (scratch stores under the lane for the cold-store
   rows). No label, merge, tag or close; no attribution trailers.
 
 ## Inputs, verified
 
 - **The guest**: Ubuntu 24.04 cloud image, release 20261017 (the image, the
   generic kernel and initrd). SHA256SUMS and unpacked/SHA256SUMS:
-  - fetched on hasu (11-08), the Mac and satoyama (11-09), byte-identical;
+  - fetched on the NixOS Linux host (11-08), the Mac and the Arch Linux host (11-09), byte-identical;
   - each with a good signature from the UEC Image Automatic Signing Key,
     D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81, checked with gpgv against a
     lane-local keyring.
   The three files' digests are pinned in `tools/check-powercut`
   (`04e8f246…`, `41ba36d8…`, `bf276ffc…`) and re-read by `vm-inputs-digests`
   on every take.
-- **GNU time on satoyama** (chunk-rss and rss resolve it from PATH; satoyama has
+- **GNU time on the Arch Linux host** (chunk-rss and rss resolve it from PATH; the Arch Linux host has
   none): Arch's `extra/time` 1.10-1, its sha256 (`fbbd81a7…`) matching the
   local sync database, with a good packager signature against the Arch keyring
   (dearmored under the lane). Unpacked to the lane's `hostbin/time`
   (`ccc57656…`), which the take puts first on PATH. Nothing installed.
 - **Toolchain**: unchanged from pm04a (wolf 0.2.38, lupin 0.1.60, std 23baa1a),
-  staged on satoyama from the digest-checked archives.
+  staged on the Arch Linux host from the digest-checked archives.
 - **The guest binaries**: built in `localhost/px75-ubuntu:2` (Ubuntu 24.04.5,
-  glibc 2.39, the guest's own release; the same image id on hasu and satoyama)
+  glibc 2.39, the guest's own release; the same image id on the NixOS Linux host and the Arch Linux host)
   from the take's own commit and toolchain; `vm-binaries-match` compares the
   guest's digests with the build's.
 
@@ -96,7 +96,7 @@ What it does not claim yet:
   transaction's tree could leave the backups gone and the intent in place. The
   next rescue then tried to undo again and refused `rescue-missing-backup`
   (`powercut-ext4-rescue-undo-rescue:cleanup:dir-flushes`, red in the dev pass;
-  `evidence/dev-red-ext4-discard-enospc.log` on satoyama, sha256 `78e1b6dd…`).
+  `evidence/dev-red-ext4-discard-enospc.log` on the Arch Linux host, sha256 `78e1b6dd…`).
   A process crash cannot reach that state: no hook sits between the two
   removals. Fixed in `2d938f6`: the intent goes first, durably.
 - **A real full disk was misnamed.** A failed copy returned an empty digest, so
@@ -104,23 +104,23 @@ What it does not claim yet:
   (`vm-enospc-ext4-upgrade-*`, red in the same pass). The rescues afterwards
   were already correct. Fixed in `b90e89a`: writes, copies and syncs name the
   host's reason (`no-space`, `io`).
-- **The container step on a cold podman store** (the BACKLOG item, R-pm04b-9).
-  Red first on satoyama with a scratch store under the lane: under the
+- **The container step on a cold podman store** (a backlog item).
+  Red first on the Arch Linux host with a scratch store under the lane: under the
   step-wide 2 GiB cap, podman's pull itself ran out of address space
   (`evidence/cold-container-red-0bf1c2a.log`, `6a5566bc…`). Warming alone was
   not enough: with the image warm, a later podman call ran out the same way
   (`cold-container-warm-only-red.log`, `4022ef91…`). Fixed in `e3f13e9`: a warm
   step pulls and copies under its own bound, and the cap applies inside the
-  container (`ulimit -v`) to the archivers and larder, not to podman. Green on
+  container (`ulimit -v`) to the archivers and package manager, not to podman. Green on
   a fresh cold store (`cold-container-green.log`, `fe7987fc…`).
-- **fetch-toolchain's 20-second retry span** (the BACKLOG item, R-pm04b-8): red
+- **fetch-toolchain's 20-second retry span** (a backlog item): red
   first with a loopback 504 origin (`be44b32`), then `fetch_release`'s growing
   backoff (`2b1c393`).
 
-## Measured (development passes on satoyama, light slot, before the records)
+## Measured (development passes on the Arch Linux host, light slot, before the records)
 
 The full witness on each filesystem takes about 5.5 minutes, so one take holds
-both in full (R-pm04b-5: no chunking was needed). Per filesystem:
+both in full (no chunking was needed). Per filesystem:
 
 - **Guest boots.** A run boot with the matrix takes 153 s, each of the 12 EIO
   boots 3 s, and the check boot 80 s.
@@ -144,7 +144,9 @@ both in full (R-pm04b-5: no chunking was needed). Per filesystem:
 `src/txn/txn.lu`). In development the ext4 witness went red by name, as
 predicted:
 
-> `FAIL powercut-ext4-upgrade-commit-after … larder: rescue-ambiguous-generation (current-invalid)`
+> `FAIL powercut-ext4-upgrade-commit-after … [program]: rescue-ambiguous-generation (current-invalid)`
+
+The program name in this excerpt is redacted.
 
 The rename is durable and the zero-length `current` survives the cut
 (`noauto_da_alloc`, delalloc). Every post-commit window of the three verbs went
@@ -162,5 +164,5 @@ crash keeps the page cache. That contrast is the plant's point
 - The four seeded subsets per window are a sample, not every subset. The
   before, after, after-all and flush states are exhaustive per window.
 - EIO is injected at the recorder, one request per run, the method as ruled.
-- CI runs the host rows and SKIPs the VM step (R-pm04b-7); the witness runs in
+- CI runs the host rows and SKIPs the VM step ; the witness runs in
   local KVM takes.

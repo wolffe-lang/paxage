@@ -1,6 +1,6 @@
 # pm01 — the format and harness
 
-Private larder repository, 2026-11-02. Read-only format v1; no install or trust
+Project record, 2026-11-02. Read-only format v1; no install or trust
 implementation. Design of record: pax `5da8daaf`,
 `notes/pm00-the-design.md`, `notes/pm00/matrix.md`, `notes/pm00/SOURCES.md`,
 all read in full after the lane rules, contract, RULES §1–§10 and track rulings.
@@ -15,7 +15,7 @@ tool's code or behavior. No foreign package-manager binary was run.
 
 No root, state/cache/config path, package installation, signing key, runtime
 fetch, HTTP client, public registration or deployment was added. The repository
-was created private and remains private. No labels, merge, tag, issue closure,
+was created private. No labels, merge, tag, issue closure,
 attribution or co-author trailers. TMPDIR was explicitly lane-local. The harness
 auto-backgrounded one initial Mac probe and captured its output in its own
 system-temp directory; that completed log was copied into lane-local evidence,
@@ -25,9 +25,7 @@ exception to lane-local work.
 
 ## Inputs, verified
 
-The contract is wolf `dc6a5b1`,
-`sprints/pm/01-the-format/pm01-the-format-and-harness.md`. R-pm00-1–12 A and
-R-pm00-13's larder/lrd name are incorporated, not reopened.
+The original format contract and design choices were incorporated, not reopened.
 
 Fresh read-only name checks preceded creation: complete Homebrew formula/cask
 JSON inventories, successful empty AUR/Arch result sets, crates.io's explicit
@@ -67,7 +65,7 @@ binding and argv-indexing mistakes; the existing tests remained intact while
 those defects were fixed in separate commits. A compile exit 2 was never counted
 as a skip or a successful test.
 
-The off-line plant is draft larder PR 1, branch `pm01-plant-held`, head
+The off-line plant is draft PR 1, branch `pm01-plant-held`, head
 `337c3dbcfc8cc132685af45703b4504f5a59a021`: the solver iterates no hold
 obligations, while checker/oracle remain unchanged. It was opened before any
 main PR, producing this repository's **first CI event**, run `41516585136`.
@@ -96,7 +94,7 @@ watch; no CI red is preclaimed here. The break never appears on pm01.
 | S1, complete compatibility | Independent abstract graph model enumerates all 64 subsets of each of 10,000 six-vertex graphs, seeded 1347240241; checker and solver existence agree. Required/virtual/conflict/replacement/hold/arch/ABI/optional cases vary. |
 | S2, deterministic budget policy | Latest-compatible and budget-not-UNSAT unit rows; latest-backtrack/basic/budget fixture snapshots; recursive node counts printed. |
 | S3, independent checker/explanations | `src/checker/checker.lu` imports model/version only, not solver or feasibility helpers; exhaustive per-subset comparison; malformed plan-index/duplicate-index rows; CLI plan/refusal explanation and removal fields. |
-| C1, names and working verbs | 186 CLI cases at baseline; exact help/version/compare/manifest/text-plan outputs; JSON plan assertions; both larder and lrd tested, link identity asserted. |
+| C1, names and working verbs | 186 CLI cases at baseline; exact help/version/compare/manifest/text-plan outputs; JSON plan assertions; both executable names tested, link identity asserted. |
 | C2, refusals/exits | All four mutating verbs individually return 6 naming pm04; usage 2, malformed/I/O 1, UNSAT 3, budget 4; checker disagreements return 5. |
 | C3, fixture e2e/no mutation | Before/after snapshot byte equality, no-eval sentinel absence, both executable names, missing-file refusal and largest fixture timing. |
 
@@ -112,36 +110,36 @@ proposed removals, never authorize overwrites.
 
 macOS arm64, committed copy `7580a7c`, pinned native toolchain; source was not
 built from the live tree. Host lock, 8 GiB gate, 60-second turn and ≥15 GiB disk
-floor applied. Probe log: `/Users/mfwolffe/lanes/pm01/evidence/probe-7580a7c.log`.
+floor applied. Probe log: `evidence/probe-7580a7c.log`.
 All fmt/build/units/186 CLI cases passed, no SKIPs. Largest fixture: 24 packages,
-0.004090 s for larder, 0.004136 s for lrd. This is one end-to-end subprocess
+0.004090 s for the primary executable, 0.004136 s for its short link. This is one end-to-end subprocess
 measurement, not a speed gate, benchmark average or claim about package installs.
 
-A previously submitted kasumi 8–11 job remains at intermediate `353d347`, PID
-2341966, `/home/mfwolffe/lanes/pm01/linux.{pid,log,exit}`; it is not final-head
+A previously submitted Linux job on CPUs 8–11 remains at intermediate `353d347`, PID
+2341966, `the Linux job’s pid, log and exit records`; it is not final-head
 evidence and is never killed/requeued. Hosted Linux qualification is the CI
 matrix job. Final-head gauntlet results and current run state are recorded in the
 PR/hand-back, without changing the audited head afterward.
 
 ### R-list (recommendations implemented within pm00's policy)
 
-- **R-pm01-1:** A (recommended/implemented): bounded F2 literal subset, mandatory
+- **Choice:** A (recommended/implemented): bounded F2 literal subset, mandatory
   exact manifest fields, reject all unknown fields; B: silently accept extension
   keys. A keeps signed data unambiguous and resource-bounded.
-- **R-pm01-2:** A (recommended/implemented): explicit snapshot.lrd/arch/slot IDs,
+- **Choice:** A (recommended/implemented): explicit snapshot filename, architecture and slot IDs,
   at most 24 package candidates, declared recursive-node budget ≤100,000,000,
   latest-first obligation backtracking; B: unbounded search or greedy closure.
   The snapshot is intentionally small; a budget refusal is not UNSAT.
-- **R-pm01-3:** A (recommended/implemented): matching installed replacement target
+- **Choice:** A (recommended/implemented): matching installed replacement target
   must leave the proposed set; holds block it; B: treat replaces as an ignorable
   annotation. A preserves the named-removal meaning without any filesystem action.
-- **R-pm01-4:** A (recommended/implemented): one complete CI tier on both hosts
+- **Choice:** A (recommended/implemented): one complete CI tier on both hosts
   for every PR/trunk event; B: add a planner/labels before there is a useful
   lesser tier. A avoids silent skipped platforms in this first harness.
 
 ## Done-when
 
-- [x] Private repo/default trunk and exact lope licence seed; fresh name checks.
+- [x] Private-at-creation repository/default trunk and exact lope licence seed; fresh name checks.
 - [x] Prediction before implementation; numbered specs and pinned toolchain.
 - [x] Read-only parser/version/solver/checker/CLI implementation and fixture e2e.
 - [x] Mac baseline fmt/build/unit/CLI probe at a committed head; largest timing.

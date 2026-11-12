@@ -5,10 +5,9 @@ gate change names).
 
 The package manager was renamed **paxage**, short command **`pxg`**, on
 2026-11-09, while the repository was private and nothing had been installed
-anywhere. Until then it was larder (`lrd`); this note and the other records keep
-that name as they found it. The prediction is `prediction-pm05a.txt`
-(`ca8d602`), committed first with the census. The branch began on trunk
-`e29dac3` and was rebased onto `b3e891e` (larder#12, `disconnect()` in
+anywhere. Until then it was larder (`lrd`). The prediction is
+`prediction-pm05a.txt` (`ca8d602`), committed first with the census. The branch
+began on trunk `e29dac3` and was rebased onto `b3e891e` (PR #12, `disconnect()` in
 `tools/check-powercut`) without a conflict.
 
 ## The claim
@@ -38,7 +37,7 @@ solver fixtures' bytes and the canonical payload are unchanged.
 
 ## Rulings
 
-R-pm05a-1 to 7, all A (2026-11-09, on the census):
+The following choices were made on 2026-11-09, after the census:
 
 1. The `.lrd` extension becomes `.pxg`.
 2. The names the contract did not list (the intent header, the temporaries, the
@@ -89,8 +88,8 @@ carries none:
   made, the checkout's own path aside);
 - `names-no-old-environment`.
 
-Seen red at the rows' commit, before any rename (`e306e02`, hasu light A,
-`~/lanes/pm05a/evidence/red-linux-e306e02.record`, sha256 `e41a80bc…`):
+Seen red at the rows' commit, before any rename (`e306e02`, the NixOS Linux host light A,
+`evidence/red-linux-e306e02.record`, sha256 `e41a80bc…`):
 `red-census` printed 376 `FAIL census-old-names` lines and 21
 `FAIL census-old-paths` lines, as predicted, with `census-allowlist` green;
 `red-names` printed 17 FAILs, every row but `names-no-old-environment`, which
@@ -107,7 +106,7 @@ with "fixture unavailable", since no `paxage` existed to publish it.
   and path scan of every root the names rows made.
 - On the Mac, `target/bin` also holds `.dSYM` directories;
   `names-old-binaries-absent` covers them by the same rule.
-- The rebase onto larder#12 applied cleanly; the prediction expected a conflict
+- The rebase onto PR #12 applied cleanly; the prediction expected a conflict
   in `tools/check-powercut`. #12's `disconnect()` is kept, under the new names.
 - The first red take, at the rows' commit before the rebase (`a2137d2`), was red
   exactly as the second; it is superseded because that commit is not on the
@@ -116,7 +115,7 @@ with "fixture unavailable", since no `paxage` existed to publish it.
   former name goes on check-census's record list by path.
 - **A prediction miss: the plant's third row did not go red by name.** The
   first plant take (`60040e2` on `0fb7250`, the Mac,
-  `~/lanes/pm05a/evidence/plant-mac-60040e2.record.void-unnamed-row`, sha256
+  `evidence/plant-mac-60040e2.record.void-unnamed-row`, sha256
   `dcd9a7e8…`) was red by name for `census-old-names` and
   `names-proposal-suffix`, and the recorder refused it: "missing FAIL line for
   config-both-changed-proposal". The run reached that row, and the row does
@@ -128,18 +127,17 @@ with "fixture unavailable", since no `paxage` existed to publish it.
   any regression that stopped writing a proposal would have gone red without a
   row's name. `7e99453` fixes the runner: a row group whose check raises prints
   `FAIL <group> crashed <exception>` and, under `--all`, the other rows run.
-  Checked before the retake on hasu light A at `7e99453`: every transaction row
+  Checked before the retake on the NixOS Linux host light A at `7e99453`: every transaction row
   passed, and on a scratch, never-pushed commit with the plant's hunk,
   `config-both-changed-proposal` and `config-proposal-exists` each printed FAIL
   by name. The plant was retaken once, on the head that carries the fix.
 
 ## Forbidden
 
-- The repository is private and is not named in public text. The GitHub
-  repository's own rename was not this lane's.
+- The GitHub repository rename was separate from this work.
 - No foreign source of any kind was read; the rename reads only this
   repository.
-- Nothing in `/tmp` on any host. Never signed on hasu. kasumi and the 860
+- Nothing in `/tmp` on any host. Never signed on the NixOS Linux host. The FHS Linux host and the 860
   untouched. No label, merge, tag or close; no attribution trailers. Every
   other lane's files were reused by copy only (pm04's guest inputs, toolchain
   and GNU time).
@@ -154,7 +152,7 @@ with "fixture unavailable", since no `paxage` existed to publish it.
   from pm04's staging and re-checked against their pinned digests (`04e8f246…`,
   `41ba36d8…`, `bf276ffc…`) on each host; `vm-inputs-digests` re-reads them on
   every take.
-- The recorder: planning's `tools/gauntlet-record.sh` at `862387f2`, sha256
+- The recorder: `tools/gauntlet-record.sh` at `862387f2`, sha256
   `ec9f42c9…`, the same on every host.
 
 ## Prediction
@@ -164,14 +162,14 @@ red at the base, what must not change, the gate, the plant and the R-list.
 
 ## Evidence index
 
-- Red: `~/lanes/pm05a/evidence/red-linux-e306e02.record` (and the superseded
+- Red: `evidence/red-linux-e306e02.record` (and the superseded
   `red-mac-a2137d2.record.superseded`, the same red on the Mac before the rebase).
 - Green: the Linux record with power cuts and the Mac record at the PR's head,
   named in the PR body.
 - Plant: `pm05a-plant-suffix`, one hunk in `src/txn/txn.lu` putting the former
   suffix back, rebuilt on the final head; its record is named in the PR body.
   The first take's record is void (above, "A prediction miss").
-- Superseded: `green-mac-0fb7250.record` and satoyama's
+- Superseded: `green-mac-0fb7250.record` and the Arch Linux host's
   `green-linux-0fb7250.record`, valid at `0fb7250`, before `7e99453`.
 
 ## Done-when
