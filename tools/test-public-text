@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     allow.write_text(f'sample.txt|machine|{digest}|not permitted\n')
     assert 'FAIL public-text-allowlist' in check().stdout, 'machine exception must fail'
     allow.write_text('')
+    specimen.write_text('see ' + 'spr' + 'ints/pm/example\n')
+    assert 'pattern=private-plan-path' in check().stdout, 'private planning path must fail'
     specimen.write_text('clean\n')
     forbidden = 'ha' + 'su'
     (repo / forbidden).write_text('clean\n')

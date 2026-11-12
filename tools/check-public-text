@@ -11,6 +11,7 @@ patterns = {
     'machine': re.compile(r'(?<![A-Za-z0-9_])(?:' + '|'.join(('ha'+'su', 'ka'+'sumi', 'sato'+'yama', 'no'+'mad')) + r')(?![A-Za-z0-9_])', re.I),
     'decision': re.compile('R-' + r'pm[0-9][A-Za-z0-9-]*', re.I),
     'lane-path': re.compile('lan' + 'es/', re.I),
+    'private-plan-path': re.compile('spr' + 'ints/pm/', re.I),
     'role': re.compile(r'the (?:main' + r'tainer|ow' + r'ner)\b', re.I),
     'home-user': re.compile('mfw' + 'olffe', re.I),
 }
