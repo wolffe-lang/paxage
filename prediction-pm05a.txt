@@ -1,10 +1,10 @@
 pm05a prediction — 2026-11-09T19:40Z. The rename: larder becomes paxage, lrd becomes pxg.
-Authority: planning c381908b, sprints/pm/05-the-rename/pm05a-the-rename.md, and the
-2026-11-09 rulings in sprints/pm/index.md (the name paxage, short command pxg,
-superseding R-pm00-13). Base: trunk e29dac3 (M-PM1 met). Branch pm05a.
+Authority: the rename implementation contract at c381908b and the
+2026-11-09 decision to use paxage and the short command pxg,
+superseding the earlier choice. Base: trunk e29dac3 (M-PM1 met). Branch pm05a.
 This is a prediction, not measured evidence. It is committed before any change.
 The GitHub repository keeps its old name until the orchestrator renames it after
-larder#12; this branch renames only what the repository holds.
+the concurrent pull request; this branch renames only what the repository holds.
 
 == 0. The census at e29dac3
 
@@ -23,8 +23,8 @@ Live occurrences by class (each counted once, in the first class it fits):
   config proposal suffix         11    6    change
   environment variables         127   26    change (22 names)
   CI job and artifact names       0    0    nothing to change
-  the .lrd data extension        17    5    change (R-pm05a-1)
-  other on-disk names            17    6    change (R-pm05a-2)
+  the .lrd data extension        17    5    change
+  other on-disk names            17    6    change
   docs, prose and comments       45   23    change
   historical notes and evidence  84   11    keep
 
@@ -62,16 +62,15 @@ Live occurrences by class (each counted once, in the first class it fits):
 6. CI: no job, step or artifact name carries an old name, so ci.yml and the
    local-gate baseline do not change. CI runs tools/gauntlet, which changes.
 7. The .lrd extension: tests/snapshots/*/snapshot.lrd (19 files, read as
-   DIR/snapshot.lrd by resolve) and generations/<N>/db.lrd (R-pm05a-1).
-8. Other on-disk names (R-pm05a-2): the intent header `larder-intent<TAB>1`,
+   DIR/snapshot.lrd by resolve) and generations/<N>/db.lrd.
+8. Other on-disk names: the intent header `larder-intent<TAB>1`,
    the transaction temporaries `.larder-t<N>-<i>` and `.larder-t<N>-u<i>`, the
    test account's gecos "larder test daemon", the mktemp prefixes
    (larder-unqualified, larder-toolchain), the guest's checkout paths
    /mnt/p/larder and /mnt/m/larder and the guest tarball's larder/ prefix.
 9. Docs and prose: README, CLAUDE.md, CHANGELOG, docs/CLI.md, SOLVER.md,
    TRANSACTIONS.md, VERSION.md, and comments in src/ and tools/. One live
-   reference to this repository's own PR, `larder#9` in tools/lib-fetch.sh
-   (R-pm05a-3). The README gains the one plain line "formerly larder, renamed
+   reference to this repository's own PR, the earlier pull request in tools/lib-fetch.sh. The README gains the one plain line "formerly larder, renamed
    2026-11-09".
 10. Kept, as records: notes/pm01-the-format-and-harness.md, notes/pm02-pack-
    and-stage.md, notes/pm03-trust-and-file-repository.md, notes/pm04-linux-
@@ -79,7 +78,7 @@ Live occurrences by class (each counted once, in the first class it fits):
    notes/provenance.txt, prediction.txt, prediction-pm02.txt, prediction-pm04.txt
    and prediction-pm04b.txt (prediction-pm03.txt has none). This file and the
    lane note notes/pm05a-the-rename.md join them. CHANGELOG's unreleased entries
-   are not records (R-pm05a-4).
+   are not records.
 
 No migration code: nothing was ever installed under the old paths. No old name
 is accepted as an alias: no lrd or larder link, no LARDER_* variable read, no
@@ -101,13 +100,13 @@ FAIL by name and the step keeps going to the end:
   names-state-path           init makes ROOT/var/lib/paxage (0700, lock, current), no old one
   names-cache-path           init makes ROOT/var/cache/paxage, no old one
   names-etc-reserved         neither ROOT/etc/paxage nor the old one is written
-  names-database-file        generations/0/db.pxg exists, no db.lrd (R-pm05a-1)
+  names-database-file        generations/0/db.pxg exists, no db.lrd
   names-proposal-suffix      a both-changed upgrade writes etc/alpha.conf.paxage-new and status lists it
   names-intent-header        a crash at `intent` leaves an intent whose first line is paxage-intent<TAB>1
   names-temp-prefix          a crash at the first apply:<i>:temp leaves a .paxage-t<N>-<i> temporary
   names-failpoint-env        PAXAGE_FAILPOINT=trace traces; the old variable alone traces nothing
   names-shipped-no-failpoint paxage with PAXAGE_FAILPOINT=trace traces nothing
-  names-no-old-environment   no variable with the old prefix is set in the gauntlet (R-pm05a-6)
+  names-no-old-environment   no variable with the old prefix is set in the gauntlet
 check-names holds no old name literally: it imports the old words from
 check-census.
 
@@ -115,7 +114,7 @@ tools/check-census (new; a gauntlet step `census` after `ci-routing`, before
 the build). It defines the old words once and scans every tracked file and
 path with the rule of section 0. A hit outside the allowlist prints
 `FAIL census-old-names PATH:LINE: TEXT` (or `FAIL census-old-paths PATH`).
-The allowlist is explicit (R-pm05a-5): the eleven record files, this file,
+The allowlist is explicit: the eleven record files, this file,
 the lane note, check-census itself, and two exact lines (the README's
 "formerly larder" line and the CHANGELOG's rename entry). `census-allowlist`
 fails if an allowlisted file is untracked or an allowlisted line is missing,
@@ -144,13 +143,13 @@ repository cannot be published without it, so the fixture rows FAIL with
 
 == 3. The gate, predicted
 
-The whole M-PM1 gauntlet at the final head on a Linux KVM host (satoyama slot A
-with both locks, or hasu A or B), power cuts included: pm04b's 36 steps plus
+The whole M-PM1 gauntlet at the final head on a Linux KVM host (the alternate Linux host slot A
+with both locks, or the primary Linux host A or B), power cuts included: pm04b's 36 steps plus
 census and names, 38 steps, worst=0, with one SKIP (trust-openssl-writer, not
-kasumi). transactions-privileged and powercut-vm must run, not SKIP: a rig that
+another Linux host). transactions-privileged and powercut-vm must run, not SKIP: a rig that
 still sets an old LARDER_* variable would silently drop them, and
 names-no-old-environment turns that into a red row first. About 40 minutes on
-satoyama (trust-fuzz 20, powercut-vm 9.5). A Mac take: pm04b's 26 steps plus
+the alternate Linux host (trust-fuzz 20, powercut-vm 9.5). A Mac take: pm04b's 26 steps plus
 census and names, 28 steps green, with pm04b's 13 SKIPs (about 3 minutes). Then
 the full-matrix CI run on the labelled PR.
 
@@ -164,7 +163,7 @@ config-proposal-exists, which plants its own proposal under the new name).
 
 == 5. Risks
 
-- larder#12 changes tools/check-powercut, which this lane also edits: a rebase
+- the concurrent pull request changes tools/check-powercut, which this lane also edits: a rebase
   conflict there is expected and resolved by hand.
 - The recorder takes the record's repo= from the take clone's origin URL, and
   the audit compares it with the repository name it is given. Final takes run
@@ -172,35 +171,35 @@ config-proposal-exists, which plants its own proposal under the new name).
 - A rig left with old variables (LARDER_GUEST_DIR, LARDER_TRANSACTION_IMAGE)
   would turn real legs into SKIPs; the green record is read for SKIP lines.
 
-== 6. Decisions (R-pm05a-N), each with its recommendation
+== 6. Decisions (the rename decisions), each with its recommendation
 
-R-pm05a-1, the .lrd data extension (snapshot.lrd, db.lrd).
+the .lrd data extension (snapshot.lrd, db.lrd).
   A: .pxg (snapshot.pxg, db.pxg), as .lrd followed the short command.
   B: keep .lrd, as an allowlisted exception; the old short name stays on disk.
   C: a name-free extension (.lit, for literal data), immune to later renames.
   Recommend A.
-R-pm05a-2, on-disk and internal names the contract does not list (section 0,
+on-disk and internal names the contract does not list (section 0,
   item 8). A: rename them all, since nothing is installed anywhere. B: keep the
   intent header as a frozen format constant. Recommend A.
-R-pm05a-3, live references to this repository's own PRs (one: larder#9 in
-  tools/lib-fetch.sh). A: paxage#9, since the number survives the rename and
+live references to this repository's own PRs (one: the earlier pull request in
+  tools/lib-fetch.sh). A: pull request 9, since the number survives the rename and
   GitHub redirects. B: allowlist the line. Recommend A. Historical notes keep
   theirs.
-R-pm05a-4, the CHANGELOG. 0.1.0 is unreleased, so its entries describe what
+the CHANGELOG. 0.1.0 is unreleased, so its entries describe what
   will ship. A: its entries use the new names, plus one entry recording the
   rename, the only allowlisted CHANGELOG line. B: treat the whole CHANGELOG as
   a record. Recommend A.
-R-pm05a-5, the census's shape. A: larder in any case anywhere; lrd in any case
+the census's shape. A: larder in any case anywhere; lrd in any case
   as a token; contents and paths of every tracked file; an explicit list of
   record files plus exact allowlisted lines; check-census holds the only
   definition of the old words. B: allow the whole notes/ directory by glob.
   C: lrd as a bare substring, which random bytes in a future vector could trip.
   Recommend A.
-R-pm05a-6, a guard against stale rigs. A: names-no-old-environment fails by
+a guard against stale rigs. A: names-no-old-environment fails by
   name when any variable with the old prefix is set, so an old rig goes red
   instead of quietly skipping the root and power-cut legs. B: no guard; read
   the SKIP lines by hand. Recommend A.
-R-pm05a-7, LARDER_ROOT (the tools' checkout path). A: PAXAGE_ROOT, mechanical
+LARDER_ROOT (the tools' checkout path). A: PAXAGE_ROOT, mechanical
   like the rest. B: PAXAGE_TREE, so a later environment default for --root
   cannot be confused with it. Recommend A: the executable reads no PAXAGE_ROOT,
   and the variable never leaves the tools.

@@ -1,5 +1,4 @@
-pm02 prediction, 2026-11-02. Authority: wolf planning trunk 914c529,
-02-pack-and-stage contract; larder eef47678 F1-F6; pax 5da8daaf design.
+pm02 prediction, 2026-11-02. Authority: the pack-and-stage implementation contract at 914c529; the package manager eef47678 F1-F6; pax 5da8daaf design.
 The pinned std SHA-256 new256/update256/final256 is incremental: digest state
 and a <=64 KiB input chunk should give payload-size-independent RSS at 64 MiB
 and 1 GiB. Empty, abc, multi-block and million-a FIPS known answers must match.

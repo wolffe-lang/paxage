@@ -10,5 +10,5 @@ is not UNSAT. Holds and ABI boundaries are hard, optional dependencies advisory.
 The deliberate off-line constraint/comparison plant must fail a named gate on the
 first CI event, through its own draft PR, before any main-branch CI event.
 Both hosted platforms run fmt, build, units and fixture CLI e2e. Mutating verbs
-refuse pm04 by name; lrd is a link to the same executable and diagnostics say larder.
+refuse pm04 by name; lrd is a link to the same executable and diagnostics say the package manager.
 No root mutation, signing, downloader, public registration or spend is implemented.

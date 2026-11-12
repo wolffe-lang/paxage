@@ -21,11 +21,11 @@ parse_shapes.lu:96-100), no byte/node/member budget (620-640,723-787),
 str-only input (620), unordered rendering/no spans (71-75,137-145,1365-1378).
 Its as_int can distinguish integers (314-318); escaped surrogates reject,
 but raw-byte UTF-8 validation must occur before str creation.
-R-pm03-2 B ruled: implement our own strict byte reader, not a std pre-parser.
-R-pm03-1 A ruled subject to specification MUST check: canonical signed spans
+The chosen approach is a strict byte reader, not a std pre-parser.
+Subject to the specification MUST check, use canonical signed spans
 only, named non-canonical-signed refusal; no general TUF-writer import goal.
 
-Predict native Ed25519 verify on kasumi costs 1–50 ms/signature; this broad
+Predict native Ed25519 verify on another Linux host costs 1–50 ms/signature; this broad
 estimate is unmeasured, not a gate. Measure warmed repeated RFC vectors with
 monotonic timing and report median plus range before approving a signature cap.
 Read public/sign/verify source; qualify identity/small-order points explicitly:
@@ -66,7 +66,7 @@ Linux growing-input runs under 2 GiB prlimit; no growing runs on the Mac.
 Local final-head plant omits one bound/version check, one file/hunk/commit,
 red by named row, pushed without a PR. Every gauntlet END exit is evidence.
 
-R-pm03-3 defaults: timestamp 48h, snapshot 14d, targets 90d, root 1y;
-maintainer confirmation remains owed. R-pm03-4: atomic timestamp replacement
+defaults: timestamp 48h, snapshot 14d, targets 90d, root 1y;
+Confirmation remains owed. Atomic timestamp replacement: atomic timestamp replacement
 only after referenced immutable files are present and synced; create-only
 for every other repository file. No real keys, root mutation or network client.

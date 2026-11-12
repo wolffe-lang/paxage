@@ -1,8 +1,6 @@
 pm04 prediction — 2026-11-09T01:20Z. Linux transactions, M-PM1.
-Authority: planning ae10893c, sprints/pm/04-linux-transactions; lane rules
-1031 (every Added item); sprints/pm/index.md (R-pm00-1..13 A, R-pm02-*,
-R-pm03-*); pax trunk db516c69 notes/pm00-the-design.md (R-pm00-6, -9, -10,
-the inventory rows, the pm04 build row). Base larder d5017a210424.
+Authority: the Linux transaction implementation contract at ae10893c;
+all 1031 Added items; the transaction, packaging and trust decisions; pax trunk db516c69 notes/pm00-the-design.md (ownership, rollback, inventory and build requirements). Base: package manager commit d5017a210424.
 This is a prediction, not measured evidence. Committed before implementation.
 Sources, as ruled: rename(2), fsync(2), flock(2), openat(2), statfs(2),
 proc(5) mountinfo, sysfs /sys/dev/block, ext4's documented journalling and
@@ -23,12 +21,12 @@ readlinkat, fchownat/utimensat by handle, and no fchdir. fs_lock is flock(2),
 tried once, never waited (busy). fs_sync is fsync(2) (F_FULLFSYNC on macOS);
 fs_sync_dir opens O_DIRECTORY and syncs. fs_statfs gives f_type, blocks and
 inodes. os_exit(int) ends the process with no unwinding.
-Prediction: larder builds unchanged on 0.2.38 + lupin 0.1.60 with std kept at
-23baa1a (R-pm04-1). If not, the bundled std d4a4d4c is the fallback.
+Prediction: the package manager builds unchanged on 0.2.38 + lupin 0.1.60 with std kept at
+23baa1a. If not, the bundled std d4a4d4c is the fallback.
 
 == 1. On-disk layout (ROOT is the synthetic root, never the host /)
 
-ROOT/var/lib/larder/            0700, the root-owned state (one filesystem with ROOT)
+ROOT/var/lib/<former-name>/            0700, the root-owned state (one filesystem with ROOT)
   lock                          persistent lock inode, 0600, made once by init,
                                 never unlinked or recreated; no PID inside
   current                       the commit decision: current { schema, features,
@@ -45,7 +43,7 @@ ROOT/var/lib/larder/            0700, the root-owned state (one filesystem with 
     backup/<i>                  durable preimage copies of op i
     stage/<package>/            pm02 stage output (validated, digest-verified)
   trust/                        pm03 trust generations (monotonic, outside rollback)
-ROOT/var/cache/larder/          pm03 hash-bound cache (.part, objects/sha256)
+ROOT/var/cache/<former-name>/          pm03 hash-bound cache (.part, objects/sha256)
 
 Generation numbers and transaction ids are deterministic (t<N> makes N), so two
 identical runs give identical bytes; an undone transaction removes its
@@ -55,7 +53,7 @@ uncommitted generations/<N> so the number is reused.
 
 Phase   Durable step                       Failpoint after it    Recovery on a cut here
 L       flock(LOCK_EX|LOCK_NB) on lock     lock                  none (kernel lock dies with owner)
-Q       qualify ROOT: jbd2-journalled ext3/ext4 (R-pm04-6), one device, no pending
+Q       qualify ROOT: jbd2-journalled ext3/ext4, one device, no pending
         transaction (else recovery-needed, exit 8), capacity for backups+payload
 P       stage each package (pm02 stage),   stage                 no valid intent: discard t<N>
         then sync stage files and dirs
@@ -64,11 +62,11 @@ B       backup i: preimage copy, fsync     backup:<i>            no valid intent
 I       intent: write intent.tmp, fsync,   intent-written,       written: discard; renamed+synced:
         rename to intent, fsync t<N>/,     intent                undo (nothing applied yet)
         fsync transactions/
-A       op i: temp .larder-t<N>-<i> made   apply:<i>:temp,       undo: unlink temp, restore every
+A       op i: temp .<former-name>-t<N>-<i> made   apply:<i>:temp,       undo: unlink temp, restore every
         in the held parent by fd, content, apply:<i>:renamed,    op whose live identity equals its
         fchmod/fchown by fd, fsync, then  apply:<i>              new identity, skip those equal to
         rename over the name (pinned cwd,                        old, refuse anything else by name
-        R-pm04-2), fsync parent. Deletes:
+        the handle-based rename decision), fsync parent. Deletes:
         unlink + fsync parent. Dirs made
         shallowest-first, removed deepest-first.
 V       validate the whole live plan (every path, type, mode, owner, digest/target,
@@ -82,16 +80,15 @@ F       finish: pending actions recorded,  cleanup:<k>, done     finish again: i
         backups/temps/stage removed                              backups, temps and t<N>
         deepest-first, t<N> removed, fsync
 
-Commit authority is current alone (R-pm00-6): current naming t<N>'s generation
+Commit authority is current alone: current naming t<N>'s generation
 means finish; anything else means undo. No COMMITTED record contradicts it.
 Rescue (section 6) is itself a sequence of idempotent durable steps, each with
 its failpoint: rescue:undo:<i>:temp, rescue:undo:<i>, rescue:generation,
 rescue:finish:<k>, rescue:done.
-Cache actions are planned, recorded as pending after C and never executed
-(R-pm04-10). Account and directory actions are ordinary ops inside A
+Cache actions are planned, recorded as pending after C and never executed. Account and directory actions are ordinary ops inside A
 (etc/passwd, etc/group, etc/shadow when present: whole-file replace with backup).
 
-== 3. Ownership, config and removal rules (R-pm00-9, R-pm00-10)
+== 3. Ownership, config and removal rules
 
 - Ownership index: path -> package, from the current generation's manifests.
   Install refuses file-conflict (another owner not removed by this plan),
@@ -101,19 +98,19 @@ Cache actions are planned, recorded as pending after C and never executed
   generation), L live digest or absent, N new packaged digest.
   L absent: stays absent (baseline becomes N). L == B: install N.
   L != B, N == B: keep L. L != B, N != B: keep L; if L != N write
-  PATH.larder-new = N, an owned proposal; an unowned PATH.larder-new refuses
+  PATH.<former-name>-new = N, an owned proposal; an unowned PATH.<former-name>-new refuses
   proposal-exists. Fresh install over an existing path: unowned-collision.
 - Removal deletes owned paths whose live identity equals the recorded one; a
   modified owned file (config or not) stays as a recorded residual; a directory
   goes only when empty and its last owner leaves; --purge deletes the residual
   configs it lists, nothing else. Accounts are never deleted (residual account).
 - Upgrade replaces a modified non-config owned file (its preimage is backed up
-  until C) and reports it; configs use the three-way rule (R-pm04-11).
+  until C) and reports it; configs use the three-way rule.
 - Reasons: explicit for named packages, dependency otherwise. autoremove computes
   packages unreachable from explicit roots over required edges (provides
   included), cycles collected together; without --yes it previews, no writes.
   remove of a package something else requires refuses required-by, naming them.
-- Whole-snapshot upgrade (R-pm00-5): upgrade resolves every explicit package
+- Whole-snapshot upgrade: upgrade resolves every explicit package
   against the trusted targets and installs the latest compatible closure.
 
 == 4. CLI (C2 is replaced; exits 0-6 keep their meaning)
@@ -129,14 +126,14 @@ rescue --root DIR          finish or undo the pending transaction, or refuse by 
 New exits: 7 locked (another writer holds the lock), 8 recovery-needed (mutation
 refused until rescue), 9 rescue refusal (a state rescue does not understand).
 sync refuses by name: upgrade is the one refresh-and-upgrade operation.
---root / refuses live-root-is-pm05 (R-pm04-7).
+--root / refuses live-root-is-pm05.
 
 == 5. The check: "old or new consistent generation only, recovered twice identically"
 
 digest(ROOT) = SHA-256 over every entry under ROOT in byte order of path:
 path, type, mode, uid, gid, length, content SHA-256 or link target, and hardlink
-class (the first path of each inode). Excluded, by name: var/lib/larder/trust/
-and var/cache/larder/ (trust is monotonic outside package rollback, R-pm00-6),
+class (the first path of each inode). Excluded, by name: var/lib/<former-name>/trust/
+and var/cache/<former-name>/ (trust is monotonic outside package rollback),
 and every time field. Nothing else is excluded: current, generations,
 objects, transactions and every temp name are inside the digest.
 REF_OLD = digest of a root that never ran the transaction (same fixture).
@@ -144,7 +141,7 @@ REF_NEW = digest of a root where the same transaction ran to completion.
 For a cut state S: R1 = digest after `rescue`, R2 = digest after a second
 `rescue`. PASS iff exit codes are 0, R1 == R2, R1 in {REF_OLD, REF_NEW},
 R1 == REF_OLD for every cut before C's rename is visible and REF_NEW for every
-cut after it, `verify` passes, no t<N> or .larder-t<N>-* name remains, and a
+cut after it, `verify` passes, no t<N> or .<former-name>-t<N>-* name remains, and a
 sentinel tree outside ROOT is byte-identical. A process cut at commit-renamed is
 REF_NEW; a power cut at the same step may be either, never anything else.
 Before rescue, status says recovery-needed and install/remove/upgrade exit 8.
@@ -195,11 +192,11 @@ vm-eio-fsync, vm-enospc, vm-ext2-refused.
 == 8. Power cuts (QEMU, journalled guest)
 
 Guest: Ubuntu 24.04 cloud image (kernel, initrd, rootfs), each a digest-checked
-staged input under ~/lanes/pm04 on hasu, downloaded outside the locks. KVM on
-hasu (/dev/kvm present, 70 GB free at 01:12Z). The data disk is ext4
+staged input in a staging directory on the primary Linux host, downloaded outside the locks. KVM on
+the primary Linux host (/dev/kvm present, 70 GB free at 01:12Z). The data disk is ext4
 (mkfs.ext4, journal, metadata_csum) served to QEMU by a recorder written from
 the NBD protocol specification: it logs every WRITE (offset, bytes), FLUSH and
-FUA in arrival order, plus a marker export larder's test binary writes after
+FUA in arrival order, plus a marker export the package manager's test binary writes after
 each durable step. Crash states are synthesized offline: for every FLUSH
 boundary k, the prefix through k (the cut just after a barrier), the prefix
 plus all writes before k+1 (the cut just before the next), and seeded subsets
@@ -222,54 +219,54 @@ see a missing barrier; that is why the second plant lives in the VM witness.
 
 == 10. Rulings asked (recommendations implemented unless ruled otherwise)
 
-R-pm04-1 toolchain. (A) wolf 0.2.38 + lupin 0.1.60, std kept at 23baa1a;
+toolchain. (A) wolf 0.2.38 + lupin 0.1.60, std kept at 23baa1a;
   (B) 0.2.37; (C) stay on 0.2.36 with path-only operations. Recommend A.
-R-pm04-2 rename by handle. 0.2.38 has no renameat/readlinkat/fchownat/fchdir.
+rename by handle. 0.2.38 has no renameat/readlinkat/fchownat/fchdir.
   (A) pin the working directory to the held directory by one-component chdir
   steps, each verified by dev/ino against the held handle, then rename,
   readlink and lchown by a one-component name (pm02's pinned-cwd technique),
   and file the missing calls upstream in plain words; (B) path rename with
   pre/post identity checks (a window remains); (C) block on upstream.
   Recommend A.
-R-pm04-3 recovery trigger. (A) mutation verbs refuse recovery-needed (exit 8);
+recovery trigger. (A) mutation verbs refuse recovery-needed (exit 8);
   only rescue acts on a pending transaction; (B) every mutation verb recovers
   first. Recommend A.
-R-pm04-4 failpoints. (A) a test-only executable larder-failpoint from the same
-  modules reads LARDER_FAILPOINT=<name>:<crash|eio|enospc|pause>; the shipped
+failpoints. (A) a test-only executable the historical test-only failpoint executable from the same
+  modules reads <former-prefix>_FAILPOINT=<name>:<crash|eio|enospc|pause>; the shipped
   binary has no failpoint input; (B) an environment variable the shipped binary
   honours; (C) unit-level only. Recommend A.
-R-pm04-5 privilege. (A) euid 0 applies owners by handle; an unprivileged caller
+privilege. (A) euid 0 applies owners by handle; an unprivileged caller
   may transact only on a root it owns, owners kept logical as in pm02, the mode
   fixed per root at init and never mixed (ownership-mode-mismatch); (B) euid 0
   only. Recommend A: the Mac and CI run the logic rows, Linux containers run the
   ownership rows as root.
-R-pm04-6 filesystem qualification. (A) Linux ext3/ext4 with an active jbd2
+filesystem qualification. (A) Linux ext3/ext4 with an active jbd2
   journal for ROOT's device (mountinfo major:minor -> /sys/dev/block ->
   /proc/fs/jbd2/<name>-*), refusing ext2, tmpfs, overlay, nfs and unknown by
   name; macOS APFS for development roots only, durability not claimed there;
   (B) A plus xfs and btrfs by statfs type, unwitnessed. Recommend A.
-R-pm04-7 the live root. (A) --root required, / refused live-root-is-pm05 until
+the live root. (A) --root required, / refused live-root-is-pm05 until
   PAX's boot recovery (pm05/pm06); (B) / allowed. Recommend A.
-R-pm04-8 staging under root. (A) transactions stage through pm02's stage into
+staging under root. (A) transactions stage through pm02's stage into
   the root-only 0700 transaction directory, its euid-0 refusal lifted only for
   that caller; the live tree is written only by the descriptor walk; (B) stream
   from the verified blob, no stage. Recommend A (the contract names the stage).
-R-pm04-9 registry. (A) a compiled registry (src/registry) of account ids and
+registry. (A) a compiled registry (src/registry) of account ids and
   owned directories, test entries only, ids never reused; (B) a signed registry
   target in the repository. Recommend A now, B before a real distribution.
-R-pm04-10 cache actions. (A) planned, recorded pending after the commit, never
+cache actions. (A) planned, recorded pending after the commit, never
   executed (no process capability); (B) refuse unsupported-action. Recommend A.
-R-pm04-11 modified files. (A) as section 3; (B) refuse an upgrade over a
+modified files. (A) as section 3; (B) refuse an upgrade over a
   modified non-config owned file. Recommend A.
-R-pm04-12 the database encoding. (A) current and db.lrd in F2 literal data
+the database encoding. (A) current and db.lrd in F2 literal data
   (bounded by 24 packages), manifests by digest as immutable objects, the
   intent a framed line format with a whole-file SHA-256 (past F2's node limit);
   (B) F2 everywhere. Recommend A.
-R-pm04-13 exits 7, 8, 9 as section 4. Recommend as listed.
-R-pm04-14 the power-cut model. (A) section 8's recorder and synthesized crash
+exits 7, 8, 9 as section 4. Recommend as listed.
+the power-cut model. (A) section 8's recorder and synthesized crash
   states; (B) killing QEMU at timed points (no cache loss modelled); (C) blkdebug
   error injection alone. Recommend A, with blkdebug for EIO only.
-R-pm04-15 the split. pm00 estimates 6-10 days. (A) two PRs: pm04a = pin,
+the split. pm00 estimates 6-10 days. (A) two PRs: pm04a = pin,
   lock, qualification, database, install/upgrade/remove, config, accounts,
   orphans, rescue, the failpoint matrix (crash at every transition and during
   rescue, injected EIO/ENOSPC, concurrent writers, ancestor races) and the
@@ -279,8 +276,8 @@ R-pm04-15 the split. pm00 estimates 6-10 days. (A) two PRs: pm04a = pin,
 
 == 11. Hosts
 
-Edits and commits on the Mac (TMPDIR=~/lanes/pm04/tmp). Records on hasu: block
+Edits and commits on the Mac (using a temporary build directory). Records on the primary Linux host: block
 then slot then light, the emptier block, 35 GB floor, uptime and queues read
 before each take, one take at most 2 h. The failpoint matrix and race rows run
 in a rootless container as container root (ownership rows) and as a mapped user
-(logical rows). KVM boot legs are light jobs. Never sign on hasu.
+(logical rows). KVM boot legs are light jobs. Never sign on the primary Linux host.
