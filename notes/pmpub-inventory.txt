@@ -115,7 +115,12 @@ tools/nbd-recorder | decision | 1
 tools/powercut-guest | role | 1
 tools/verify-trust-writer | machine | 2
 
-Test material leads | category | count
-tests/trust/rfc8032-s71.txt | published test vectors and seeds | 1 file
-tools/generate-trust-vectors | generated test-only keys | 1 file
-src/trust_repo/trust_repo.lu | generated marked test-only keys | 1 file
+Test material and secret candidates | category | count
+tests/trust/rfc8032-s71.txt | five published RFC 8032 test-only seeds | 5 vectors
+src/trust_state_test.lu | deterministic test-only signing seeds | 6 per call
+tools/generate-trust-crypto-vectors | RFC test-only seed used for generated cost fixture | 1 vector
+tests/trust/independent/*.public.der | independent public test-key wrappers | 13 files
+tools/generate-trust-vectors | generated marked test-only OpenSSL keys | 13 per run
+src/trust_repo/trust_repo.lu | generated marked test-only keys | 6 per run
+src/solver_test.lu, src/version_test.lu, tools/check-payload, tools/check-trust-fuzz, tools/powercut-synth | deterministic simulation or fuzz seeds, not keys | 5 files
+tools/check-fetch-retry | loopback address only | 3 occurrences
