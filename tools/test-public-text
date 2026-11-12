@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Exercise the public-text gate against a disposable tracked tree."""
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+scratch = root / 'target'
+scratch.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp:
+    repo = Path(tmp)
+    (repo / 'tools').mkdir()
+    shutil.copyfile(root / 'tools/check-public-text', repo / 'tools/check-public-text')
+    allow = repo / 'tools/public-text-allowlist'
+    allow.write_text('# path|pattern|sha256 of exact line|reason\n')
+    specimen = repo / 'sample.txt'
+    line = 'test ' + 'ha' + 'su'
+    specimen.write_text(line + '\n')
+    def git(*args):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+    def check():
+        return subprocess.run(['python3', '-I', str(repo / 'tools/check-public-text')], capture_output=True, text=True)
+    git('init', '-q')
+    git('add', 'tools', 'sample.txt')
+    red = check()
+    assert red.returncode == 1 and 'FAIL public-text sample.txt:1 pattern=machine' in red.stdout, red.stdout
+    digest = hashlib.sha256(line.encode()).hexdigest()
+    allow.write_text(f'sample.txt|machine|{digest}|a narrow test exception\n')
+    green = check()
+    assert green.returncode == 0 and 'PASS public-text' in green.stdout, green.stdout
+    specimen.write_text(line + ' changed\n')
+    assert check().returncode == 1, 'changed line must not inherit exception'
+    allow.write_text('sample.txt|machine|bad|reason\n')
+    assert 'FAIL public-text-allowlist' in check().stdout, 'malformed exception must fail'
+print('PASS public-text-tests')
