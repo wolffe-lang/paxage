@@ -1,4 +1,4 @@
-//! Filesystem qualification (X2, R-pm04-6). Linux: ext3/ext4 only, with an active
+//! Filesystem qualification (X2). Linux: ext3/ext4 only, with an active
 //! jbd2 journal for the root's own device, read from /sys/dev/block (or
 //! /proc/self/mountinfo) and /proc/fs/jbd2. statfs's ext magic alone cannot tell
 //! ext2 from ext3. macOS roots are development roots: durability is not claimed.

@@ -23,7 +23,7 @@ pub struct Account { name: str, uid: int, gid: int, package: str }
 /// A directory an action created (its missing ancestors included).
 pub struct Owned { path: str, package: str }
 
-/// A recorded but never executed action (cache rebuilds, R-pm04-10).
+/// A recorded but never executed action (cache rebuilds).
 pub struct Pending { kind: str, name: str, package: str }
 
 /// One generation's complete record.

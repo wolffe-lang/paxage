@@ -3,7 +3,7 @@
 //! a whole path. wolf 0.2.38 has no renameat, readlinkat, fchownat or fchdir
 //! (wolf-lang#1084), so those three operations run with the working directory
 //! pinned: chdir one component at a time, each step's "." checked by dev/ino
-//! against the held handle, then a one-component name (R-pm04-2). paxage is
+//! against the held handle, then a one-component name. paxage is
 //! single-threaded, so the process-wide working directory is safe to pin.
 
 use payload

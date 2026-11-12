@@ -1,7 +1,7 @@
 //! The root verbs (CLI C12-C17): init, status, verify, install, remove, upgrade,
 //! autoremove and rescue over a synthetic root. Mutation runs only under the
 //! root's persistent lock, after qualification, and never while a transaction
-//! is pending (R-pm04-3).
+//! is pending.
 
 use walk
 use txn
@@ -894,7 +894,7 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
     finish_open(o, 0, "")
 }
 
-/// Run one root verb. fail is inert for the shipped executable (R-pm04-4).
+/// Run one root verb. fail is inert for the shipped executable.
 pub fn run(a: List[str], fp: failpoint.Fail) -> int {
     let opts = parse(a)
     if opts.error != "" { return usage(opts.error) }

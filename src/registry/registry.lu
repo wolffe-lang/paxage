@@ -1,4 +1,4 @@
-//! The compiled action registry (X7, R-pm04-9). Account ids are allocated here
+//! The compiled action registry (X7). Account ids are allocated here
 //! centrally and never reused; a package names an entry, never an id or a path.
 //! Test entries only until a signed registry target exists.
 

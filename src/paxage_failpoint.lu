@@ -1,5 +1,5 @@
 //! member: false
-//! Test-only: the root verbs with PAXAGE_FAILPOINT armed (R-pm04-4). Never shipped
+//! Test-only: the root verbs with PAXAGE_FAILPOINT armed. Never shipped
 //! as paxage; the shipped executable passes failpoint.none().
 
 use root_cli

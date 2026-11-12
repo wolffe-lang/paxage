@@ -185,7 +185,7 @@ pub fn stage(fd: int, es: List[payload.Entry], root: str) -> str {
     stage_inner(fd, es, root, false)
 }
 
-/// Transaction staging (pm04, R-pm04-8): stage's checks, with euid 0 allowed only
+/// Transaction staging: stage's checks, with euid 0 allowed only
 /// for a caller that stages into the root's own 0700 transaction directory.
 pub fn stage_private(fd: int, es: List[payload.Entry], root: str) -> str {
     stage_inner(fd, es, root, true)

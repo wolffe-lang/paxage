@@ -1422,7 +1422,7 @@ fn rollback(c: Ctx, t: str, to: int, durable: bool, error: str) -> Done {
 }
 
 /// Space and inodes for backups, staged payloads, new files and the records, with
-/// 1 MiB of headroom; refused before the first durable step (pm00 R-pm00-10).
+/// 1 MiB of headroom; refused before the first durable step.
 fn capacity(c: Ctx, p: Plan) -> str {
     var bytes = 1048576
     var inodes = 16

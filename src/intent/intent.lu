@@ -1,4 +1,4 @@
-//! The transaction intent (X5, R-pm04-12): one framed line per operation, tab
+//! The transaction intent (X5): one framed line per operation, tab
 //! separated (F5 paths and link targets hold no control bytes), ending with the
 //! SHA-256 of every preceding byte. Rescue reads nothing else to undo.
 
