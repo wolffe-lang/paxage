@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the public-text gate against a disposable tracked tree."""
 import hashlib
-import os
 from pathlib import Path
 import shutil
 import subprocess
