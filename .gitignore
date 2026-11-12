@@ -4,3 +4,4 @@ target/
 
 .lu-cache/
 __pycache__/
+CLAUDE.md
