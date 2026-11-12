@@ -2,13 +2,14 @@
 
 formerly larder, renamed 2026-11-09
 
-PAX's package manager, also invoked as `pxg`. This repository is **private**.
-The current 0.1.0 implementation validates formats, orders versions, plans
-dependencies, packs canonical payloads, publishes test-only signed file repositories,
-bootstraps/updates/fetches through a bounded TUF profile, and installs, upgrades and
-removes packages as durable transactions over a synthetic Linux root (`--root`),
-with a rescue entry. The live root `/` is refused until PAX's boot recovery.
-`sync` is refused: `upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
+PAX's package manager, also invoked as `pxg`. The current 0.1.0 implementation
+validates formats, orders versions, plans dependencies, packs canonical payloads,
+and publishes test-only signed file repositories. It bootstraps, updates and fetches
+from local repositories through a bounded TUF profile. Install, upgrade and removal
+use crash-safe transactions on journalled Linux filesystems under test, with a rescue
+entry. Nothing has yet been installed on a PAX root; the live root `/` is refused
+until PAX's boot recovery. Network fetch is not supported. `sync` is refused:
+`upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
 production signing remains out of scope. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
@@ -21,8 +22,6 @@ Supported CI hosts: Linux x86-64 and macOS arm64. No other runtime dependencies
 beyond the digest-pinned Wolf release/runtime and std tree.
 
 ```sh
-mkdir -p "$HOME/lanes/pm04/tmp"
-export TMPDIR="$HOME/lanes/pm04/tmp"
 tools/fetch-toolchain
 tools/build
 target/bin/paxage version
@@ -39,7 +38,7 @@ target/bin/pxg rescue --root ROOT
 `tools/build` produces one native executable, a `pxg` symbolic link and the
 test-only `paxage-failpoint`; no system installation is performed. Both names have identical behavior and every
 diagnostic is prefixed `paxage:`. On shared development hosts, build a committed
-copy behind its host lock and memory/disk gates; see the lane contract.
+copy behind the host lock and memory/disk gates.
 
 ## Format and boundaries
 
@@ -110,7 +109,7 @@ Wycheproof cases, independent OpenSSL-signed attack trees, interrupted-write cut
 zero-write corruption refusals, two-publication CLI roundtrips and a separate
 100,000-mutation Linux harness. Its per-input state oracle uses independently
 witnessed signatures, not the client's verdict alone. OpenSSL CLI runs only in
-the pinned offline unprivileged kasumi container. Mac runs use bounded rows and
+the pinned offline unprivileged Linux container. Mac runs use bounded rows and
 the payload roundtrip-only path, retaining the canonical-payload identity artifact;
 growth/fuzz/timing skips are explicit. Coherent local-storage replay has a labelled
 limit witness, not a claimed protection gate.
@@ -122,7 +121,7 @@ identical and equal the untouched root's or the completed run's. Injected EIO an
 ENOSPC, ancestor swaps for links, lock contention and lock-owner death, conflicts,
 the three config cases, residuals, purge and an orphan cycle are covered too.
 They run as the caller (owners logical) on every host. A second take runs as root
-(owners applied): in a rootless container on hasu, or under `sudo` on CI Linux.
+(owners applied): in a rootless Linux container, or under `sudo` on CI Linux.
 The Mac skips the root take and the tmpfs refusal loudly.
 
 The power-cut witness (`tools/check-powercut`, TRANSACTIONS X11) runs on a Linux
