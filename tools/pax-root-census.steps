@@ -1,0 +1,9 @@
+engine /home/mfwolffe/lanes/hasu-env/bin/podman
+floor 35 /home/mfwolffe/lanes
+rig /home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-census.steps committed=/home/mfwolffe/lanes/pm05b/qemu-source:HEAD:tools/pax-root-census.steps
+rig /home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-census committed=/home/mfwolffe/lanes/pm05b/qemu-source:HEAD:tools/pax-root-census
+rig /home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-qemu committed=/home/mfwolffe/lanes/pm05b/qemu-source:HEAD:tools/pax-root-qemu
+rig /home/mfwolffe/lanes/pm05b/qemu-source/tests/pax-root-probe.c committed=/home/mfwolffe/lanes/pm05b/qemu-source:HEAD:tests/pax-root-probe.c
+step abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,readelf script=/home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-census -- build
+step abi-linux needs=abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=taskset script=/home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-census -- linux
+step abi-pax-installed needs=abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=qemu-system-x86_64,dumpe2fs,debugfs,e2fsck script=/home/mfwolffe/lanes/pm05b/qemu-source/tools/pax-root-qemu
