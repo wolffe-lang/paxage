@@ -1,3 +1,4 @@
+Before the rename to paxage, these checks concerned the original name.
 2026-11-02 19:18:34.238347+00:00
 https://formulae.brew.sh/api/formula.json: 8694 entries; larder=False; lrd=False
 https://formulae.brew.sh/api/cask.json: 7808 entries; larder=False; lrd=False
