@@ -1,5 +1,7 @@
 Baseline tracked-text candidates, case-insensitive occurrence counts; categories overlap.
 Path | category | count
+CLAUDE.md | private-repository and contract path | 1
+CLAUDE.md | private-only instruction | 1
 .github/workflows/ci.yml | lane | 2
 .github/workflows/ci.yml | home-path | 2
 CHANGELOG.md | former-name | 1
