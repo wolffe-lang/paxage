@@ -1,0 +1,12 @@
+# Source from bash; unknown profiles fail closed. The generic profile skips
+# OpenSSL interoperation. Opt into the isolated Linux container explicitly.
+PXG_RIG_PROFILE=${PXG_RIG_PROFILE:-generic}
+case "$PXG_RIG_PROFILE" in
+  generic) PXG_INTEROP=0 ;;
+  linux-16core) PXG_INTEROP=1 ;;
+  *) printf 'FAIL rig-profile unknown=%s\n' "$PXG_RIG_PROFILE" >&2; exit 1 ;;
+esac
+PXG_CONTAINER_RUNTIME=podman
+PXG_CONTAINER_CPUS=${PAXAGE_CONTAINER_CPUS:-0-3}
+PXG_CONTAINER_MEMORY=2g
+PXG_CONTAINER_PIDS=256

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Independent TUF 1.0.37 / TRUST T1-T18 bytes. OpenSSL is a container black box.
-Run only in an unprivileged, network-disabled container on kasumi. No TUF,
+Run only in an unprivileged, network-disabled Linux container. No TUF,
 canonicalization or crypto implementation/library is imported.
 """
 import argparse
@@ -230,8 +230,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--keys', type=Path, required=True)
     args = parser.parse_args()
-    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PM03_HOST') != 'kasumi':
-        raise SystemExit('FAIL generator-requires-unprivileged-kasumi-container')
+    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PXG_RIG_PROFILE') != 'linux-16core':
+        raise SystemExit('FAIL generator-requires-unprivileged-profiled-container')
     Generator(args.output, args.keys).emit()
 
 

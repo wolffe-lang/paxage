@@ -2,6 +2,7 @@
 # Flat top-level records accepted by planning's gauntlet-record.sh (68dae09).
 set -eu
 cd "$(dirname "$0")/.."
+. tools/rig-profile
 step() {
   local name=$1 started=$SECONDS result=0
   shift
@@ -72,16 +73,16 @@ bash tools/check-trust-integration e2e
 step trust-corruption python3 -I tools/check-trust-corruption
 if [ "$(uname -s)" = Linux ]; then
   step trust-independent prlimit --as=2147483648 python3 -I tools/check-trust-independent
-  if [ "$(hostname)" = kasumi ]; then
+  if [ "$PXG_INTEROP" = 1 ]; then
     step trust-openssl-writer bash tools/check-openssl-writer
   else
-    echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container; frozen signed vectors run here'
+    echo 'SKIP trust-openssl-writer reason=enable the isolated Linux container profile; frozen signed vectors run here'
   fi
   prlimit --as=2147483648 bash tools/check-trust-fuzz-runner
 else
   step trust-independent python3 -I tools/check-trust-independent --bounded
   echo 'SKIP trust-large-metadata reason=three byte-limit cases run only on capped Linux'
-  echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the kasumi container'
+  echo 'SKIP trust-openssl-writer reason=OpenSSL CLI runs only in the isolated Linux container'
   echo 'SKIP trust-fuzz reason=Linux-only capped 100000 mutations; never on the Mac'
 fi
 step trust-local-replay-limit python3 -I tools/witness-trust-replay "$PWD/target/bin/paxage"

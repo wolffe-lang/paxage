@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# No OpenSSL execution outside this offline, unprivileged kasumi container.
+# Run OpenSSL only inside an offline, unprivileged Linux container.
 set -eu
 cd "$(dirname "$0")/.."
-test "$(hostname)" = kasumi || { echo 'FAIL writer-interop-host'; exit 1; }
+. tools/rig-profile
+[ "$PXG_INTEROP" = 1 ] || { echo 'FAIL writer-interop-profile'; exit 1; }
 metadata=${PAXAGE_WRITER_METADATA:-$PWD/target/trust-e2e/repo/metadata}
 template=${PAXAGE_PUBLIC_TEMPLATE:-$PWD/tests/trust/independent/old-root1.public.der}
 work=${PAXAGE_INTEROP_WORK:-$PWD/target/openssl-writer}
 mkdir -m 700 "$work"
 mkdir -m 700 "$work/tmp" "$work/home"
 image=77fdad6b841abfdb3968ea6137b1edf7248578bdfc4f92e4aab6b2a05f241485
-podman run --rm --pull=never --network none --read-only --init \
-  --userns keep-id --user "$(id -u):$(id -g)" --memory 2g --pids-limit 256 \
-  --cpuset-cpus "${PAXAGE_CONTAINER_CPUS:-0-3}" --cap-drop ALL --security-opt no-new-privileges \
-  -e TMPDIR=/work/tmp -e HOME=/work/home -e PM03_HOST=kasumi \
+"$PXG_CONTAINER_RUNTIME" run --rm --pull=never --network none --read-only --init \
+  --userns keep-id --user "$(id -u):$(id -g)" --memory "$PXG_CONTAINER_MEMORY" --pids-limit "$PXG_CONTAINER_PIDS" \
+  --cpuset-cpus "$PXG_CONTAINER_CPUS" --cap-drop ALL --security-opt no-new-privileges \
+  -e TMPDIR=/work/tmp -e HOME=/work/home -e PXG_RIG_PROFILE="$PXG_RIG_PROFILE" \
   -v "$PWD:/src:ro" -v "$metadata:/metadata:ro" -v "$template:/test-only-template.der:ro" -v "$work:/work:rw" "$image" \
   prlimit --as=2147483648 python3 -I /src/tools/verify-trust-writer \
   --metadata /metadata --template /test-only-template.der --work /work/verified

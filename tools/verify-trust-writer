@@ -26,8 +26,8 @@ def main():
     parser.add_argument('--template', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
     args = parser.parse_args()
-    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PM03_HOST') != 'kasumi':
-        raise SystemExit('FAIL interop-requires-unprivileged-kasumi-container')
+    if os.geteuid() == 0 or not Path('/run/.containerenv').exists() or os.environ.get('PXG_RIG_PROFILE') != 'linux-16core':
+        raise SystemExit('FAIL interop-requires-unprivileged-profiled-container')
     args.work.mkdir(mode=0o700)
     template = args.template.read_bytes()
     if len(template) != 44: raise ValueError('public-template-length')
