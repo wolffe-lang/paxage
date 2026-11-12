@@ -14,6 +14,7 @@ step() {
 step fmt tools/check-fmt
 step ci-routing python3 -I ci/local-gate-test.py
 step census python3 -I tools/check-census
+step public-text python3 -I tools/check-public-text
 step build tools/build
 step runtime-witness bash tools/check-runtime-witness
 step unit tools/check-test

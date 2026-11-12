@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Reject internal references in tracked text; exceptions require an exact line hash."""
+import hashlib
+import pathlib
+import re
+import subprocess
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+patterns = {
+    'machine': re.compile(r'(?<![A-Za-z0-9_])(?:' + '|'.join(('ha'+'su', 'ka'+'sumi', 'sato'+'yama', 'no'+'mad')) + r')(?![A-Za-z0-9_])', re.I),
+    'decision': re.compile('R-' + r'pm[0-9][A-Za-z0-9-]*', re.I),
+    'lane-path': re.compile('lan' + 'es/', re.I),
+    'role': re.compile(r'the (?:main' + r'tainer|ow' + r'ner)', re.I),
+    'home-user': re.compile('mfw' + 'olffe', re.I),
+}
+allowed = set()
+for number, line in enumerate((root / 'tools/public-text-allowlist').read_text().splitlines(), 1):
+    if not line or line.startswith('#'):
+        continue
+    fields = line.split('|', 3)
+    if len(fields) != 4 or not all(fields) or fields[1] not in patterns or not re.fullmatch(r'[0-9a-f]{64}', fields[2]):
+        print(f'FAIL public-text-allowlist line={number}')
+        sys.exit(1)
+    allowed.add(tuple(fields[:3]))
+failed = False
+paths = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z']).split(b'\0')
+for raw in paths:
+    if not raw:
+        continue
+    path = raw.decode('utf-8')
+    try:
+        lines = (root / path).read_text(encoding='utf-8').splitlines()
+    except (UnicodeDecodeError, FileNotFoundError):
+        continue
+    for number, line in enumerate(lines, 1):
+        digest = hashlib.sha256(line.encode()).hexdigest()
+        for name, pattern in patterns.items():
+            if pattern.search(line) and (path, name, digest) not in allowed:
+                print(f'FAIL public-text {path}:{number} pattern={name}')
+                failed = True
+if failed:
+    sys.exit(1)
+print('PASS public-text')
