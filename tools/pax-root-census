@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Host-side ABI probe, built once for Linux and an installed PAX QEMU root.
+# This does not enable package transactions or qualify crash durability.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+: "${CENSUS_OUT:?set CENSUS_OUT to a new lane-owned evidence directory}"
+: "${LIGHT_CPUS:?run through the pool light-slot helper}"
+engine=${CENSUS_ENGINE:?set CENSUS_ENGINE to the host container wrapper}
+image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
+case ${1:-} in
+build)
+    mkdir -p "$CENSUS_OUT"
+    "$engine" run --rm --network none --memory "${LIGHT_MEM:-6g}" \
+        -v "$root:/source:ro" -v "$CENSUS_OUT:/out" "$image" \
+        taskset -c "$LIGHT_CPUS" cc -static -O1 -Wall -Wextra -Werror \
+        /source/tests/pax-root-probe.c -o /out/pax-root-probe
+    "$engine" run --rm --network none --memory 1g -v "$CENSUS_OUT:/out:ro" "$image" \
+        bash -c 'readelf -hW /out/pax-root-probe | grep -E "Type: +EXEC"; ! readelf -lW /out/pax-root-probe | grep INTERP'
+    sha256sum "$CENSUS_OUT/pax-root-probe"
+    ;;
+linux)
+    "$engine" run --rm --network none --memory "${LIGHT_MEM:-6g}" \
+        -v "$CENSUS_OUT:/out" "$image" \
+        taskset -c "$LIGHT_CPUS" /out/pax-root-probe /out/linux-root-census
+    ;;
+*) printf 'usage: pax-root-census build|linux\n' >&2; exit 2 ;;
+esac
