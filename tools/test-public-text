@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     allow = repo / 'tools/public-text-allowlist'
     allow.write_text('# path|pattern|sha256 of exact line|reason\n')
     specimen = repo / 'sample.txt'
-    line = 'test ' + 'ha' + 'su'
+    line = 'test the ' + 'main' + 'tainer'
     specimen.write_text(line + '\n')
     def git(*args):
         subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
@@ -25,13 +25,21 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     git('init', '-q')
     git('add', 'tools', 'sample.txt')
     red = check()
-    assert red.returncode == 1 and 'FAIL public-text sample.txt:1 pattern=machine' in red.stdout, red.stdout
+    assert red.returncode == 1 and 'FAIL public-text sample.txt:1 pattern=role' in red.stdout, red.stdout
     digest = hashlib.sha256(line.encode()).hexdigest()
-    allow.write_text(f'sample.txt|machine|{digest}|a narrow test exception\n')
+    allow.write_text(f'sample.txt|role|{digest}|a narrow test exception\n')
     green = check()
     assert green.returncode == 0 and 'PASS public-text' in green.stdout, green.stdout
     specimen.write_text(line + ' changed\n')
     assert check().returncode == 1, 'changed line must not inherit exception'
-    allow.write_text('sample.txt|machine|bad|reason\n')
+    allow.write_text('sample.txt|role|bad|reason\n')
     assert 'FAIL public-text-allowlist' in check().stdout, 'malformed exception must fail'
+    allow.write_text(f'sample.txt|machine|{digest}|not permitted\n')
+    assert 'FAIL public-text-allowlist' in check().stdout, 'machine exception must fail'
+    allow.write_text('')
+    specimen.write_text('clean\n')
+    forbidden = 'ha' + 'su'
+    (repo / forbidden).write_text('clean\n')
+    git('add', forbidden)
+    assert 'FAIL public-text-path' in check().stdout, 'forbidden path must fail'
 print('PASS public-text-tests')

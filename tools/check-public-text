@@ -19,7 +19,7 @@ for number, line in enumerate((root / 'tools/public-text-allowlist').read_text()
     if not line or line.startswith('#'):
         continue
     fields = line.split('|', 3)
-    if len(fields) != 4 or not all(fields) or fields[1] not in patterns or not re.fullmatch(r'[0-9a-f]{64}', fields[2]):
+    if len(fields) != 4 or not all(fields) or fields[1] not in patterns or fields[1] == 'machine' or not re.fullmatch(r'[0-9a-f]{64}', fields[2]):
         print(f'FAIL public-text-allowlist line={number}')
         sys.exit(1)
     allowed.add(tuple(fields[:3]))
@@ -29,6 +29,10 @@ for raw in paths:
     if not raw:
         continue
     path = raw.decode('utf-8')
+    for name, pattern in patterns.items():
+        if pattern.search(path):
+            print(f'FAIL public-text-path {path} pattern={name}')
+            failed = True
     try:
         lines = (root / path).read_text(encoding='utf-8').splitlines()
     except (UnicodeDecodeError, FileNotFoundError):

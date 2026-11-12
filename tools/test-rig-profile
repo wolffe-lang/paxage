@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Exercise profile selection and isolated-container command construction."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+scratch = root / 'target'
+scratch.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='rig-profile-test-', dir=scratch) as directory:
+    work = Path(directory)
+    mock = work / 'podman'
+    mock.write_text('#!/bin/sh\nprintf "ARG=%s\\n" "$@"\n')
+    mock.chmod(0o755)
+    def run(tool, profile, extra=None):
+        env = os.environ.copy()
+        env.update(PATH=str(work) + os.pathsep + env['PATH'], PXG_RIG_PROFILE=profile)
+        env.update(extra or {})
+        return subprocess.run(['bash', str(root / 'tools' / tool)], cwd=root, env=env,
+                              text=True, capture_output=True)
+    for tool, variable in [('check-openssl-writer', 'PAXAGE_INTEROP_WORK'),
+                           ('generate-independent-container', 'PAXAGE_VECTOR_WORK')]:
+        generic = run(tool, 'generic')
+        assert generic.returncode and 'FAIL ' in generic.stdout, (tool, generic.stdout)
+        unknown = run(tool, 'unknown')
+        assert unknown.returncode and 'FAIL rig-profile' in unknown.stderr, (tool, unknown.stderr)
+        selected = run(tool, 'linux-16core', {variable: str(work / tool)})
+        assert selected.returncode == 0, (tool, selected.stderr)
+        args = selected.stdout.splitlines()
+        for arg in ('ARG=--network', 'ARG=none', 'ARG=--read-only',
+                    'ARG=--userns', 'ARG=keep-id', 'ARG=--memory', 'ARG=2g',
+                    'ARG=--pids-limit', 'ARG=256', 'ARG=--cpuset-cpus', 'ARG=0-3',
+                    'ARG=PXG_RIG_PROFILE=linux-16core', 'ARG=--as=2147483648'):
+            assert arg in args, (tool, arg, args)
+    unknown_gauntlet = run('gauntlet', 'unknown')
+    assert unknown_gauntlet.returncode and 'FAIL rig-profile' in unknown_gauntlet.stderr
+    for tool, opts in [('generate-trust-vectors', ['--output', 'unused', '--keys', 'unused']),
+                       ('verify-trust-writer', ['--metadata', 'unused', '--template', 'unused', '--work', 'unused'])]:
+        env = os.environ.copy()
+        env['PXG_RIG_PROFILE'] = 'generic'
+        p = subprocess.run(['python3', '-I', str(root / 'tools' / tool), *opts], cwd=root,
+                           env=env, text=True, capture_output=True)
+        assert p.returncode and 'FAIL ' in p.stderr, (tool, p.stderr)
+print('PASS rig-profile-tests')
