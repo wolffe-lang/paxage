@@ -6,7 +6,7 @@ It profiles TUF 1.0.37 (last modified 2026-10-08), read 2026-11-03:
 Canonical encoding follows the OLPC description linked by TUF §4.1:
 <https://web.archive.org/web/20251209150702/http://wiki.laptop.org/go/Canonical_JSON>.
 Ed25519 follows RFC 8032 §5.1 and §7.1, not implementation source.
-The design of record is R-pm00-7 and R-pm00-8, with pm03's ruled amendments.
+This profile includes the original trust design and its subsequent amendments.
 
 ## T1 — Scope and limits
 
@@ -28,7 +28,7 @@ Already accepted roots remain durable and the next invocation can continue.
 Maximum keys 16, signatures per envelope 16, targets 72 (F3's 24 packages times
 F1's three files); refuse `key-limit`, `signature-limit`, `target-limit`.
 These are application bounds under TUF §5.3.3, §5.4.1, §5.5.1 and §5.6.1.
-The signature ceiling is fixed at 16 from the native kasumi measurement:
+The signature ceiling is fixed at 16 from the native Linux measurement:
 five batches of eight verifications of a 1 MiB message gave a median
 25.425536 ms/signature (range 25.387417–25.627197), process-inclusive with
 signing outside timing. Sixteen signatures therefore represent about 0.41 s
@@ -263,7 +263,7 @@ Readers recheck the header hash, role hashes, signatures and reference bindings.
 
 Generate test keys only into a caller-named private directory; each file has
 an explicit `test-only` marker and mode 0600. Refuse an unmarked key with:
-`Real repository keys need std's constant-time signing review and the maintainer's ceremony (R-pm00-7)`.
+`Real repository keys require a constant-time signing review and a production key ceremony`.
 Never load real keys or put private keys into CI secrets; generate test keys
 per run. Signing/public derivation use std curve25519, hashing uses std SHA-2.
 
@@ -275,7 +275,7 @@ with timestamp last (TUF §6.2.1 and §6.3). Failed publication must leave old
 published timestamp intact until the atomic replace; orphan immutable files
 are harmless, not authorization. Default validity windows are timestamp 48 h,
 snapshot 14 d, targets 90 d, root 365 d, overridable explicitly per call.
-These defaults await the maintainer's confirmation; they are not crypto facts.
+These defaults await project confirmation; they are not cryptographic facts.
 
 ## T16 — Cache and staging
 
@@ -297,14 +297,14 @@ key or R encodings (`non-canonical-key`, `non-canonical-R`), small-order key
 or R (`small-order-key`, `small-order-R`), and wrong lengths (T5).
 Use std `curve25519.verify_strict`, never another Ed25519 implementation. A missing primitive
 rejection is a qualification failure to report, not permission to implement
-new curve arithmetic here. Native kasumi verify cost, including sample count,
+new curve arithmetic here. Native Linux verify cost, including sample count,
 message length and timing distribution, must justify T1's signature bound.
 
 ## T18 — Independent and end-to-end evidence
 
 An independently authored Python generator emits canonical bytes from this
 profile/specification and signs through OpenSSL Ed25519 as a black box only
-inside an unprivileged network-disabled kasumi container. Record OpenSSL's
+inside an unprivileged network-disabled Linux container. Record OpenSSL's
 version. Verdicts come from these clauses, never from a tool's acceptance.
 Verify the generator's valid repository, and use OpenSSL to verify this
 writer's signatures over the same signed bytes. Pack two packages, publish,
@@ -319,7 +319,7 @@ under a 2 GiB address-space cap. One final-head, one-hunk local plant removes
 one check and must fail its named row; it never lands on the main branch.
 Every final gauntlet step's END exit is recorded; wrapper success is not proof.
 
-## T19 — Candidate fuzz and committed-state corruption (R-pm03-6)
+## T19 — Candidate fuzz and committed-state corruption
 
 Fuzz proposed-state serialization and load inputs against a protected accepted
 generation. A malformed candidate never replaces that generation. Every
@@ -335,12 +335,12 @@ Its refusal says: `re-bootstrap into a new, empty state directory from a
 caller-supplied pinned root`. That is an explicit operator action, not an
 automatic client recovery feature. The damaged directory remains untouched.
 
-R-pm03-6 B (a trusted recovery anchor and a redundancy policy) is a question
-for a later lane, not an implied fallback here. This ruling adds T19 after the
+A trusted recovery anchor and a redundancy policy remain future work, not an
+implied fallback here. This decision adds T19 after the
 original prediction of eighteen clauses; the prediction is not retroactively
 changed.
 
-## T20 — Trusted local storage boundary (R-pm03-7)
+## T20 — Trusted local storage boundary
 
 A party able to write the trust-state directory is outside v1's threat model.
 It can replace any part of the state, including the root. Coherent rollback of
@@ -356,6 +356,5 @@ an independent monotonic anchor. `tools/witness-trust-replay` pins this known
 limit explicitly, never as a successful rollback-protection row. Its original
 witness is `mac-replay-2b3af8e.record` in the lane's evidence.
 
-R-pm03-7 B, an independent monotonic anchor and its crash protocol, remains a
-pm04/pm05 question. No ad-hoc anchor is introduced here. T20 is a further ruled
+An independent monotonic anchor and its crash protocol remain future work. No ad-hoc anchor is introduced here. T20 is a further ruled
 addition to the original eighteen-clause prediction.

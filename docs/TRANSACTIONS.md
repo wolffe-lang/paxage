@@ -1,6 +1,6 @@
 # Transactions v1 (Linux, file:// repository)
 
-pm04's implementation of pax `notes/pm00-the-design.md` R-pm00-6, -9 and -10.
+This implements the package transaction, ownership and removal design.
 Sources: rename(2), fsync(2), flock(2), openat(2), statfs(2), proc(5) and sysfs
 documentation, ext4's documented journalling, passwd(5), group(5), shadow(5), and
 pacman's and dpkg's documented behaviour. No other package manager's,
@@ -45,7 +45,7 @@ process-wide working directory is sound.
 - `lock`: the persistent lock inode, made once by init, never unlinked or
   recreated, no PID inside. Each writer opens it with `O_NOFOLLOW` and takes an
   exclusive non-blocking `flock`. Contention exits 7 `locked`. The lock dies with
-  its owner however the owner ends. A missing lock refuses `lock-missing`; a link
+  its holder however the holder ends. A missing lock refuses `lock-missing`; a link
   or non-file refuses `lock-inode`.
 - `current`: the commit decision, F2 `current { schema, features, generation,
   database, transaction }`. `database` is the SHA-256 of that generation's
@@ -114,7 +114,7 @@ the transaction for `rescue`. An error after the commit leaves cleanup to
 
 While `transactions/` holds anything, `install`, `remove`, `upgrade`,
 `autoremove` and `verify` exit 8 `recovery-needed`. `status` reports it
-read-only. Only `rescue` acts (R-pm04-3):
+read-only. Only `rescue` acts:
 
 - Nothing pending: `rescue: nothing to do`, zero writes, exit 0.
 - `current` names t<N>: finish (X5 step 8), `rescue: finished t<N>`.
@@ -145,7 +145,7 @@ operator restores the named path.
 
 ## X7 — Actions
 
-A package names registry entries (`src/registry`, R-pm04-9), never ids or paths:
+A package names compiled registry entries (`src/registry`), never ids or paths:
 
 - `account`: a passwd line `name:x:uid:gid:gecos:home:shell` and a group line
   `name:x:gid:`. A shadow line `name:!:::::::` is added only where `etc/shadow`
@@ -157,13 +157,12 @@ A package names registry entries (`src/registry`, R-pm04-9), never ids or paths:
 - `directory`: an owned directory with the registry's mode and owner. Missing
   ancestors are made 0755 by root and owned with it. On removal it goes only when
   empty.
-- `cache`: recorded as pending in the next generation and never executed
-  (R-pm04-10).
+- `cache`: recorded as pending in the next generation and never executed.
 
 ## X8 — Failpoints
 
 The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
-(built beside it, never installed) reads `PAXAGE_FAILPOINT` (R-pm04-4):
+(built beside it, never installed) reads `PAXAGE_FAILPOINT`:
 
 - `trace` prints `FAILPOINT <name> [detail]` for every hook passed.
 - `NAME:crash` ends the process by a runtime trap at NAME (exit 134, no
@@ -195,13 +194,13 @@ The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
   packages' residual configs, printing `purge PATH`. Removing a package another
   one requires refuses `required-by`.
 - **Upgrade.** Upgrade replaces a modified non-config owned file; its preimage is
-  backed up until the commit (R-pm04-11).
+  backed up until the commit.
 - **Reasons and orphans.** Named packages are explicit; their closure is
   dependency. `autoremove` previews the packages unreachable from explicit ones
   over required edges (provides included). `--yes` removes them, cycles
   included, in one generation.
 - **Whole-snapshot upgrade.** `upgrade` resolves every explicit package against
-  the trusted targets (R-pm00-5).
+  the trusted targets.
 
 ## X10 — The check
 
@@ -255,7 +254,7 @@ guest. It cuts the power at every durable step and checks what the disk holds.
   - install, upgrade and remove;
   - a rescue that undoes a crashed remove;
   - a rescue that finishes a committed upgrade;
-  - two writers, cut while the owner holds the lock.
+  - two writers, cut while the lock holder holds the lock.
 - **The check.** The guest rebuilds every state on a loop device, which replays
   the journal. It then runs `rescue` twice, remounts, and runs `e2fsck -fn`. A
   state passes when:
