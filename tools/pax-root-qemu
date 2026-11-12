@@ -21,18 +21,24 @@ mkdir -p /out/tmp /out/qemu-build /out/qemu-cache
 sha256sum /images/pax-bf1e38db.iso
 [ "$(sha256sum /images/pax-bf1e38db.iso | cut -d' ' -f1)" = 8b89157e52275debf7de63a5fe93dcd65a5e4b1c3d18f9901338abd968b9a07f ]
 truncate -s 1073741824 /out/installed.img
-printf '%s\n' "printf 'model= serial=PM05B-TARGET\\n' > /run/census-targets" \
+printf '%s\n' 'mkdir -p /run' "printf 'model= serial=PM05B-TARGET\\n' > /run/census-targets" \
   "pax-install --install --ext2-preview --target vda --seed pm05b-image --user pax --games no --allow-list /run/census-targets --confirm 'ERASE /dev/vda 254:0-seq1 1073741824 pm05b-image'" \
   'echo CENSUS_INSTALL=$?' 'exit 0' > /out/install.keys
 /pax/tools/qemu-halt --accel kvm --firmware bios --serial /out/install.serial --timeout 900 \
-  --qemu -m --qemu 2048M --elf /images/kernel/kmain_console.elf \
+  --qemu -m --qemu 4096M --elf /images/kernel/kmain_console.elf \
   --drive '/out/installed.img;serial=PM05B-TARGET' --type /out/install.keys --prompt '$ ' \
   --marker 'halt|PANIC .*' /images/pax-bf1e38db.iso > /out/install.halt 2>&1
 python3 -I - <<'PY'
 from pathlib import Path
 import re,struct
 s=re.sub(rb'\x1b\[[0-9;?=<>]*[A-Za-z]',b'',Path('/out/install.serial').read_bytes()).replace(b'\r',b'')
-assert b'\nCENSUS_INSTALL=0\n' in s,s[-6000:]
+if b'\nCENSUS_INSTALL=0\n' not in s:
+ print('FAIL census-installer-completed',flush=True)
+ for line in s.splitlines():
+  if any(word in line for word in (b'pax-install:',b'cannot create',b'CENSUS_INSTALL=',b'Staging source',b'phase ',b'refused:')):
+   print(line.decode(errors='replace'),flush=True)
+ raise SystemExit(1)
+print('PASS census-installer-completed',flush=True)
 with Path('/out/installed.img').open('rb') as f:
  f.seek(512);h=f.read(512);assert h[:8]==b'EFI PART'
  table=struct.unpack_from('<Q',h,72)[0];width=struct.unpack_from('<I',h,84)[0]
@@ -62,7 +68,7 @@ with Path('/out/root.img').open('rb') as i,Path('/out/installed.img').open('r+b'
  o.seek(int(Path('/out/root-offset').read_text()))
  while b:=i.read(1048576):o.write(b)
 PY
-printf '%s\n' 'set +o friendly' '/bin/pm05b-census /var/lib/pm05b-census' 'echo CENSUS_ABI=$?' 'exit 0' > /out/census.keys
+printf '%s\n' 'set +o friendly' 'mkdir -p /var/lib' '/bin/pm05b-census /var/lib/pm05b-census' 'echo CENSUS_ABI=$?' 'exit 0' > /out/census.keys
 /pax/tools/qemu-halt --accel kvm --boot-disk --firmware bios --serial /out/census.serial --timeout 300 \
   --qemu -m --qemu 2048M --elf /images/kernel/kmain_console.elf \
   --type /out/census.keys --prompt '$ ' --marker 'halt|PANIC .*' /out/installed.img > /out/census.halt 2>&1
