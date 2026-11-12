@@ -58,12 +58,12 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: lane-local temporary files
+      - name: runner temporary files
         shell: bash
         run: |
           test "$(uname -m)" = '${{ matrix.arch }}'
-          mkdir -p "$HOME/lanes/pm03/tmp"
-          echo "TMPDIR=$HOME/lanes/pm03/tmp" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/paxage"
+          echo "TMPDIR=${RUNNER_TEMP}/paxage" >> "$GITHUB_ENV"
       - name: digest-pinned wolf and lupin
         run: tools/fetch-toolchain
       - name: Complete platform-aware payload and trust gates
