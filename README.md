@@ -68,9 +68,9 @@ details the interface, safety refusals, failure state and large-file measurement
 metadata and binds the manifest again at staging consumption. The client supports
 only literal `file://` URLs and a caller-supplied pinned root. Network transports
 remain later work. Transactions (TRANSACTIONS X1–X11) write a root only through
-handles held from its root directory, take the root's persistent lock, refuse an
-unjournalled filesystem, and recover every interrupted step to the old or the new
-generation, after a process cut or a power cut. Trusted local state must not be coherently
+handles held from its root directory, take the root's persistent lock and refuse an
+unjournalled filesystem. Tests exercise recovery to the old or the new generation
+after process and power cuts. Trusted local state must not be coherently
 replaced by an actor able to write it; T20 documents this limit. Malformed state
 refuses without repair, directing an explicit re-bootstrap into a new empty directory.
 A root's state lives in `ROOT/var/lib/paxage/` and its cache in
@@ -109,7 +109,10 @@ Wycheproof cases, independent OpenSSL-signed attack trees, interrupted-write cut
 zero-write corruption refusals, two-publication CLI roundtrips and a separate
 100,000-mutation Linux harness. Its per-input state oracle uses independently
 witnessed signatures, not the client's verdict alone. OpenSSL CLI runs only in
-the pinned offline unprivileged Linux container. Mac runs use bounded rows and
+the pinned offline unprivileged Linux container. Set `PXG_RIG_PROFILE=linux-16core`
+to opt into that container on a suitable host; the default `generic` profile
+skips it. `PAXAGE_CONTAINER_CPUS` may override the default CPU set `0-3`.
+Mac runs use bounded rows and
 the payload roundtrip-only path, retaining the canonical-payload identity artifact;
 growth/fuzz/timing skips are explicit. Coherent local-storage replay has a labelled
 limit witness, not a claimed protection gate.
