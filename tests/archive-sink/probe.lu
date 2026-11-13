@@ -1,0 +1,344 @@
+//! member: false
+//! Focused archive API probe, built in an isolated test module tree.
+
+use packing
+use payload
+
+fn expect(ok: bool, row: str) -> bool {
+    if !ok { eprint("FAIL {row}") } else { print("PASS {row}") }
+    ok
+}
+
+fn h(path: str, kind: str, mode: int, length: int, target: str, epoch: int) -> packing.Header {
+    packing.Header { path, kind, mode, length, target, epoch }
+}
+
+fn opened(dir: str, name: str) -> int {
+    fs_open_perm("{dir}/{name}", 20, 384) else |_| { -1 }
+}
+
+fn size(fd: int) -> int {
+    let s = fs_fstat_record(fd) else |_| { return -1 }
+    s[1]
+}
+
+fn bad_begin(
+    dir: str,
+    name: str,
+    head: packing.Header,
+    profile: payload.Profile,
+    error: str,
+) -> bool {
+    let fd = opened(dir, name)
+    if fd < 0 { return false }
+    var w = packing.writer_start(fd, profile)
+    let got = packing.writer_begin(mut w, head)
+    let ok = got == error &&
+        w.written == 0 &&
+        size(fd) == 0 &&
+        packing.writer_finish(mut w) == error
+    fs_close(fd) else |_| { return false }
+    ok
+}
+
+fn unit(dir: str) -> int {
+    let p = payload.package_profile()
+    if !expect(
+        p.max_entries == 100000 &&
+            p.max_data_bytes == 17179869184 &&
+            p.max_extension_bytes == 1048576 &&
+            p.chunk_bytes == 65536,
+        "S01-package-defaults",
+    ) {
+        return 1
+    }
+    var bad = copy p
+    bad.chunk_bytes = 0
+    let invalid = packing.writer_start(1, bad)
+    if !expect(invalid.error == "payload-profile", "S02-invalid-profile") { return 1 }
+    let bad_fd = packing.writer_start(-1, p)
+    if !expect(bad_fd.error == "writer-fd", "S03-invalid-handle") { return 1 }
+    var entry_cap = copy p
+    entry_cap.max_entries = 0
+    if !expect(
+        bad_begin(
+            dir,
+            "entry-cap",
+            h("objects/a", "file", 420, 0, "", 0),
+            entry_cap,
+            "entry-limit",
+        ),
+        "S04-entry-cap-before-write",
+    ) {
+        return 1
+    }
+    var data_cap = copy p
+    data_cap.max_data_bytes = 0
+    if !expect(
+        bad_begin(
+            dir,
+            "data-cap",
+            h("objects/a", "file", 420, 1, "", 0),
+            data_cap,
+            "installed-limit",
+        ),
+        "S05-data-cap-before-write",
+    ) {
+        return 1
+    }
+    var ext_cap = copy p
+    ext_cap.max_extension_bytes = 0
+    if !expect(
+        bad_begin(
+            dir,
+            "extension-cap",
+            h("objects/é", "file", 420, 0, "", 0),
+            ext_cap,
+            "extension-limit",
+        ),
+        "S06-extension-cap-before-write",
+    ) {
+        return 1
+    }
+    let short_fd = opened(dir, "short")
+    if short_fd < 0 { return 1 }
+    var short = packing.writer_start(short_fd, p)
+    if packing.writer_begin(mut short, h("objects/a", "file", 420, 2, "", 0)) != "" { return 1 }
+    if packing.writer_data(mut short, [97 as byte]) != "" { return 1 }
+    if !expect(
+        packing.writer_end(mut short) == "writer-size" &&
+            packing.writer_finish(mut short) == "writer-size" &&
+            size(short_fd) == 513,
+        "S07-short-data-no-finish",
+    ) {
+        return 1
+    }
+    fs_close(short_fd) else |_| { return 1 }
+    let extra_fd = opened(dir, "extra")
+    if extra_fd < 0 { return 1 }
+    var extra = packing.writer_start(extra_fd, p)
+    if packing.writer_begin(mut extra, h("objects/a", "file", 420, 1, "", 0)) != "" { return 1 }
+    if !expect(
+        packing.writer_data(mut extra, [97 as byte, 98 as byte]) == "writer-size" &&
+            size(extra_fd) == 512,
+        "S08-extra-data-before-write",
+    ) {
+        return 1
+    }
+    fs_close(extra_fd) else |_| { return 1 }
+    let closed_fd = opened(dir, "closed")
+    if closed_fd < 0 { return 1 }
+    fs_close(closed_fd) else |_| { return 1 }
+    var closed = packing.writer_start(closed_fd, p)
+    let failed = packing.writer_begin(mut closed, h("objects/a", "file", 420, 0, "", 0))
+    if !expect(
+        failed == "pack-write" &&
+            packing.writer_end(mut closed) == failed &&
+            packing.writer_finish(mut closed) == failed &&
+            packing.writer_abort(mut closed) == failed,
+        "S09-sink-error-latched",
+    ) {
+        return 1
+    }
+    let owner_fd = opened(dir, "owned")
+    if owner_fd < 0 { return 1 }
+    var owner = packing.writer_start(owner_fd, p)
+    if packing.writer_finish(mut owner) != "" { return 1 }
+    if !expect(
+        owner.finished &&
+            owner.written == 1024 &&
+            size(owner_fd) == 1024 &&
+            packing.writer_finish(mut owner) == "writer-finished",
+        "S10-finish-once",
+    ) {
+        return 1
+    }
+    fs_write_chunk(owner_fd, [33 as byte]) else |_| { return 1 }
+    if !expect(size(owner_fd) == 1025, "S11-caller-retains-handle") { return 1 }
+    fs_close(owner_fd) else |_| { return 1 }
+    let abort_fd = opened(dir, "aborted")
+    if abort_fd < 0 { return 1 }
+    var aborted = packing.writer_start(abort_fd, p)
+    if !expect(
+        packing.writer_abort(mut aborted) == "writer-aborted" &&
+            packing.writer_finish(mut aborted) == "writer-aborted" &&
+            size(abort_fd) == 0,
+        "S12-abort-no-finish",
+    ) {
+        return 1
+    }
+    fs_close(abort_fd) else |_| { return 1 }
+    let missing_fd = opened(dir, "missing")
+    if missing_fd < 0 { return 1 }
+    var missing = packing.writer_start(missing_fd, p)
+    if packing.writer_begin(mut missing, h("objects/a", "hardlink", 420, 0, "objects/z", 0)) !=
+        "" ||
+        packing.writer_end(mut missing) != "" {
+        return 1
+    }
+    if !expect(
+        packing.writer_finish(mut missing) == "bad-hardlink" && size(missing_fd) == 512,
+        "S13-link-before-end-blocks",
+    ) {
+        return 1
+    }
+    fs_close(missing_fd) else |_| { return 1 }
+    var huge = copy p
+    huge.max_data_bytes = 9223372036854775807
+    if !expect(
+        bad_begin(
+            dir,
+            "overflow",
+            h("objects/a", "file", 420, 9223372036854775807, "", 0),
+            huge,
+            "writer-length",
+        ),
+        "S14-wire-overflow-before-write",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "path", h("../escape", "file", 420, 0, "", 0), p, "bad-path"),
+        "S15-path-policy",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "mode", h("objects/a", "file", 2541, 0, "", 0), p, "set-id-mode"),
+        "S16-mode-policy",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "type", h("objects/a", "fifo", 420, 0, "", 0), p, "payload-type"),
+        "S17-type-policy",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "time", h("objects/a", "file", 420, 0, "", -1), p, "writer-time"),
+        "S18-time-policy",
+    ) {
+        return 1
+    }
+    let order_fd = opened(dir, "order")
+    if order_fd < 0 { return 1 }
+    var ordered = packing.writer_start(order_fd, p)
+    if packing.writer_begin(mut ordered, h("z", "dir", 493, 0, "", 0)) != "" ||
+        packing.writer_end(mut ordered) != "" {
+        return 1
+    }
+    if !expect(
+        packing.writer_begin(mut ordered, h("a", "dir", 493, 0, "", 0)) == "writer-order" &&
+            size(order_fd) == 512,
+        "S19-order-before-write",
+    ) {
+        return 1
+    }
+    fs_close(order_fd) else |_| { return 1 }
+    let phase_fd = opened(dir, "phase")
+    if phase_fd < 0 { return 1 }
+    var phase = packing.writer_start(phase_fd, p)
+    if !expect(
+        packing.writer_data(mut phase, [0 as byte]) == "writer-state" && size(phase_fd) == 0,
+        "S20-phase-before-write",
+    ) {
+        return 1
+    }
+    fs_close(phase_fd) else |_| { return 1 }
+    print("PASS S21-state-and-handle-contracts")
+    0
+}
+
+fn member(mut w: packing.Writer, head: packing.Header, bytes: List[byte]) -> bool {
+    if packing.writer_begin(mut w, head) != "" { return false }
+    for b in bytes { if packing.writer_data(mut w, [b]) != "" { return false } }
+    packing.writer_end(mut w) == ""
+}
+
+fn emit() -> int {
+    var w = packing.writer_start(1, payload.package_profile())
+    if !member(mut w, h("control", "dir", 493, 0, "", 0), []) { return 1 }
+    if !member(
+        mut w,
+        h("control/item", "file", 420, 3, "", 0),
+        [0 as byte, 255 as byte, 65 as byte],
+    ) {
+        return 1
+    }
+    if !member(mut w, h("objects", "dir", 493, 0, "", 0), []) { return 1 }
+    if !member(mut w, h("objects/a", "hardlink", 420, 0, "objects/z", 0), []) { return 1 }
+    if !member(mut w, h("objects/b", "symlink", 511, 0, "z", 0), []) { return 1 }
+    if !member(mut w, h("objects/c", "file", 420, 0, "", 0), []) { return 1 }
+    if !member(mut w, h("objects/d", "symlink", 511, 0, "é", 0), []) { return 1 }
+    if !member(mut w, h("objects/t", "file", 420, 0, "", 8589934592), []) { return 1 }
+    if !member(mut w, h("objects/z", "file", 420, 3, "", 0), [97 as byte, 98 as byte, 99 as byte]) {
+        return 1
+    }
+    if !member(mut w, h("objects/é", "file", 420, 1, "", 0), [33 as byte]) { return 1 }
+    if packing.writer_finish(mut w) != "" { return 1 }
+    0
+}
+
+fn stream(n: int, header_only: bool) -> int {
+    if n < 0 { return 2 }
+    var p = payload.package_profile()
+    p.max_data_bytes = n
+    var w = packing.writer_start(1, p)
+    let error = packing.writer_begin(mut w, h("objects/data", "file", 420, n, "", 0))
+    if error != "" { eprint("sink:{error}"); return 1 }
+    if header_only {
+        if packing.writer_abort(mut w) != "writer-aborted" { return 1 }
+        return 0
+    }
+    var block = List[byte]()
+    for i in 0..65536 { (mut block).push((i % 256) as byte) }
+    var left = n
+    while left > 0 {
+        var amount = left
+        if amount > 65536 { amount = 65536 }
+        region chunk {
+            var data = List[byte]()
+            for i in 0..amount { (mut data).push(block[i]) }
+            let written = packing.writer_data(mut w, data)
+            if written != "" { eprint("sink:{written}"); return 1 }
+        }
+        left -= amount
+    }
+    let ended = packing.writer_end(mut w)
+    if ended != "" { eprint("sink:{ended}"); return 1 }
+    let finished = packing.writer_finish(mut w)
+    if finished != "" { eprint("sink:{finished}"); return 1 }
+    0
+}
+
+fn main() -> int {
+    let a = env_args()
+    if a.len == 2 && a[0] == "unit" { return unit(a[1]) }
+    if a.len == 1 && a[0] == "emit" { return emit() }
+    if a.len == 2 && (a[0] == "stream" || a[0] == "header") {
+        return stream(payload.number(a[1].bytes(), 10), a[0] == "header")
+    }
+    if a.len >= 2 && a[0] == "read" {
+        let length = payload.number(a[1].bytes(), 10)
+        if length < 0 { return 2 }
+        var s = payload.Stream { fd: 0, pos: 0, length, error: "" }
+        var p = payload.package_profile()
+        if a.len == 6 {
+            p.max_entries = payload.number(a[2].bytes(), 10)
+            p.max_data_bytes = payload.number(a[3].bytes(), 10)
+            p.max_extension_bytes = payload.number(a[4].bytes(), 10)
+            p.chunk_bytes = payload.number(a[5].bytes(), 10)
+        } else if a.len != 2 {
+            return 2
+        }
+        let result = payload.inspect_with_profile(mut s, p)
+        if result.error != "" {
+            print("refused:{result.error}")
+        } else {
+            print("accepted:{result.entries.len}")
+        }
+        return 0
+    }
+    2
+}

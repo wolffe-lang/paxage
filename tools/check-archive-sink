@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Independent framing, profile, filesystem-handle and pipe contracts for the archive sink."""
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import runpy
+import select
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+REFERENCE = '5c3e99659affd3370210b28108617b5f6f66773ead7956bd30634056ed9df9aa'
+OLD = runpy.run_path(str(ROOT / 'tools/check-payload'))
+
+
+def passed(name):
+    print('PASS ' + name, flush=True)
+
+
+def require(ok, name):
+    if not ok:
+        raise AssertionError(name)
+    passed(name)
+
+
+def toolchain():
+    env = os.environ.copy()
+    env['PAXAGE_ROOT'] = str(ROOT)
+    raw = subprocess.check_output(['sh', '-c', '. tools/lib-toolchain.sh; printf "%s\\0%s\\0" "$WOLF" "$WOLF_STD"'], cwd=ROOT, env=env)
+    wolf, std, empty = raw.split(b'\0')
+    assert not empty
+    env['WOLF_STD'] = os.fsdecode(std)
+    return os.fsdecode(wolf), env
+
+
+def build_probe():
+    wolf, env = toolchain()
+    directory = ROOT / 'target/archive-sink-build'
+    if directory.is_symlink():
+        raise RuntimeError('test build symlink refused')
+    if directory.exists():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True)
+    for name in ['packing', 'payload', 'literal', 'schema', 'model', 'version']:
+        shutil.copytree(ROOT / 'src' / name, directory / name, ignore=shutil.ignore_patterns('.lu-cache', '._*'))
+    shutil.copyfile(ROOT / 'tests/archive-sink/probe.lu', directory / 'main.lu')
+    (directory / 'wolf.pkg').write_text('pkg { name: "archive-sink-probe", version: "0.0.0", edition: "1", capabilities: [env, fs] }\n')
+    binary = ROOT / 'target/tests/archive-sink'
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    p = subprocess.run([wolf, 'build', '--deny-warnings', str(directory / 'main.lu'), '-o', str(binary)], cwd=directory, env=env)
+    if p.returncode:
+        print('FAIL S00-sink-probe-build compiler-exit=' + str(p.returncode), flush=True)
+        raise SystemExit(1)
+    passed('S00-sink-probe-build')
+    return binary
+
+
+def invoke(binary, args, data=b'', timeout=60):
+    p = subprocess.run([str(binary), *map(str, args)], input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    if p.returncode:
+        raise AssertionError('probe subprocess failed: ' + str(p.returncode) + ' ' + p.stderr.decode('utf-8', 'replace'))
+    return p
+
+
+def encoded_member(path, kind, length, mode=0o644, target='', epoch=0):
+    raw_path = path.encode()
+    raw_target = target.encode()
+    extension = b''
+    portable = all(c in b'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/' for c in raw_path)
+    if len(raw_path) > 100 or not portable:
+        extension += OLD['pax']('path', raw_path)
+        raw_path = b'PaxFile'
+    if raw_target and (len(raw_target) > 100 or any(c not in b'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/' for c in raw_target)):
+        extension += OLD['pax']('linkpath', raw_target)
+        raw_target = b''
+    if length > 8589934591:
+        extension += OLD['pax']('size', str(length).encode())
+    if epoch > 8589934591:
+        extension += OLD['pax']('mtime', str(epoch).encode())
+    out = b''
+    if extension:
+        out += OLD['header'](b'PaxHeader', b'x', len(extension), 0o644) + extension + bytes((-len(extension)) % 512)
+    h = bytearray(OLD['header'](raw_path, kind, 0 if length > 8589934591 else length, mode, raw_target))
+    if epoch <= 8589934591:
+        OLD['field'](h, 136, 12, f'{epoch:011o}\0'.encode())
+        h = OLD['checksum'](h)
+    return out + h
+
+
+def reference():
+    members = [
+        ('control', b'5', 0o755, '', b'', 0),
+        ('control/item', b'0', 0o644, '', b'\0\xffA', 0),
+        ('objects', b'5', 0o755, '', b'', 0),
+        ('objects/a', b'1', 0o644, 'objects/z', b'', 0),
+        ('objects/b', b'2', 0o777, 'z', b'', 0),
+        ('objects/c', b'0', 0o644, '', b'', 0),
+        ('objects/d', b'2', 0o777, 'é', b'', 0),
+        ('objects/t', b'0', 0o644, '', b'', 8589934592),
+        ('objects/z', b'0', 0o644, '', b'abc', 0),
+        ('objects/é', b'0', 0o644, '', b'!', 0),
+    ]
+    out = b''
+    for path, kind, mode, target, data, epoch in members:
+        out += encoded_member(path, kind, len(data), mode, target, epoch) + data + bytes((-len(data)) % 512)
+    return out + bytes(1024)
+
+
+def read_result(binary, raw, caps=None):
+    args = ['read', len(raw)] + ([] if caps is None else list(caps))
+    p = invoke(binary, args, raw)
+    assert not p.stderr
+    return p.stdout.strip()
+
+
+def pipe_rows(binary):
+    n = 2 * 1024 * 1024 + 3
+    child = subprocess.Popen([str(binary), 'stream', str(n)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    h = hashlib.sha256()
+    count = 0
+    try:
+        deadline = time.monotonic() + 90
+        while True:
+            if time.monotonic() > deadline:
+                raise AssertionError('pipe deadline')
+            if not select.select([child.stdout], [], [], 1)[0]:
+                continue
+            block = os.read(child.stdout.fileno(), 4096)
+            if not block:
+                break
+            h.update(block)
+            count += len(block)
+            time.sleep(.001)
+        assert child.wait(timeout=10) == 0, child.stderr.read()
+    finally:
+        if child.poll() is None:
+            child.kill(); child.wait()
+        child.stdout.close(); child.stderr.close()
+    expected = hashlib.sha256()
+    expected.update(encoded_member('objects/data', b'0', n))
+    pattern = bytes(range(256)) * 256
+    left = n
+    while left:
+        block = pattern[:min(left, len(pattern))]
+        expected.update(block); left -= len(block)
+    expected.update(bytes((-n) % 512)); expected.update(bytes(1024))
+    require(h.digest() == expected.digest() and count == 512 + n + (-n) % 512 + 1024, 'S24-pipe-backpressure-exact-bytes')
+    child = subprocess.Popen([str(binary), 'stream', str(n)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    child.stdout.close()
+    try:
+        code = child.wait(timeout=30)
+        require(code != 0, 'S25-consumer-failure-not-success')
+    finally:
+        if child.poll() is None:
+            child.kill(); child.wait()
+        child.stderr.close()
+
+
+def nonblocking_row(binary):
+    read_fd, write_fd = os.pipe()
+    child = None
+    try:
+        os.set_blocking(write_fd, False)
+        filled = 0
+        while True:
+            try:
+                filled += os.write(write_fd, b'F' * 4096)
+                if filled > 2 * 1024 * 1024:
+                    raise AssertionError('unexpected pipe capacity')
+            except BlockingIOError:
+                break
+        freed = min(8192, filled)
+        left = freed
+        while left:
+            left -= len(os.read(read_fd, left))
+        child = subprocess.Popen([str(binary), 'stream', str(2 * 1024 * 1024)], stdout=write_fd, stderr=subprocess.PIPE)
+        os.close(write_fd); write_fd = -1
+        _, error = child.communicate(timeout=30)
+        observed = bytearray()
+        while True:
+            block = os.read(read_fd, 65536)
+            if not block:
+                break
+            observed.extend(block)
+        prefix = len(observed) - (filled - freed)
+        require(child.returncode != 0 and b'sink:pack-write' in error and prefix >= 512, 'S32-nonblocking-partial-or-EAGAIN-fails-closed')
+    finally:
+        if child is not None:
+            if child.poll() is None:
+                child.kill(); child.wait()
+            child.stderr.close()
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--build-only', action='store_true')
+    ap.add_argument('--baseline', type=Path)
+    a = ap.parse_args()
+    binary = build_probe()
+    if a.build_only:
+        return 0
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'], prefix='archive-sink-') as tmp:
+        directory = Path(tmp)
+        unit = invoke(binary, ['unit', directory])
+        print(unit.stdout.decode(), end='', flush=True)
+        assert not unit.stderr
+        raw = invoke(binary, ['emit']).stdout
+        require(raw == reference(), 'S22-independent-canonical-bytes')
+        require(read_result(binary, raw) == b'accepted:10', 'S23-default-reader-roundtrip')
+        require(read_result(binary, raw, [10, 7, 1048576, 1]) == b'accepted:10', 'S26-explicit-profile-and-ragged-data')
+        for caps, error in [([0,7,1048576,65536], 'entry-limit'), ([8,2,1048576,65536], 'installed-limit'), ([8,7,0,65536], 'extension-limit'), ([8,7,1048576,0], 'payload-profile'), ([8,7,1048576,131073], 'payload-profile')]:
+            require(read_result(binary, raw, caps) == ('refused:' + error).encode(), 'S27-profile-' + error + '-' + str(caps[-1]))
+        big = 17179869185
+        header = invoke(binary, ['header', big]).stdout
+        require(header == encoded_member('objects/data', b'0', big), 'S28-large-header-without-large-allocation')
+        # This is admission/error-order coverage, NOT a successful large stream.
+        truncated = header + bytes(1024)
+        require(read_result(binary, truncated) == b'refused:installed-limit', 'S29-default-16GiB-refusal-unchanged')
+        require(read_result(binary, truncated, [1,34359738368,1048576,65536]) == b'refused:payload-length', 'S30-explicit-large-profile-reaches-window-check')
+        pipe_rows(binary)
+        nonblocking_row(binary)
+    artifact = ROOT / 'target/evidence/canonical.payload.tar'
+    if a.baseline:
+        require(artifact.is_file() and artifact.read_bytes() == a.baseline.read_bytes(), 'S31-existing-package-baseline-bytes')
+    elif artifact.is_file():
+        require(hashlib.sha256(artifact.read_bytes()).hexdigest() == REFERENCE, 'S31-existing-package-baseline-digest')
+    else:
+        raise AssertionError('existing canonical package artifact missing; run check-payload --roundtrip-only first')
+    passed('archive-sink-contracts')
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except Exception as e:
+        print('FAIL archive-sink-contracts ' + type(e).__name__ + ' ' + str(e), flush=True)
+        raise SystemExit(1)
