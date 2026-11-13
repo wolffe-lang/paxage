@@ -1,0 +1,23 @@
+engine podman
+floor 35 ..
+rig pax-checkpoint.steps committed=..:HEAD:tools/pax-checkpoint.steps
+rig pax-checkpoint-preflight committed=..:HEAD:tools/pax-checkpoint-preflight
+rig pax-static-take committed=..:HEAD:tools/pax-static-take
+rig pax-reader-take committed=..:HEAD:tools/pax-reader-take
+rig pax-root-census committed=..:HEAD:tools/pax-root-census
+rig pax-root-qemu committed=..:HEAD:tools/pax-root-qemu
+rig check-pax-static committed=..:HEAD:tools/check-pax-static
+rig check-pax-readonly committed=..:HEAD:tools/check-pax-readonly
+rig build committed=..:HEAD:tools/build
+rig lib-toolchain.sh committed=..:HEAD:tools/lib-toolchain.sh
+rig lib-toml.sh committed=..:HEAD:tools/lib-toml.sh
+rig ../tests/pax-root-probe.c committed=..:HEAD:tests/pax-root-probe.c
+rig ../tests/manifests/valid.manifest committed=..:HEAD:tests/manifests/valid.manifest
+rig ../tests/snapshots/basic/snapshot.pxg committed=..:HEAD:tests/snapshots/basic/snapshot.pxg
+rig ../wolf-toolchain.toml committed=..:HEAD:wolf-toolchain.toml
+step static-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,python3,git,readelf,strip script=pax-static-take -- build
+step native-regression image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,python3,git script=pax-reader-take -- native
+step abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,readelf script=pax-reader-take -- abi-build
+step abi-linux needs=abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=taskset script=pax-reader-take -- abi-linux
+step reader-linux needs=static-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3 script=pax-reader-take -- linux
+step installed-ext2-checkpoint needs=static-build,native-regression,abi-build,reader-linux image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3,qemu-system-x86_64,debugfs,dumpe2fs,e2fsck,cp,cmp script=pax-reader-take -- qemu
