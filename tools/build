@@ -41,4 +41,7 @@ compile() {
 compile src/paxage.lu "$out/paxage"
 ln -sf paxage "$out/pxg"
 compile src/paxage_failpoint.lu "$out/paxage-failpoint"
+if [ "$mode" = static ]; then
+    compile src/qualify_probe.lu "$out/qualify-probe"
+fi
 printf 'build: %s/paxage and pxg\n' "$out"

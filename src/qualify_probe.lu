@@ -1,0 +1,14 @@
+//! member: false
+//! Test-only host/qualification observation; no state or payload writes.
+
+use qualify
+
+fn main() -> int {
+    let a = env_args()
+    if a.len != 1 { return 2 }
+    let verdict = qualify.root(a[0])
+    let errno = os_error()
+    print("PLATFORM os={os_name()} arch={os_arch()}")
+    print("QUALIFY kind={verdict.kind} error={verdict.error} last_error={errno}")
+    0
+}
