@@ -246,6 +246,128 @@ fn unit(dir: str) -> int {
         return 1
     }
     fs_close(phase_fd) else |_| { return 1 }
+    if !expect(
+        bad_begin(
+            dir,
+            "negative-length",
+            h("objects/a", "file", 420, -1, "", 0),
+            p,
+            "payload-length",
+        ),
+        "S33-negative-length",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "directory-data", h("objects/a", "dir", 493, 1, "", 0), p, "type-size"),
+        "S34-nonfile-data",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(dir, "unused-target", h("objects/a", "file", 420, 0, "x", 0), p, "unused-link"),
+        "S35-unused-target",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(
+            dir,
+            "unsafe-symlink",
+            h("objects/a", "symlink", 511, 0, "../../escape", 0),
+            p,
+            "bad-symlink",
+        ),
+        "S36-symlink-policy",
+    ) {
+        return 1
+    }
+    if !expect(
+        bad_begin(
+            dir,
+            "unsafe-hardlink",
+            h("objects/a", "hardlink", 420, 0, "/outside", 0),
+            p,
+            "bad-hardlink",
+        ),
+        "S37-hardlink-policy",
+    ) {
+        return 1
+    }
+    let chunk_fd = opened(dir, "chunk")
+    if chunk_fd < 0 { return 1 }
+    var tiny = copy p
+    tiny.chunk_bytes = 1
+    var chunked = packing.writer_start(chunk_fd, tiny)
+    if packing.writer_begin(mut chunked, h("objects/a", "file", 420, 2, "", 0)) != "" { return 1 }
+    if !expect(
+        packing.writer_data(mut chunked, [97 as byte, 98 as byte]) == "writer-chunk" &&
+            size(chunk_fd) == 512,
+        "S38-chunk-before-write",
+    ) {
+        return 1
+    }
+    fs_close(chunk_fd) else |_| { return 1 }
+    let duplicate_fd = opened(dir, "duplicate")
+    if duplicate_fd < 0 { return 1 }
+    var duplicate = packing.writer_start(duplicate_fd, p)
+    if packing.writer_begin(mut duplicate, h("a", "file", 420, 0, "", 0)) != "" ||
+        packing.writer_end(mut duplicate) != "" {
+        return 1
+    }
+    if !expect(
+        packing.writer_begin(mut duplicate, h("a", "file", 420, 0, "", 0)) == "duplicate-path" &&
+            size(duplicate_fd) == 512,
+        "S39-duplicate-before-write",
+    ) {
+        return 1
+    }
+    fs_close(duplicate_fd) else |_| { return 1 }
+    let ancestor_fd = opened(dir, "ancestor")
+    if ancestor_fd < 0 { return 1 }
+    var ancestor = packing.writer_start(ancestor_fd, p)
+    if packing.writer_begin(mut ancestor, h("a", "file", 420, 0, "", 0)) != "" ||
+        packing.writer_end(mut ancestor) != "" {
+        return 1
+    }
+    if !expect(
+        packing.writer_begin(mut ancestor, h("a/b", "file", 420, 0, "", 0)) == "path-conflict" &&
+            size(ancestor_fd) == 512,
+        "S40-ancestor-before-write",
+    ) {
+        return 1
+    }
+    fs_close(ancestor_fd) else |_| { return 1 }
+    let active_fd = opened(dir, "active")
+    if active_fd < 0 { return 1 }
+    var active = packing.writer_start(active_fd, p)
+    if packing.writer_begin(mut active, h("a", "file", 420, 0, "", 0)) != "" { return 1 }
+    if !expect(
+        packing.writer_finish(mut active) == "writer-state" &&
+            packing.writer_end(mut active) == "writer-state" &&
+            size(active_fd) == 512,
+        "S41-open-entry-no-finish",
+    ) {
+        return 1
+    }
+    fs_close(active_fd) else |_| { return 1 }
+    let mismatch_fd = opened(dir, "mismatch")
+    if mismatch_fd < 0 { return 1 }
+    var mismatch = packing.writer_start(mismatch_fd, p)
+    if packing.writer_begin(mut mismatch, h("a", "hardlink", 420, 0, "z", 0)) != "" ||
+        packing.writer_end(mut mismatch) != "" {
+        return 1
+    }
+    if packing.writer_begin(mut mismatch, h("z", "file", 384, 0, "", 0)) != "" ||
+        packing.writer_end(mut mismatch) != "" {
+        return 1
+    }
+    if !expect(
+        packing.writer_finish(mut mismatch) == "hardlink-metadata" && size(mismatch_fd) == 1024,
+        "S42-hardlink-metadata-before-end-blocks",
+    ) {
+        return 1
+    }
     print("PASS S21-state-and-handle-contracts")
     0
 }
