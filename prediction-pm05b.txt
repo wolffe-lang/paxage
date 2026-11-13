@@ -48,3 +48,24 @@ Those system changes are separate prerequisites, not implied by this census.
 
 A capability lie must make a named refusal row fail in a separate test branch.
 No real signing key, running installed machine or network deployment is used.
+
+Scoring (2026-11-13): the installer-created root is plain ext2 with no journal;
+all 63 raw ABI rows pass on Linux and that installed PAX root. No missing raw
+filesystem call was found. Successful fsync calls are not a durability proof.
+The first rig failed because it assumed /run existed; explicit guest directory
+creation fixed the rig without changing the stock installer.
+
+Next checkpoint, before changing the builder: tools/build --static must produce
+static x86-64 ET_EXEC production and test executables in target/static, with no
+PT_INTERP or PT_DYNAMIC, and the short command a link to the production binary.
+Normal native build outputs must remain unchanged. Predict the new static rows
+fail at this baseline because the builder has no static mode and produces only
+target/bin. See tools/check-pax-static for named rows.
+
+Run the production binary built by its own pinned toolchain on the installed
+plain-ext2 disk: compare/version/manifest/solver read-only fixtures must agree
+with Linux, while init refuses unqualified storage by name and live-root writes
+remain refused. Keep the 63 ABI rows as a regression. These rows do not enable
+writes, adopt any file or qualify journal durability. Later adoption/transaction
+rows will label a host-created journalled ext3 root separately; that root is not
+proof that the installer can create one.
