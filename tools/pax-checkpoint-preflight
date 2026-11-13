@@ -5,6 +5,7 @@ root=$(git rev-parse --show-toplevel)
 : "${CENSUS_IMAGE_DIR:?}" "${CENSUS_PAX:?}" "${CENSUS_PAX_REV:?}"
 : "${CENSUS_SEED_DISK:?}" "${CENSUS_SEED_SHA256:?}"
 bash "$root/tools/pax-static-take" preflight
+sh "$root/tools/check-fmt"
 [ -f "$CENSUS_SEED_DISK" ] || { printf 'REFUSED seed-not-regular\n'; exit 75; }
 [ "$(sha256sum "$CENSUS_SEED_DISK" | cut -d' ' -f1)" = "$CENSUS_SEED_SHA256" ] || { printf 'REFUSED seed-digest\n'; exit 75; }
 printf 'preflight: installer-ext2 seed sha256=%s\n' "$CENSUS_SEED_SHA256"
