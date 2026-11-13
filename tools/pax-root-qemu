@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install the supplied verified ISO to a new sparse QEMU disk, add only the
-# test probe offline, then run it from that installed root. Never host devices.
+# A stock installed ext2 root, or a digest-bound clone of one, under QEMU.
+# Offline additions are test probes only. No host disk device is writable.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 : "${CENSUS_OUT:?}" "${CENSUS_IMAGE_DIR:?}" "${CENSUS_ENGINE:?}" "${LIGHT_CPUS:?}" "${CENSUS_PAX:?}"
@@ -8,40 +8,60 @@ export TMPDIR=${TMPDIR:?}
 export PAX_BUILD=$CENSUS_OUT/qemu-build PAX_CACHE=$CENSUS_OUT/qemu-cache
 mkdir -p "$PAX_BUILD" "$PAX_CACHE"
 [ ! -e "$CENSUS_OUT/installed.img" ] || { printf 'REFUSED installed disk already exists\n'; exit 2; }
-# The scripts and kernel are read-only inputs. The output mount is the only
-# writable mount; the container receives no host block device or host network.
+extra=()
+if [ -n "${CENSUS_SEED_DISK:-}" ]; then
+    : "${CENSUS_SEED_SHA256:?a cloned installer root needs its digest}"
+    [ -f "$CENSUS_SEED_DISK" ] || { printf 'REFUSED seed-not-regular\n'; exit 2; }
+    extra+=(-v "$CENSUS_SEED_DISK:/seed/disk.img:ro" -e CENSUS_SEEDED=1 -e CENSUS_SEED_SHA256)
+fi
+if [ -n "${CENSUS_PXG_BINARY:-}" ]; then
+    [ -f "$CENSUS_PXG_BINARY" ] || { printf 'REFUSED reader-binary-missing\n'; exit 2; }
+    extra+=(-v "$CENSUS_PXG_BINARY:/reader/pxg:ro" -e CENSUS_READER=1)
+fi
 "$CENSUS_ENGINE" run -i --rm --network none --memory "${LIGHT_MEM:-6g}" --device /dev/kvm \
-  -e LIGHT_CPUS -e TMPDIR=/out/tmp -e PAX_BUILD=/out/qemu-build -e PAX_CACHE=/out/qemu-cache \
+  "${extra[@]}" -e LIGHT_CPUS -e TMPDIR=/out/tmp -e PAX_BUILD=/out/qemu-build -e PAX_CACHE=/out/qemu-cache \
   -v "$CENSUS_OUT:/out" -v "$CENSUS_IMAGE_DIR:/images:ro" \
   -v "$CENSUS_PAX:/pax:ro" -v "$root:/source:ro" \
   6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 \
   taskset -c "$LIGHT_CPUS" bash -s <<'GUEST_RIG'
 set -euo pipefail
 mkdir -p /out/tmp /out/qemu-build /out/qemu-cache
-sha256sum /images/pax-bf1e38db.iso
-[ "$(sha256sum /images/pax-bf1e38db.iso | cut -d' ' -f1)" = 8b89157e52275debf7de63a5fe93dcd65a5e4b1c3d18f9901338abd968b9a07f ]
-truncate -s 1073741824 /out/installed.img
-printf '%s\n' 'mkdir -p /run' "printf 'model= serial=PM05B-TARGET\\n' > /run/census-targets" \
-  "pax-install --install --ext2-preview --target vda --seed pm05b-image --user pax --games no --allow-list /run/census-targets --confirm 'ERASE /dev/vda 254:0-seq1 1073741824 pm05b-image'" \
-  'echo CENSUS_INSTALL=$?' 'exit 0' > /out/install.keys
-/pax/tools/qemu-halt --accel kvm --firmware bios --serial /out/install.serial --timeout 900 \
-  --qemu -m --qemu 4096M --elf /images/kernel/kmain_console.elf \
-  --drive '/out/installed.img;serial=PM05B-TARGET' --type /out/install.keys --prompt '$ ' \
-  --marker 'halt|PANIC .*' /images/pax-bf1e38db.iso > /out/install.halt 2>&1
-python3 -I - <<'PY'
+if [ "${CENSUS_SEEDED:-0}" = 1 ]; then
+    [ "$(sha256sum /seed/disk.img | cut -d' ' -f1)" = "$CENSUS_SEED_SHA256" ]
+    cp --sparse=always /seed/disk.img /out/installed.img
+    printf 'ROOT_KIND=installer-ext2-clone seed_sha256=%s\n' "$CENSUS_SEED_SHA256"
+else
+    [ "$(sha256sum /images/pax-bf1e38db.iso | cut -d' ' -f1)" = 8b89157e52275debf7de63a5fe93dcd65a5e4b1c3d18f9901338abd968b9a07f ]
+    truncate -s 1073741824 /out/installed.img
+    printf '%s\n' 'mkdir -p /run' "printf 'model= serial=PM05B-TARGET\\n' > /run/census-targets" \
+      "pax-install --install --ext2-preview --target vda --seed pm05b-image --user pax --games no --allow-list /run/census-targets --confirm 'ERASE /dev/vda 254:0-seq1 1073741824 pm05b-image'" \
+      'echo CENSUS_INSTALL=$?' 'exit 0' > /out/install.keys
+    /pax/tools/qemu-halt --accel kvm --firmware bios --serial /out/install.serial --timeout 900 \
+      --qemu -m --qemu 4096M --elf /images/kernel/kmain_console.elf \
+      --drive '/out/installed.img;serial=PM05B-TARGET' --type /out/install.keys --prompt '$ ' \
+      --marker 'halt|PANIC .*' /images/pax-bf1e38db.iso > /out/install.halt 2>&1
+    python3 -I - <<'PY'
 from pathlib import Path
-import re,struct
+import re
 s=re.sub(rb'\x1b\[[0-9;?=<>]*[A-Za-z]',b'',Path('/out/install.serial').read_bytes()).replace(b'\r',b'')
 if b'\nCENSUS_INSTALL=0\n' not in s:
  print('FAIL census-installer-completed',flush=True)
  for line in s.splitlines():
-  if any(word in line for word in (b'pax-install:',b'cannot create',b'CENSUS_INSTALL=',b'Staging source',b'phase ',b'refused:')):
+  if any(w in line for w in (b'pax-install:',b'cannot create',b'CENSUS_INSTALL=',b'Staging source',b'phase ',b'refused:')):
    print(line.decode(errors='replace'),flush=True)
  raise SystemExit(1)
 print('PASS census-installer-completed',flush=True)
+PY
+    printf 'ROOT_KIND=installer-ext2-fresh\n'
+fi
+extract_root() {
+python3 -I - <<'PY'
+from pathlib import Path
+import struct
 with Path('/out/installed.img').open('rb') as f:
  f.seek(512);h=f.read(512);assert h[:8]==b'EFI PART'
  table=struct.unpack_from('<Q',h,72)[0];width=struct.unpack_from('<I',h,84)[0]
+ assert width>=128
  f.seek(table*512+width);e=f.read(width);start,end=struct.unpack_from('<QQ',e,32)
  assert 0<start<=end and (end+1)*512<=1073741824
  Path('/out/root-offset').write_text(str(start*512))
@@ -55,20 +75,47 @@ with Path('/out/installed.img').open('rb') as f:
    remaining-=len(chunk)
   o.truncate()
 PY
+}
+write_file() {
+    local src=$1 dest=$2
+    debugfs -w -R "rm $dest" /out/root.img 2>/dev/null
+    debugfs -w -R "write $src $dest" /out/root.img
+}
+extract_root
 dumpe2fs -h /out/root.img > /out/root-superblock.txt 2>&1
 e2fsck -fn /out/root.img > /out/root-before.fsck 2>&1
 debugfs -R 'dump /etc/pax-install/manifest /out/install.manifest' /out/root.img
 debugfs -R 'dump /etc/pax-release /out/pax-release' /out/root.img
-debugfs -w -R 'write /out/pax-root-probe /bin/pm05b-census' /out/root.img
+write_file /out/pax-root-probe /bin/pm05b-census
 debugfs -w -R 'set_inode_field /bin/pm05b-census mode 0100755' /out/root.img
-# Restore the modified partition. A 1 GiB disk keeps this take below 3 GiB.
+debugfs -R 'dump /bin/pm05b-census /out/injected-probe' /out/root.img
+cmp /out/pax-root-probe /out/injected-probe
+if [ "${CENSUS_READER:-0}" = 1 ]; then
+    write_file /reader/pxg /bin/pxg
+    debugfs -w -R 'set_inode_field /bin/pxg mode 0100755' /out/root.img
+    debugfs -R 'dump /bin/pxg /out/injected-pxg' /out/root.img
+    cmp /reader/pxg /out/injected-pxg
+    debugfs -w -R 'mkdir /usr/share/pxg-census' /out/root.img
+    debugfs -w -R 'mkdir /usr/share/pxg-census/snapshot' /out/root.img
+    for f in valid.manifest bad.manifest session.sh snapshot/snapshot.pxg; do
+        write_file "/out/readonly-fixtures/$f" "/usr/share/pxg-census/$f"
+    done
+fi
+# Compare before writing: unchanged zero ranges remain sparse in the clone.
 python3 -I - <<'PY'
 from pathlib import Path
 with Path('/out/root.img').open('rb') as i,Path('/out/installed.img').open('r+b') as o:
- o.seek(int(Path('/out/root-offset').read_text()))
- while b:=i.read(1048576):o.write(b)
+ pos=int(Path('/out/root-offset').read_text())
+ while b:=i.read(1048576):
+  o.seek(pos);old=o.read(len(b))
+  if old!=b:o.seek(pos);o.write(b)
+  pos+=len(b)
 PY
-printf '%s\n' 'set +o friendly' 'mkdir -p /var/lib' '/bin/pm05b-census /var/lib/pm05b-census' 'echo CENSUS_ABI=$?' 'exit 0' > /out/census.keys
+printf '%s\n' 'set +o friendly' 'mkdir -p /var/lib' '/bin/pm05b-census /var/lib/pm05b-census' 'echo CENSUS_ABI=$?' > /out/census.keys
+if [ "${CENSUS_READER:-0}" = 1 ]; then
+    printf '%s\n' 'sh /usr/share/pxg-census/session.sh' >> /out/census.keys
+fi
+printf '%s\n' 'exit 0' >> /out/census.keys
 /pax/tools/qemu-halt --accel kvm --boot-disk --firmware bios --serial /out/census.serial --timeout 300 \
   --qemu -m --qemu 2048M --elf /images/kernel/kmain_console.elf \
   --type /out/census.keys --prompt '$ ' --marker 'halt|PANIC .*' /out/installed.img > /out/census.halt 2>&1
@@ -79,10 +126,21 @@ s=re.sub(rb'\x1b\[[0-9;?=<>]*[A-Za-z]',b'',Path('/out/census.serial').read_bytes
 Path('/out/census.norm').write_bytes(s)
 for line in s.splitlines():
  if line.startswith((b'PASS abi-',b'FAIL abi-',b'OBSERVE ',b'ABI-END',b'CENSUS_ABI=',b'root:')): print(line.decode())
-assert b'root: PARTUUID=' in s and b'on /: ext2' in s,'not the installed disk root'
-assert b'ABI-END failures=' in s,'probe did not complete'
-print('PASS census-installed-root-measured (individual missing calls stay FAIL above)')
+if b'root: PARTUUID=' not in s or b'on /: ext2' not in s:
+ print('FAIL pax-root-kind-installer-ext2');raise SystemExit(1)
+print('PASS pax-root-kind-installer-ext2')
+if b'ABI-END failures=0' not in s or sum(x.startswith(b'PASS abi-') for x in s.splitlines())!=63:
+ print('FAIL pax-abi-63-regression');raise SystemExit(1)
+print('PASS pax-abi-63-regression')
 PY
+if [ "${CENSUS_READER:-0}" = 1 ]; then
+    grep -q '^PAX_READER_DONE' /out/census.norm || { printf 'FAIL pax-reader-session-completed\n'; exit 1; }
+    extract_root
+    e2fsck -fn /out/root.img > /out/root-after.fsck 2>&1
+    mkdir -p /out/guest-results
+    python3 -I /source/tools/check-pax-readonly export /out/root.img /out/guest-results
+    python3 -I /source/tools/check-pax-readonly judge /out/guest-results /out/readonly-fixtures \
+        --platform pax --reference /out/linux-results
+fi
 du -sh /out
-if grep -q '^FAIL abi-' /out/census.norm; then exit 1; fi
 GUEST_RIG
