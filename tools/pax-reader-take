@@ -12,6 +12,7 @@ publication)
       -e TMPDIR=/work/target/tmp -e PXG_RIG_PROFILE="${PXG_RIG_PROFILE:-generic}" \
       -v "$root:/work" "$image" taskset -c "$PAXAGE_CPUS" bash -c '
         set -eu; cd /work; mkdir -p target/tmp
+        unset PAXAGE_CONTAINER_CPUS
         python3 -I tools/test-public-text
         python3 -I tools/test-rig-profile
         python3 -I tools/check-public-text
