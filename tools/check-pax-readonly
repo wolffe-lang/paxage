@@ -113,7 +113,9 @@ def export(image, out):
     for name in [n for n, _ in CASES] + ['no-state-writes']:
         for suffix in ('exit', 'stdout', 'stderr'):
             filename = name + '.' + suffix
-            p = subprocess.run(['debugfs', '-R', f'dump {RESULTS}/{filename} {out / filename}', str(image)],
+            destination = out / filename
+            destination.unlink(missing_ok=True)
+            p = subprocess.run(['debugfs', '-R', f'dump {RESULTS}/{filename} {destination}', str(image)],
                                capture_output=True, text=True)
             if p.returncode != 0 or not (out / filename).is_file():
                 row(False, 'pax-reader-' + name + '-export', p.stderr.strip())
