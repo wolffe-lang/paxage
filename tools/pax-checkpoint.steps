@@ -8,6 +8,8 @@ rig pax-root-census committed=..:HEAD:tools/pax-root-census
 rig pax-root-qemu committed=..:HEAD:tools/pax-root-qemu
 rig check-pax-static committed=..:HEAD:tools/check-pax-static
 rig check-pax-readonly committed=..:HEAD:tools/check-pax-readonly
+rig check-e2e committed=..:HEAD:tools/check-e2e
+rig check-test committed=..:HEAD:tools/check-test
 rig build committed=..:HEAD:tools/build
 rig lib-toolchain.sh committed=..:HEAD:tools/lib-toolchain.sh
 rig lib-toml.sh committed=..:HEAD:tools/lib-toml.sh
@@ -20,4 +22,4 @@ step native-regression image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48a
 step abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,readelf script=pax-reader-take -- abi-build
 step abi-linux needs=abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=taskset script=pax-reader-take -- abi-linux
 step reader-linux needs=static-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3 script=pax-reader-take -- linux
-step installed-ext2-checkpoint needs=static-build,native-regression,abi-build,reader-linux image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3,qemu-system-x86_64,debugfs,dumpe2fs,e2fsck,cp,cmp script=pax-reader-take -- qemu
+step installed-ext2-checkpoint needs=static-build,native-regression,abi-build,abi-linux,reader-linux image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3,qemu-system-x86_64,debugfs,dumpe2fs,e2fsck,cp,cmp script=pax-reader-take -- qemu

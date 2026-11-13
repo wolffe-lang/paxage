@@ -19,14 +19,17 @@ engine=${PAXAGE_ENGINE:-podman}
 # Parse the Python probes and all embedded Python without compiling a program.
 python3 -I - "$root" <<'PY'
 from pathlib import Path
-import ast,re,sys
+import ast,re,subprocess,sys
 r=Path(sys.argv[1])
 for name in ('check-pax-static','check-pax-readonly'):
  ast.parse((r/'tools'/name).read_text(),filename=name)
 s=(r/'tools/pax-root-qemu').read_text()
 for i,block in enumerate(re.findall(r"python3 -I - <<'PY'\n(.*?)\nPY",s,re.S)):
  ast.parse(block,filename=f'pax-root-qemu-block-{i}')
-print('preflight: Python and embedded Python syntax checked')
+shell=re.search(r"<<'GUEST_RIG'\n(.*?)\nGUEST_RIG",s,re.S)
+if shell is None: raise SystemExit('missing guest rig')
+subprocess.run(['bash','-n'],input=shell[1],text=True,check=True)
+print('preflight: Python, embedded Python and guest shell syntax checked')
 PY
 bash -n "$root/tools/pax-root-qemu" "$root/tools/pax-reader-take" "$root/tools/pax-static-take"
 sh -n "$root/tools/build"
