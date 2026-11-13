@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Run alone before queueing; the recorder repeats it after allocation.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+: "${CENSUS_IMAGE_DIR:?}" "${CENSUS_PAX:?}" "${CENSUS_PAX_REV:?}"
+: "${CENSUS_SEED_DISK:?}" "${CENSUS_SEED_SHA256:?}"
+bash "$root/tools/pax-static-take" preflight
+[ -f "$CENSUS_SEED_DISK" ] || { printf 'REFUSED seed-not-regular\n'; exit 75; }
+[ "$(sha256sum "$CENSUS_SEED_DISK" | cut -d' ' -f1)" = "$CENSUS_SEED_SHA256" ] || { printf 'REFUSED seed-digest\n'; exit 75; }
+printf 'preflight: installer-ext2 seed sha256=%s\n' "$CENSUS_SEED_SHA256"
+[ "$(git -C "$CENSUS_PAX" rev-parse HEAD)" = "$CENSUS_PAX_REV" ] || { printf 'REFUSED harness-revision\n'; exit 75; }
+[ -z "$(git -C "$CENSUS_PAX" status --porcelain --untracked-files=all)" ] || { printf 'REFUSED harness-not-clean\n'; exit 75; }
+[ "$(sha256sum "$CENSUS_IMAGE_DIR/kernel/kmain_console.elf" | cut -d' ' -f1)" = 36427da263aa16203d100bfdbbd69cef8f54f8a1dd6411c1496fb0a308e67e1e ] || { printf 'REFUSED kernel-digest\n'; exit 75; }
+[ -r /dev/kvm ] && [ -w /dev/kvm ] || { printf 'REFUSED kvm-unavailable\n'; exit 75; }
+engine=${PAXAGE_ENGINE:-podman}
+"$engine" run --rm --network none --memory 1g 6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 bash -c '
+  for t in strip qemu-system-x86_64 debugfs dumpe2fs e2fsck mke2fs cp cmp; do command -v "$t" || exit 75; done
+'
+# Parse the Python probes and all embedded Python without compiling a program.
+python3 -I - "$root" <<'PY'
+from pathlib import Path
+import ast,re,sys
+r=Path(sys.argv[1])
+for name in ('check-pax-static','check-pax-readonly'):
+ ast.parse((r/'tools'/name).read_text(),filename=name)
+s=(r/'tools/pax-root-qemu').read_text()
+for i,block in enumerate(re.findall(r"python3 -I - <<'PY'\n(.*?)\nPY",s,re.S)):
+ ast.parse(block,filename=f'pax-root-qemu-block-{i}')
+print('preflight: Python and embedded Python syntax checked')
+PY
+bash -n "$root/tools/pax-root-qemu" "$root/tools/pax-reader-take" "$root/tools/pax-static-take"
+sh -n "$root/tools/build"
+printf 'PREFLIGHT CHECKPOINT OK head=%s root_kind=installer-ext2-clone\n' "$(git rev-parse HEAD)"
