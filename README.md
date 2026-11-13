@@ -23,6 +23,8 @@ Supported CI hosts: Linux x86-64 and macOS arm64. No other runtime dependencies
 beyond the digest-pinned Wolf release/runtime and std tree.
 
 ```sh
+mkdir -p target/tmp
+export TMPDIR="$PWD/target/tmp"
 tools/fetch-toolchain
 tools/build
 target/bin/paxage version
