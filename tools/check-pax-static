@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Static Linux build contract for the PAX executable; readelf is a black box."""
+from pathlib import Path
+import argparse
+import os
+import re
+import shutil
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+FAILED = []
+
+
+def row(ok, name, detail=''):
+    print(('PASS ' if ok else 'FAIL ') + name + (' ' + detail if detail else ''), flush=True)
+    if not ok:
+        FAILED.append(name)
+    return ok
+
+
+def static(path, name):
+    if not row(path.is_file() and os.access(path, os.X_OK), name + '-exists'):
+        return False
+    env = dict(os.environ, LC_ALL='C')
+    h = subprocess.run(['readelf', '-hW', str(path)], env=env, capture_output=True, text=True)
+    p = subprocess.run(['readelf', '-lW', str(path)], env=env, capture_output=True, text=True)
+    return row(h.returncode == 0 and p.returncode == 0
+               and re.search(r'Type:\s+EXEC\b', h.stdout) is not None
+               and re.search(r'Class:\s+ELF64\b', h.stdout) is not None
+               and 'X86-64' in h.stdout
+               and re.search(r'^\s*(INTERP|DYNAMIC)\s', p.stdout, re.M) is None,
+               name + '-elf', (h.stderr + p.stderr).strip())
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--build', action='store_true')
+    opts = ap.parse_args()
+    out = ROOT / 'target/static'
+    if opts.build:
+        if out.is_symlink():
+            out.unlink()
+        elif out.exists():
+            shutil.rmtree(out)
+        built = subprocess.run(['sh', 'tools/build', '--static'], cwd=ROOT)
+        if not row(built.returncode == 0, 'pax-static-build', 'exit=' + str(built.returncode)):
+            return 1
+    production = out / 'paxage'
+    good = static(production, 'pax-static-production')
+    static(out / 'paxage-failpoint', 'pax-static-failpoint')
+    alias = out / 'pxg'
+    row(alias.is_symlink() and alias.resolve() == production.resolve(), 'pax-static-short-link')
+    if good:
+        version = subprocess.run([str(production), 'version'], capture_output=True, text=True, timeout=30)
+        row(version.returncode == 0 and version.stdout.startswith('paxage 0.1.0 (pxg;'),
+            'pax-static-version', version.stderr.strip())
+        env = dict(os.environ, PAXAGE_FAILPOINT='trace')
+        compare = subprocess.run([str(alias), 'compare', '1~rc-1', '1-1'], env=env,
+                                 capture_output=True, text=True, timeout=30)
+        row(compare.returncode == 0 and compare.stdout == '-1\n' and not compare.stderr,
+            'pax-static-readonly-no-failpoint', compare.stderr.strip())
+    return 1 if FAILED else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
