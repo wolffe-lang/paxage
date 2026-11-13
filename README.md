@@ -44,7 +44,9 @@ On Linux x86-64, `tools/build --static` builds stripped static executables under
 `target/static/` using the same pinned Wolf/runtime/std. It needs a C linker with
 static libc inputs and `strip`. `python3 -I tools/check-pax-static --build` checks
 ELF64 ET_EXEC, absence of PT_INTERP/PT_DYNAMIC, the short link and basic read-only
-commands. The failpoint executable is test-only and is never installed.
+commands. The static build also produces a read-only `qualify-probe` for the
+regression suite. That probe and the failpoint executable are test-only, not
+programs to install on a normal system.
 
 The PAX regression distinguishes a stock installer-created ext2 root from a
 host-created journalled ext3 root. Read-only CLI comparisons and the 63 raw ABI
