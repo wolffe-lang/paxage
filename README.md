@@ -37,9 +37,19 @@ target/bin/pxg rescue --root ROOT
 ```
 
 `tools/build` produces one native executable, a `pxg` symbolic link and the
-test-only `paxage-failpoint`; no system installation is performed. Both names have identical behavior and every
-diagnostic is prefixed `paxage:`. On shared development hosts, build a committed
-copy behind its host lock and memory/disk gates; see the lane contract.
+test-only `paxage-failpoint`; no system installation is performed. Both names
+have identical behavior and every diagnostic is prefixed `paxage:`.
+
+On Linux x86-64, `tools/build --static` builds stripped static executables under
+`target/static/` using the same pinned Wolf/runtime/std. It needs a C linker with
+static libc inputs and `strip`. `python3 -I tools/check-pax-static --build` checks
+ELF64 ET_EXEC, absence of PT_INTERP/PT_DYNAMIC, the short link and basic read-only
+commands. The failpoint executable is test-only and is never installed.
+
+The PAX regression distinguishes a stock installer-created ext2 root from a
+host-created journalled ext3 root. Read-only CLI comparisons and the 63 raw ABI
+rows do not enable root mutations or qualify crash durability. Plain ext2 stays
+refused; live-root writes still require the separate maintenance/recovery path.
 
 ## Format and boundaries
 
