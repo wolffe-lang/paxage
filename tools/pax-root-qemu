@@ -28,7 +28,7 @@ set -euo pipefail
 mkdir -p /out/tmp /out/qemu-build /out/qemu-cache
 if [ "${CENSUS_SEEDED:-0}" = 1 ]; then
     [ "$(sha256sum /seed/disk.img | cut -d' ' -f1)" = "$CENSUS_SEED_SHA256" ]
-    cp --sparse=always /seed/disk.img /out/installed.img
+    cp --reflink=never --sparse=always /seed/disk.img /out/installed.img
     printf 'ROOT_KIND=installer-ext2-clone seed_sha256=%s\n' "$CENSUS_SEED_SHA256"
 else
     [ "$(sha256sum /images/pax-bf1e38db.iso | cut -d' ' -f1)" = 8b89157e52275debf7de63a5fe93dcd65a5e4b1c3d18f9901338abd968b9a07f ]
