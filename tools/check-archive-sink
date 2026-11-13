@@ -66,6 +66,14 @@ def invoke(binary, args, data=b'', timeout=60):
     return p
 
 
+def canonical_checksum_tail(h):
+    # F6's existing canonical packer uses six octal digits and two spaces.
+    # POSIX permits space or NUL terminators; OLD's valid vectors use NUL-space.
+    h = bytearray(h)
+    h[154] = 32
+    return bytes(h)
+
+
 def encoded_member(path, kind, length, mode=0o644, target='', epoch=0):
     raw_path = path.encode()
     raw_target = target.encode()
@@ -83,12 +91,12 @@ def encoded_member(path, kind, length, mode=0o644, target='', epoch=0):
         extension += OLD['pax']('mtime', str(epoch).encode())
     out = b''
     if extension:
-        out += OLD['header'](b'PaxHeader', b'x', len(extension), 0o644) + extension + bytes((-len(extension)) % 512)
+        out += canonical_checksum_tail(OLD['header'](b'PaxHeader', b'x', len(extension), 0o644)) + extension + bytes((-len(extension)) % 512)
     h = bytearray(OLD['header'](raw_path, kind, 0 if length > 8589934591 else length, mode, raw_target))
     if epoch <= 8589934591:
         OLD['field'](h, 136, 12, f'{epoch:011o}\0'.encode())
         h = OLD['checksum'](h)
-    return out + h
+    return out + canonical_checksum_tail(h)
 
 
 def reference():

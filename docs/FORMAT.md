@@ -107,3 +107,18 @@ blocks within the authenticated declared length, as `trailing-data`.
 **F6.2 — Numeric encoding:** base-256 is forbidden even when a valid local pax
 record overrides the value; a base-256 mode, uid, gid, size or mtime is refused
 as `header-number`.
+
+**F6.3 — Canonical checksum termination:** the existing canonical packer writes
+six leading-zero-filled octal checksum digits followed by two spaces. POSIX
+permits numeric termination by one or more spaces or NULs; the reader continues
+to accept both. The borrowed-handle writer retains this exact package encoding,
+not a different valid NUL-space spelling. Checksum calculation treats all eight
+checksum octets as spaces.
+
+## F7 — Reusable bounded framing
+
+[ARCHIVE-SINK](ARCHIVE-SINK.md) defines the borrowed runtime-handle writer and
+explicit resource profiles. Package callers still use the F6 limits above;
+profiles do not relax any path, type, numeric, link or exact-end rule. The CLI,
+template/node budget, authentication order and canonical package bytes remain
+unchanged. No encryption or publication is performed by the framing API.

@@ -74,6 +74,10 @@ refused; live-root writes still require the separate maintenance/recovery path.
   rescue, actions, ownership and config rules, the old-or-new check, and the
   power-cut witness (X11).
 - [CLI](docs/CLI.md): verbs, request syntax and exit codes.
+- [ARCHIVE-SINK](docs/ARCHIVE-SINK.md): a controller-owned borrowed-handle writer
+  and explicit reader/writer resource profiles for reusable bounded framing.
+  Package CLI limits, template/node budgets, path/type rules and canonical bytes
+  remain unchanged; framing success does not sync or publish a backup.
 
 A checked manifest is syntactically valid, **not authenticated**. `stage` accepts
 an externally expected blob digest/length, validates the complete inventory, and

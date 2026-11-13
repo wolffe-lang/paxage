@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.1.0
 
+- Add a borrowed-handle canonical archive writer with exact phase/length checks,
+  error/abort latching, and explicit caller-admitted resource profiles. Package
+  defaults and canonical bytes stay unchanged. Add independent framing,
+  descriptor-lifetime, pipe/backpressure and sink-failure rows.
+
 - Specify immutable package targets, strict literals, recipes and version v1.
 - Add standalone bounded manifest parser and exact-byte std SHA-256.
 - Add complete bounded resolver and independent checker for immutable snapshots.
