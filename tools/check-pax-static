@@ -24,12 +24,16 @@ def static(path, name):
     env = dict(os.environ, LC_ALL='C')
     h = subprocess.run(['readelf', '-hW', str(path)], env=env, capture_output=True, text=True)
     p = subprocess.run(['readelf', '-lW', str(path)], env=env, capture_output=True, text=True)
-    return row(h.returncode == 0 and p.returncode == 0
-               and re.search(r'Type:\s+EXEC\b', h.stdout) is not None
-               and re.search(r'Class:\s+ELF64\b', h.stdout) is not None
-               and 'X86-64' in h.stdout
-               and re.search(r'^\s*(INTERP|DYNAMIC)\s', p.stdout, re.M) is None,
-               name + '-elf', (h.stderr + p.stderr).strip())
+    checks = [
+        row(h.returncode == 0 and re.search(r'Type:\s+EXEC\b', h.stdout) is not None
+            and re.search(r'Class:\s+ELF64\b', h.stdout) is not None and 'X86-64' in h.stdout,
+            name + '-elf64-exec', h.stderr.strip()),
+        row(p.returncode == 0 and re.search(r'^\s*INTERP\s', p.stdout, re.M) is None,
+            name + '-no-interpreter', p.stderr.strip()),
+        row(p.returncode == 0 and re.search(r'^\s*DYNAMIC\s', p.stdout, re.M) is None,
+            name + '-no-dynamic', p.stderr.strip()),
+    ]
+    return all(checks)
 
 
 def main():
