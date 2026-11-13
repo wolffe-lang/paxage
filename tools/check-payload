@@ -371,5 +371,6 @@ def main():
             if cap==resource.RLIM_INFINITY or cap>2147483648: raise SystemExit('FAIL payload-growth-requires-2GiB-cap')
             valid=vectors(d);roundtrip(d);edges(d)
             if '--fuzz' in sys.argv:fuzz(d,valid)
+    subprocess.run([sys.executable, '-I', str(ROOT/'tools/check-archive-sink')], check=True)
     print('PASS payload-cli-e2e exit=0',flush=True)
 if __name__=='__main__':main()
