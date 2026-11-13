@@ -3,6 +3,7 @@
 use payload
 use literal
 use schema
+use version
 use std.str as text
 use std.x.crypto.sha2 as sha2
 
@@ -172,6 +173,246 @@ fn write(fd: int, b: List[byte]) -> str {
     ""
 }
 
+/// One normalized canonical header; ownership is explicitly uid/gid zero.
+pub struct Header {
+    path: str,
+    kind: str,
+    mode: int,
+    length: int,
+    target: str,
+    epoch: int,
+}
+
+/// Borrowed runtime handle and bounded metadata. Mutate only through writer APIs.
+pub struct Writer {
+    fd: int,
+    profile: payload.Profile,
+    entries: List[payload.Entry],
+    pending: payload.Entry,
+    remaining: int,
+    data_bytes: int,
+    extension_bytes: int,
+    written: int,
+    open: bool,
+    finished: bool,
+    error: str,
+}
+
+fn empty_entry() -> payload.Entry {
+    payload.Entry {
+        path: "",
+        kind: "",
+        mode: 0,
+        owner: 0,
+        group: 0,
+        length: 0,
+        hash: "",
+        target: "",
+        offset: 0,
+    }
+}
+
+/// Pure construction: never opens, closes, seeks, syncs or writes the handle.
+pub fn writer_start(fd: int, profile: payload.Profile) -> Writer {
+    var error = payload.profile_error(profile)
+    if error == "" && fd < 0 { error = "writer-fd" }
+    Writer {
+        fd,
+        profile: copy profile,
+        entries: List[payload.Entry](),
+        pending: empty_entry(),
+        remaining: 0,
+        data_bytes: 0,
+        extension_bytes: 0,
+        written: 0,
+        open: false,
+        finished: false,
+        error,
+    }
+}
+
+fn writer_fail(mut w: Writer, error: str) -> str {
+    if w.error == "" { w.error = error }
+    w.error
+}
+
+fn writer_live(mut w: Writer) -> str {
+    if w.error != "" { return w.error }
+    if w.finished { return writer_fail(mut w, "writer-finished") }
+    ""
+}
+
+fn emit_bytes(mut w: Writer, b: List[byte]) -> bool {
+    if w.error != "" { return false }
+    if b.len > 9223372036854775807 - w.written {
+        let _failed = writer_fail(mut w, "writer-length")
+        return false
+    }
+    if b.len <= w.profile.chunk_bytes {
+        if b.len > 0 {
+            let error = write(w.fd, b)
+            if error != "" { let _failed = writer_fail(mut w, error); return false }
+        }
+        w.written += b.len
+        return true
+    }
+    var at = 0
+    while at < b.len {
+        var n = b.len - at
+        if n > w.profile.chunk_bytes { n = w.profile.chunk_bytes }
+        region piece {
+            var part = List[byte]()
+            for i in at..at + n { (mut part).push(b[i]) }
+            let error = write(w.fd, part)
+            if error != "" { let _failed = writer_fail(mut w, error); return false }
+        }
+        w.written += n
+        at += n
+    }
+    true
+}
+
+fn header_error(h: Header) -> str {
+    if !payload.allowed_path(h.path) { return "bad-path" }
+    if h.mode < 0 || h.mode > 511 { return "set-id-mode" }
+    if h.length < 0 { return "payload-length" }
+    if h.epoch < 0 { return "writer-time" }
+    if !(h.kind == "file" || h.kind == "dir" || h.kind == "symlink" || h.kind == "hardlink") {
+        return "payload-type"
+    }
+    if h.kind != "file" && h.length != 0 { return "type-size" }
+    if (h.kind == "file" || h.kind == "dir") && h.target != "" { return "unused-link" }
+    if h.kind == "symlink" && !payload.safe_link(h.path, h.target) { return "bad-symlink" }
+    if h.kind == "hardlink" && !payload.allowed_path(h.target) { return "bad-hardlink" }
+    ""
+}
+
+/// Validate the next member and reserve its complete wire length before output.
+pub fn writer_begin(mut w: Writer, h: Header) -> str {
+    let blocked = writer_live(mut w)
+    if blocked != "" { return blocked }
+    if w.open { return writer_fail(mut w, "writer-state") }
+    let invalid = header_error(h)
+    if invalid != "" { return writer_fail(mut w, invalid) }
+    if w.entries.len >= w.profile.max_entries { return writer_fail(mut w, "entry-limit") }
+    if h.length > w.profile.max_data_bytes - w.data_bytes {
+        return writer_fail(mut w, "installed-limit")
+    }
+    if w.entries.len > 0 {
+        let previous = copy w.entries[w.entries.len - 1].path
+        let order = version.lexical(previous, h.path)
+        if order == 0 { return writer_fail(mut w, "duplicate-path") }
+        if order > 0 { return writer_fail(mut w, "writer-order") }
+    }
+    region ancestors {
+        let parts = text.split(h.path, "/")
+        var parent = ""
+        for i in 0..parts.len - 1 {
+            if i > 0 { parent += "/" }
+            parent += parts[i]
+            let at = payload.find(w.entries, parent)
+            if at >= 0 && w.entries[at].kind != "dir" {
+                return writer_fail(mut w, "path-conflict")
+            }
+        }
+    }
+    region encoding {
+        var extension = ""
+        if !payload.ustar_path(h.path) { extension += record("path", h.path) }
+        if !payload.ustar_link(h.target) { extension += record("linkpath", h.target) }
+        if h.length > 8589934591 { extension += record("size", "{h.length}") }
+        if h.epoch > 8589934591 { extension += record("mtime", "{h.epoch}") }
+        if extension.len > 1048576 ||
+            extension.len > w.profile.max_extension_bytes - w.extension_bytes {
+            return writer_fail(mut w, "extension-limit")
+        }
+        var overhead = 512
+        if extension != "" { overhead += 512 + extension.len + (512 - extension.len % 512) % 512 }
+        let pad = (512 - h.length % 512) % 512
+        if w.written > 9223372036854775807 - overhead - 1024 {
+            return writer_fail(mut w, "writer-length")
+        }
+        let available = 9223372036854775807 - w.written - overhead - 1024
+        if h.length > available || pad > available - h.length {
+            return writer_fail(mut w, "writer-length")
+        }
+        if extension != "" {
+            if !emit_bytes(mut w, header("PaxHeader", "extension", 420, extension.len, "", 0)) {
+                return w.error
+            }
+            if !emit_bytes(mut w, extension.bytes()) { return w.error }
+            if !emit_bytes(mut w, zeros((512 - extension.len % 512) % 512)) { return w.error }
+        }
+        if !emit_bytes(mut w, header(h.path, h.kind, h.mode, h.length, h.target, h.epoch)) {
+            return w.error
+        }
+        w.extension_bytes += extension.len
+    }
+    w.pending = payload.Entry {
+        path: copy h.path,
+        kind: copy h.kind,
+        mode: h.mode,
+        owner: 0,
+        group: 0,
+        length: h.length,
+        hash: "",
+        target: copy h.target,
+        offset: w.written,
+    }
+    w.remaining = h.length
+    w.data_bytes += h.length
+    w.open = true
+    ""
+}
+
+/// Bulk all-or-error writes; a failed session cannot be resumed or completed.
+pub fn writer_data(mut w: Writer, bytes: List[byte]) -> str {
+    let blocked = writer_live(mut w)
+    if blocked != "" { return blocked }
+    if !w.open { return writer_fail(mut w, "writer-state") }
+    if bytes.len > w.remaining { return writer_fail(mut w, "writer-size") }
+    if bytes.len > w.profile.chunk_bytes { return writer_fail(mut w, "writer-chunk") }
+    if !emit_bytes(mut w, bytes) { return w.error }
+    w.remaining -= bytes.len
+    ""
+}
+
+/// Complete one exact member and its zero padding; leave the handle borrowed.
+pub fn writer_end(mut w: Writer) -> str {
+    let blocked = writer_live(mut w)
+    if blocked != "" { return blocked }
+    if !w.open { return writer_fail(mut w, "writer-state") }
+    if w.remaining != 0 { return writer_fail(mut w, "writer-size") }
+    let pad = (512 - w.pending.length % 512) % 512
+    region padding {
+        if !emit_bytes(mut w, zeros(pad)) { return w.error }
+    }
+    (mut w.entries).push(copy w.pending)
+    w.open = false
+    ""
+}
+
+/// Validate cross-member relationships before emitting the two final blocks.
+pub fn writer_finish(mut w: Writer) -> str {
+    let blocked = writer_live(mut w)
+    if blocked != "" { return blocked }
+    if w.open { return writer_fail(mut w, "writer-state") }
+    let invalid = payload.validate(w.entries)
+    if invalid != "" { return writer_fail(mut w, invalid) }
+    region ending {
+        if !emit_bytes(mut w, zeros(1024)) { return w.error }
+    }
+    w.finished = true
+    ""
+}
+
+/// Latch external source/cancellation failure without closing or publishing.
+pub fn writer_abort(mut w: Writer) -> str {
+    let blocked = writer_live(mut w)
+    if blocked != "" { return blocked }
+    writer_fail(mut w, "writer-aborted")
+}
+
 // Quote by string slices rather than decoding one byte at a time, preserving UTF-8.
 fn escaped(value: str) -> str {
     var s = text.replace(value, "\\", "\\\\")
@@ -287,26 +528,18 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
     var error = ""
     var records = Text { bytes: List[byte](), error: "" }
     add(mut records, "[")
-    var extension_bytes = 0
+    var sink = writer_start(fd, payload.package_profile())
     var buffer = List[byte]()
     for i in 0..w.entries.len {
         var e = copy w.entries[i]
-        var extension = ""
-        if !payload.ustar_path(e.path) { extension += record("path", e.path) }
-        if !payload.ustar_link(e.target) { extension += record("linkpath", e.target) }
-        if e.length > 8589934591 { extension += record("size", "{e.length}") }
-        if epoch > 8589934591 { extension += record("mtime", "{epoch}") }
-        if extension != "" {
-            if extension.len > 1048576 - extension_bytes { error = "extension-limit"; break }
-            extension_bytes += extension.len
-            error = write(fd, header("PaxHeader", "extension", 420, extension.len, "", 0))
-            if error != "" { break }
-            error = write(fd, extension.bytes())
-            if error != "" { break }
-            error = write(fd, zeros((512 - extension.len % 512) % 512))
-            if error != "" { break }
-        }
-        error = write(fd, header(e.path, e.kind, e.mode, e.length, e.target, epoch))
+        error = writer_begin(mut sink, Header {
+            path: copy e.path,
+            kind: copy e.kind,
+            mode: e.mode,
+            length: e.length,
+            target: copy e.target,
+            epoch,
+        })
         if error != "" { break }
         if e.kind == "file" {
             let before = fs_lstat("{root}/{e.path}") else |_| { error = "pack-source"; break }
@@ -336,7 +569,7 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
                 if got == 0 { error = "pack-read"; break }
                 s.pos += got
                 sha2.update256(mut st, buffer)
-                error = write(fd, buffer)
+                error = writer_data(mut sink, buffer)
                 if error != "" { break }
             }
             let after = fs_fstat_record(src) else |_| {
@@ -352,14 +585,14 @@ pub fn pack(root: str, template: literal.Data, outdir: str, epoch: int) -> str {
             }
             e.hash = sha2.to_hex(sha2.final256(take st))
         }
-        error = write(fd, zeros((512 - e.length % 512) % 512))
+        error = writer_end(mut sink)
         if error != "" { break }
         if i > 0 { add(mut records, ", ") }
         add(mut records, file_record(e))
         if records.error != "" { error = records.error; break }
     }
     add(mut records, "]")
-    if error == "" { error = write(fd, zeros(1024)) }
+    if error == "" { error = writer_finish(mut sink) }
     fs_close(fd) else |_| { error = "pack-close" }
     if error != "" { return error }
     let output = render(template, records.bytes, installed, w.entries.len)
