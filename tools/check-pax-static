@@ -52,6 +52,7 @@ def main():
     production = out / 'paxage'
     good = static(production, 'pax-static-production')
     static(out / 'paxage-failpoint', 'pax-static-failpoint')
+    static(out / 'qualify-probe', 'pax-static-qualify-probe')
     alias = out / 'pxg'
     row(alias.is_symlink() and alias.resolve() == production.resolve(), 'pax-static-short-link')
     if good:
