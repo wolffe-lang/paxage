@@ -7,6 +7,17 @@ engine=${PAXAGE_ENGINE:-podman}
 image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
 export LIGHT_CPUS=$PAXAGE_CPUS LIGHT_MEM=${PAXAGE_MEMORY:-12g} CENSUS_ENGINE=$engine
 case ${1:-} in
+publication)
+    "$engine" run --rm --network none --memory 1g \
+      -e TMPDIR=/work/target/tmp -e PXG_RIG_PROFILE="${PXG_RIG_PROFILE:-generic}" \
+      -v "$root:/work" "$image" taskset -c "$PAXAGE_CPUS" bash -c '
+        set -eu; cd /work; mkdir -p target/tmp
+        python3 -I tools/test-public-text
+        python3 -I tools/test-rig-profile
+        python3 -I tools/check-public-text
+        exit $?
+      '
+    ;;
 native)
     "$engine" run --rm --network none --memory "$LIGHT_MEM" \
       -e TMPDIR=/work/target/tmp -v "$root:/work" "$image" taskset -c "$PAXAGE_CPUS" bash -c '
@@ -44,5 +55,5 @@ qemu)
     export CENSUS_PXG_BINARY=$root/target/static/paxage
     bash "$root/tools/pax-root-qemu"
     ;;
-*) printf 'usage: pax-reader-take native|abi-build|abi-linux|linux|qemu\n' >&2; exit 2 ;;
+*) printf 'usage: pax-reader-take publication|native|abi-build|abi-linux|linux|qemu\n' >&2; exit 2 ;;
 esac

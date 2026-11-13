@@ -4,6 +4,11 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 : "${CENSUS_IMAGE_DIR:?}" "${CENSUS_PAX:?}" "${CENSUS_PAX_REV:?}"
 : "${CENSUS_SEED_DISK:?}" "${CENSUS_SEED_SHA256:?}"
+python3 -I "$root/tools/check-public-text"
+(
+    . "$root/tools/rig-profile"
+    printf 'preflight: rig-profile=%s\n' "$PXG_RIG_PROFILE"
+)
 bash "$root/tools/pax-static-take" preflight
 sh "$root/tools/check-fmt"
 [ -f "$CENSUS_SEED_DISK" ] || { printf 'REFUSED seed-not-regular\n'; exit 75; }

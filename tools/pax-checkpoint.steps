@@ -8,6 +8,11 @@ rig pax-root-census committed=..:HEAD:tools/pax-root-census
 rig pax-root-qemu committed=..:HEAD:tools/pax-root-qemu
 rig check-pax-static committed=..:HEAD:tools/check-pax-static
 rig check-pax-readonly committed=..:HEAD:tools/check-pax-readonly
+rig check-public-text committed=..:HEAD:tools/check-public-text
+rig public-text-allowlist committed=..:HEAD:tools/public-text-allowlist
+rig rig-profile committed=..:HEAD:tools/rig-profile
+rig test-public-text committed=..:HEAD:tools/test-public-text
+rig test-rig-profile committed=..:HEAD:tools/test-rig-profile
 rig check-fmt committed=..:HEAD:tools/check-fmt
 rig check-e2e committed=..:HEAD:tools/check-e2e
 rig check-test committed=..:HEAD:tools/check-test
@@ -18,6 +23,7 @@ rig ../tests/pax-root-probe.c committed=..:HEAD:tests/pax-root-probe.c
 rig ../tests/manifests/valid.manifest committed=..:HEAD:tests/manifests/valid.manifest
 rig ../tests/snapshots/basic/snapshot.pxg committed=..:HEAD:tests/snapshots/basic/snapshot.pxg
 rig ../wolf-toolchain.toml committed=..:HEAD:wolf-toolchain.toml
+step publication-regression image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=python3,git,bash script=pax-reader-take -- publication
 step static-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,python3,git,readelf,strip script=pax-static-take -- build
 step native-regression image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,python3,git script=pax-reader-take -- native
 step abi-build image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,readelf script=pax-reader-take -- abi-build
