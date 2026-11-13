@@ -13,6 +13,7 @@
 #include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -50,6 +51,11 @@ static void print_file(const char *path) {
 }
 int main(int argc, char **argv) {
     if (argc != 2 || argv[1][0] != '/') return 2;
+    struct utsname un = {0};
+    long named = result(syscall(SYS_uname, &un));
+    printf("OBSERVE uname result=%ld", named);
+    if (named == 0) printf(" sysname=%s machine=%s", un.sysname, un.machine);
+    puts("");
     print_file("/proc/self/mounts");
     print_file("/proc/self/mountinfo");
     print_file("/etc/pax-release");
