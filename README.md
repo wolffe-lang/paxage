@@ -7,8 +7,9 @@ validates formats, orders versions, plans dependencies, packs canonical payloads
 and publishes test-only signed file repositories. It bootstraps, updates and fetches
 from local repositories through a bounded TUF profile. Install, upgrade and removal
 use crash-safe transactions on journalled Linux filesystems under test, with a rescue
-entry. Nothing has yet been installed on a PAX root; the live root `/` is refused
-until PAX's boot recovery. Network fetch is not supported. `sync` is refused:
+entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
+transactions are not enabled. The live root `/` remains refused until PAX's boot
+recovery. Network fetch is not supported. `sync` is refused:
 `upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
 production signing remains out of scope. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
