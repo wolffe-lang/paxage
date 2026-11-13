@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Standalone preflight, then an allocated offline static-build regression take.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+engine=${PAXAGE_ENGINE:-podman}
+image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
+case ${1:-} in
+preflight)
+    [ "$(uname -s):$(uname -m)" = Linux:x86_64 ] || { printf 'REFUSED static-host\n'; exit 75; }
+    [ -z "$(git status --porcelain --untracked-files=all)" ] || { printf 'REFUSED source-not-clean\n'; exit 75; }
+    python3 -I - "$root" <<'PY'
+from pathlib import Path
+import shutil,sys
+root=Path(sys.argv[1]);free=shutil.disk_usage(root).free/2**30
+print(f'preflight: free={free:.1f} GiB floor=35 GiB')
+if free<35: print('REFUSED disk-floor');raise SystemExit(75)
+mem=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))
+print(f'preflight: MemAvailable={mem/2**20:.1f} GiB floor=8 GiB')
+if mem<8*2**20: print('REFUSED memory-floor');raise SystemExit(75)
+PY
+    export PAXAGE_ROOT=$root
+    . "$root/tools/lib-toolchain.sh"
+    "$engine" image inspect "$image" --format '{{.Id}}'
+    "$engine" run --rm --network none --memory 1g "$image" bash -c '
+      for t in cc git readelf python3; do command -v "$t" || exit 75; done
+      test -f "$(cc -print-file-name=libc.a)" || exit 75
+    '
+    printf 'PREFLIGHT OK head=%s image=%s\n' "$(git rev-parse HEAD)" "$image"
+    ;;
+build)
+    : "${PAXAGE_CPUS:?set the allocated CPU list}"
+    "$engine" run --rm --network none --memory "${PAXAGE_MEMORY:-12g}" \
+      -e TMPDIR=/work/target/tmp -v "$root:/work" "$image" \
+      taskset -c "$PAXAGE_CPUS" bash -c '
+        set -eu
+        cd /work
+        unset WOLF_BIN LUPIN_BIN WOLF_STD
+        mkdir -p target/tmp
+        python3 -I tools/check-pax-static --build
+      '
+    ;;
+*) printf 'usage: pax-static-take preflight|build\n' >&2; exit 2 ;;
+esac

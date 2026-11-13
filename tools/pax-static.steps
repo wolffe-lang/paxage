@@ -1,0 +1,8 @@
+engine podman
+floor 35 ..
+rig pax-static.steps committed=..:HEAD:tools/pax-static.steps
+rig pax-static-take committed=..:HEAD:tools/pax-static-take
+rig check-pax-static committed=..:HEAD:tools/check-pax-static
+rig build committed=..:HEAD:tools/build
+rig ../wolf-toolchain.toml committed=..:HEAD:wolf-toolchain.toml
+step pax-static image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23 tools=cc,python3,git,readelf script=pax-static-take -- build
