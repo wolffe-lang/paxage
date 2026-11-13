@@ -3,11 +3,42 @@ set -eu
 PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export PAXAGE_ROOT
 cd "$PAXAGE_ROOT"
+mode=native
+case $# in
+    0) ;;
+    1) [ "$1" = --static ] || { printf 'usage: build [--static]\n' >&2; exit 2; }; mode=static ;;
+    *) printf 'usage: build [--static]\n' >&2; exit 2 ;;
+esac
 . tools/lib-toolchain.sh
-mkdir -p target/bin
-rm -rf "$PAXAGE_ROOT/src/.lu-cache"
-"$WOLF" build --deny-warnings src/paxage.lu -o target/bin/paxage
-ln -sf paxage target/bin/pxg
-rm -rf "$PAXAGE_ROOT/src/.lu-cache"
-"$WOLF" build --deny-warnings src/paxage_failpoint.lu -o target/bin/paxage-failpoint
-printf 'build: target/bin/paxage and pxg\n'
+out=target/bin
+if [ "$mode" = static ]; then
+    [ "$(uname -s):$(uname -m)" = Linux:x86_64 ] || {
+        printf 'build: static mode requires Linux x86-64\n' >&2
+        exit 2
+    }
+    out=target/static
+    cc=$(command -v "${CC:-cc}")
+    command -v strip >/dev/null
+    mkdir -p "$out"
+    linker=$PAXAGE_ROOT/$out/cc-static
+    # The compiler accepts a cc-shaped linker, not shell text. Keep the real
+    # executable as an environment value, so paths with spaces stay one word.
+    export PAXAGE_STATIC_CC=$cc
+    printf '%s\n' '#!/bin/sh' 'exec "$PAXAGE_STATIC_CC" -static -Wl,--build-id=none "$@"' > "$linker"
+    chmod 755 "$linker"
+    trap 'rm -f "$linker"' EXIT
+fi
+mkdir -p "$out"
+compile() {
+    rm -rf "$PAXAGE_ROOT/src/.lu-cache"
+    if [ "$mode" = static ]; then
+        "$WOLF" build --deny-warnings --linker "$linker" "$1" -o "$2"
+        strip --strip-all "$2"
+    else
+        "$WOLF" build --deny-warnings "$1" -o "$2"
+    fi
+}
+compile src/paxage.lu "$out/paxage"
+ln -sf paxage "$out/pxg"
+compile src/paxage_failpoint.lu "$out/paxage-failpoint"
+printf 'build: %s/paxage and pxg\n' "$out"
