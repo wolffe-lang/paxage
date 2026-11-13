@@ -216,8 +216,10 @@ def main():
         return 0
     with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR'], prefix='archive-sink-') as tmp:
         directory = Path(tmp)
-        unit = invoke(binary, ['unit', directory])
+        unit = subprocess.run([str(binary), 'unit', str(directory)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
         print(unit.stdout.decode(), end='', flush=True)
+        if unit.returncode:
+            raise AssertionError('unit probe exit=' + str(unit.returncode) + ' ' + unit.stderr.decode('utf-8', 'replace'))
         assert not unit.stderr
         raw = invoke(binary, ['emit']).stdout
         require(raw == reference(), 'S22-independent-canonical-bytes')
