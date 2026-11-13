@@ -14,6 +14,7 @@ RESULTS = '/var/log/pxg-census'
 EMPTY = '/var/lib/pxg-census-empty'
 INIT = '/var/lib/pxg-census-init'
 CASES = [
+    ('platform', [INIT]),
     ('version', ['version']),
     ('compare', ['compare', '1~rc-1', '1-1']),
     ('bad-version', ['compare', '1-0', '1-1']),
@@ -28,7 +29,7 @@ CASES = [
                           '--pinned-root', BASE + '/unused-root', '--arch', 'x86_64',
                           '--slot', 'default', '--now', '2026-11-12T00:00:00Z']),
 ]
-MATCH = [name for name, _ in CASES if name != 'unqualified-init'] + ['no-state-writes']
+MATCH = [name for name, _ in CASES if name not in ('unqualified-init', 'platform')] + ['no-state-writes']
 FAILED = []
 
 
@@ -49,7 +50,8 @@ def prepare(out):
               '  "$@" > "$R/$label.stdout" 2> "$R/$label.stderr"',
               '  result=$?', '  printf "%s\\n" "$result" > "$R/$label.exit"', '}']
     for name, args in CASES:
-        script.append('run ' + shlex.join([name, '/bin/pxg', *args]))
+        program = BASE + '/qualify-probe' if name == 'platform' else '/bin/pxg'
+        script.append('run ' + shlex.join([name, program, *args]))
     script += ['run no-state-writes /bin/sh -c ' + shlex.quote(
         f'test ! -e {INIT}/var && test ! -e {EMPTY}/var'),
         'printf "PAX_READER_DONE\\n"']
@@ -70,6 +72,13 @@ def judge(directory, fixtures, platform, reference):
     got = {name: result(directory, name) for name, _ in CASES}
     got['no-state-writes'] = result(directory, 'no-state-writes')
     raw = (fixtures / 'valid.manifest').read_bytes()
+    kind = b'ext2' if platform == 'pax' else b'overlay'
+    host = b'pax' if platform == 'pax' else b'linux'
+    probe = got['platform']
+    prefix = b'PLATFORM os=' + host + b' arch=x86_64\nQUALIFY kind= error=unqualified-filesystem'
+    row(probe is not None and probe[0] == 0 and probe[2] == b''
+        and probe[1].startswith(prefix) and kind in probe[1],
+        'pax-reader-' + platform + '-host-dispatch-refusal', repr(probe))
     expected = {
         'version': (0, b'paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n', b''),
         'compare': (0, b'-1\n', b''),
@@ -96,7 +105,6 @@ def judge(directory, fixtures, platform, reference):
             pass
     row(valid_solver, 'pax-reader-solver', '' if valid_solver else repr(solver))
     refusal = got['unqualified-init']
-    kind = b'ext2' if platform == 'pax' else b'overlay'
     row(refusal is not None and refusal[0] == 1 and refusal[1] == b''
         and b'unqualified-filesystem' in refusal[2] and kind in refusal[2],
         'pax-reader-' + platform + '-unqualified-init', repr(refusal))

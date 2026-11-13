@@ -28,6 +28,8 @@ linux)
     [ -f "$binary" ] || { printf 'FAIL pax-reader-binary-missing\n'; exit 1; }
     mkdir -p "$CENSUS_OUT/linux-results"
     python3 -I "$root/tools/check-pax-readonly" prepare "$CENSUS_OUT/readonly-fixtures"
+    cp "$root/target/static/qualify-probe" "$CENSUS_OUT/readonly-fixtures/qualify-probe"
+    chmod 755 "$CENSUS_OUT/readonly-fixtures/qualify-probe"
     cp "$binary" "$CENSUS_OUT/pxg"
     chmod 755 "$CENSUS_OUT/pxg"
     "$engine" run --rm --network none --memory "$LIGHT_MEM" \

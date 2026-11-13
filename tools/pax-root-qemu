@@ -97,9 +97,10 @@ if [ "${CENSUS_READER:-0}" = 1 ]; then
     cmp /reader/pxg /out/injected-pxg
     debugfs -w -R 'mkdir /usr/share/pxg-census' /out/root.img
     debugfs -w -R 'mkdir /usr/share/pxg-census/snapshot' /out/root.img
-    for f in valid.manifest bad.manifest session.sh snapshot/snapshot.pxg; do
+    for f in valid.manifest bad.manifest session.sh qualify-probe snapshot/snapshot.pxg; do
         write_file "/out/readonly-fixtures/$f" "/usr/share/pxg-census/$f"
     done
+    debugfs -w -R 'set_inode_field /usr/share/pxg-census/qualify-probe mode 0100755' /out/root.img
 fi
 # Compare before writing: unchanged zero ranges remain sparse in the clone.
 python3 -I - <<'PY'
