@@ -1,0 +1,20 @@
+Archive sink checkpoint prediction
+
+Scope: expose a controller-owned bounded archive writer and explicit reader/writer resource profiles. Keep package defaults, path/type rules, template limits, command grammar and canonical package bytes unchanged. No encryption implementation, package transaction changes or live-root mutation.
+
+Order:
+1. Record this plan and the API contract.
+2. Commit a focused probe and independent byte/process/filesystem rows; the missing API must fail to compile before implementation.
+3. Add Profile/package_profile/inspect_with_profile and the begin/data/end/finish/abort writer state machine. Factor existing package packing through it without a second header encoder.
+4. Compare the existing canonical package fixture against a baseline artifact, exercise old reader/CLI vectors, and verify failure latching and descriptor ownership.
+5. Compile/format and run bounded rows on macOS first. Run standalone Linux preflight, then one committed-snapshot take. Request the full hosted matrix for new process/filesystem rows; do not wait for CI.
+
+Expected rows:
+- Defaults remain 100000 entries, 17179869184 aggregate data bytes, 1048576 cumulative extension bytes and 65536-byte body chunks.
+- Explicit profiles can lower limits or admit a declared size above 16 GiB without changing default CLI behavior. Header-only admission is not a full large-stream qualification.
+- The writer emits identical ustar/pax framing, padding and exact two-block termination, never opens/closes/seeks/syncs/publishes the supplied handle, and never emits a successful finish after failure/abort.
+- Invalid profiles, metadata, ordering, phase, data sizes, chunk sizes and checked wire-length overflow fail before the offending output. Cross-entry relationships validate before final end blocks.
+- Independent reference bytes match files, directories, links, Unicode extensions, large-size extensions and canonical time extensions. Existing package output stays byte-identical to the baseline.
+- A pipe with a slow consumer exercises backpressure/partial writes; a closed consumer fails closed; a closed runtime handle latches an I/O error. These and filesystem descriptor-lifetime rows are host-dependent and require both hosted platforms.
+- No timing comparison or performance claim is made. Deadlines merely bound tests. Large-memory/growth/fuzz work remains Linux-only under a cap; no such run on the Mac.
+- One off-line planted missing-size/finish guard must fail by name. All public text passes tools/check-public-text before every push.
