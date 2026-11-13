@@ -223,8 +223,12 @@ def main():
         require(raw == reference(), 'S22-independent-canonical-bytes')
         require(read_result(binary, raw) == b'accepted:10', 'S23-default-reader-roundtrip')
         require(read_result(binary, raw, [10, 7, 1048576, 1]) == b'accepted:10', 'S26-explicit-profile-and-ragged-data')
-        for caps, error in [([0,7,1048576,65536], 'entry-limit'), ([8,2,1048576,65536], 'installed-limit'), ([8,7,0,65536], 'extension-limit'), ([8,7,1048576,0], 'payload-profile'), ([8,7,1048576,131073], 'payload-profile')]:
-            require(read_result(binary, raw, caps) == ('refused:' + error).encode(), 'S27-profile-' + error + '-' + str(caps[-1]))
+        for index, (caps, error) in enumerate([([0,7,1048576,65536], 'entry-limit'), ([8,2,1048576,65536], 'installed-limit'), ([8,7,0,65536], 'extension-limit'), ([8,7,1048576,0], 'payload-profile'), ([8,7,1048576,131073], 'payload-profile'), ([-1,7,1048576,65536], 'payload-profile'), ([8,-1,1048576,65536], 'payload-profile'), ([8,7,-1,65536], 'payload-profile')]):
+            require(read_result(binary, raw, caps) == ('refused:' + error).encode(), 'S27-profile-' + str(index) + '-' + error)
+        wide = invoke(binary, ['wide']).stdout
+        wide_data = bytes(range(256)) * 512
+        require(wide == encoded_member('objects/data', b'0', len(wide_data)) + wide_data + bytes(1024), 'S43-maximum-chunk-writer-bytes')
+        require(read_result(binary, wide, [1,131072,1048576,131072]) == b'accepted:1', 'S44-maximum-chunk-reader')
         big = 17179869185
         header = invoke(binary, ['header', big]).stdout
         require(header == encoded_member('objects/data', b'0', big), 'S28-large-header-without-large-allocation')

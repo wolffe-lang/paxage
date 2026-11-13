@@ -436,8 +436,24 @@ fn stream(n: int, header_only: bool) -> int {
     0
 }
 
+fn wide() -> int {
+    var p = payload.package_profile()
+    p.chunk_bytes = 131072
+    var w = packing.writer_start(1, p)
+    if packing.writer_begin(mut w, h("objects/data", "file", 420, 131072, "", 0)) != "" { return 1 }
+    var bytes = List[byte]()
+    for i in 0..131072 { (mut bytes).push((i % 256) as byte) }
+    if packing.writer_data(mut w, bytes) != "" ||
+        packing.writer_end(mut w) != "" ||
+        packing.writer_finish(mut w) != "" {
+        return 1
+    }
+    0
+}
+
 fn main() -> int {
     let a = env_args()
+    if a.len == 1 && a[0] == "wide" { return wide() }
     if a.len == 2 && a[0] == "unit" { return unit(a[1]) }
     if a.len == 1 && a[0] == "emit" { return emit() }
     if a.len == 2 && (a[0] == "stream" || a[0] == "header") {
