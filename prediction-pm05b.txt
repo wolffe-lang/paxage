@@ -69,3 +69,16 @@ remain refused. Keep the 63 ABI rows as a regression. These rows do not enable
 writes, adopt any file or qualify journal durability. Later adoption/transaction
 rows will label a host-created journalled ext3 root separately; that root is not
 proof that the installer can create one.
+
+Reader checkpoint c4379a7 exposed one real dispatch bug: init on PAX reached the
+unused pinned-root file instead of refusing the ext2 root. The recorded failure
+is pax-reader-pax-unqualified-init; record SHA256
+2660575c5a668872b1bd5d7c2a756cd746eaa25434d898e51977650a91af43fc.
+The qualifier treated every non-linux os_name as a development root. The pinned
+OS-query specification says that the running kernel is queried: PAX is pax,
+regardless of the compiler's Linux target. Only macos has the development-root
+exception. The fix must fail closed for PAX's unqualified ext-family roots and
+other unsupported hosts, without weakening the refusal row or moving a missing
+pinned-root lookup ahead of qualification. New unit cases hold that host policy;
+a test-only Wolf probe and a raw uname observation expose both views in the next
+take. The 63 existing ABI verdict rows remain unchanged.

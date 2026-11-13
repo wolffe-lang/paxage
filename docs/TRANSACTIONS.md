@@ -23,7 +23,11 @@ device's kernel name comes from `/sys/dev/block/MAJOR:MINOR` (or
 `/proc/self/mountinfo`), and `/proc/fs/jbd2/NAME-*` must exist. Plain ext2 (the
 same magic, no journal), tmpfs, overlay and every other type refuse
 `unqualified-filesystem`, by name, at init and before every transaction. macOS
-roots are development roots: accepted, with no durability claim.
+roots are development roots: accepted, with no durability claim. This exception
+is macOS-only. `os_name` describes the running kernel, so a static Linux binary
+reports `pax` on PAX; it must not acquire the development exception. PAX ext-family
+roots currently refuse `unqualified-filesystem` until a native positive journal
+proof is qualified. Other unsupported operating systems fail closed as well.
 
 ## X3 — The descriptor walk
 
