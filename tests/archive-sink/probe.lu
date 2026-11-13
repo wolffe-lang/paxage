@@ -55,9 +55,11 @@ fn unit(dir: str) -> int {
     var bad = copy p
     bad.chunk_bytes = 0
     let invalid = packing.writer_start(1, bad)
-    if !expect(invalid.error == "payload-profile", "S02-invalid-profile") { return 1 }
+    if !expect(packing.writer_error(invalid) == "payload-profile", "S02-invalid-profile") {
+        return 1
+    }
     let bad_fd = packing.writer_start(-1, p)
-    if !expect(bad_fd.error == "writer-fd", "S03-invalid-handle") { return 1 }
+    if !expect(packing.writer_error(bad_fd) == "writer-fd", "S03-invalid-handle") { return 1 }
     var entry_cap = copy p
     entry_cap.max_entries = 0
     if !expect(

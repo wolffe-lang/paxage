@@ -15,6 +15,7 @@ The public surface is in `packing`:
 ```text
 Header { path, kind, mode, length, target, epoch }
 Writer = writer_start(handle, profile)
+writer_error(writer) -> first error string or empty
 writer_begin(mut writer, header) -> error string or empty
 writer_data(mut writer, bytes) -> error string or empty
 writer_end(mut writer) -> error string or empty
@@ -26,7 +27,7 @@ The handle is one accepted by the pinned runtime's bulk I/O functions, such as a
 
 Headers normalize uid/gid to zero explicitly; original application ownership belongs in separate logical metadata. Modes are at most 0777 and epoch is nonnegative. Allowed member types and path/link rules remain F6. Member names are supplied in strictly increasing UTF-8 byte order. Data is opaque bytes and must exactly match the open member's declared length. Begin/data/end/finish phases are checked, as are per-chunk and aggregate budgets and signed-64-bit wire accounting, including padding and the reserved final blocks.
 
-Cross-entry directory/hard-link relationships are checked before successful finish. Metadata retained for this check is part of the caller's admitted in-memory budget. Finish writes exactly two zero blocks and nothing else. Repeated finish or operations after finish refuse without writing. Abort and the first error latch permanently; no later operation can turn a failed writer into success. A sink error may follow a partial underlying write, so byte counters are authoritative only after successful calls; never resume a failed encryption session or publish partial output.
+Cross-entry directory/hard-link relationships are checked before successful finish. Metadata is copied into the writer-owned bounded inventory and the first error into writer-owned byte storage, so short-lived data/encoding regions cannot leave dangling status or header values. Metadata retained for this check is part of the caller's admitted in-memory budget. Finish writes exactly two zero blocks and nothing else. Repeated finish or operations after finish refuse without writing. Abort and the first error latch permanently; no later operation can turn a failed writer into success. A sink error may follow a partial underlying write, so byte counters are authoritative only after successful calls; never resume a failed encryption session or publish partial output.
 
 This API does not buffer a whole archive or create a plaintext spool. A controller can connect the borrowed output handle to a standard encryption process/stage and apply backpressure through the pipe. It must verify source stability and propagate source/encryption/store errors; the framing layer cannot infer those external facts.
 
