@@ -8,6 +8,7 @@ rig pax-root-census committed=..:HEAD:tools/pax-root-census
 rig pax-root-qemu committed=..:HEAD:tools/pax-root-qemu
 rig check-pax-static committed=..:HEAD:tools/check-pax-static
 rig check-pax-readonly committed=..:HEAD:tools/check-pax-readonly
+rig check-fmt committed=..:HEAD:tools/check-fmt
 rig check-e2e committed=..:HEAD:tools/check-e2e
 rig check-test committed=..:HEAD:tools/check-test
 rig build committed=..:HEAD:tools/build
