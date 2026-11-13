@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Commands for one allocated static-reader/ABI/installed-ext2 checkpoint.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+: "${CENSUS_OUT:?}" "${PAXAGE_CPUS:?}"
+engine=${PAXAGE_ENGINE:-podman}
+image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
+export LIGHT_CPUS=$PAXAGE_CPUS LIGHT_MEM=${PAXAGE_MEMORY:-12g} CENSUS_ENGINE=$engine
+case ${1:-} in
+native)
+    "$engine" run --rm --network none --memory "$LIGHT_MEM" \
+      -e TMPDIR=/work/target/tmp -v "$root:/work" "$image" taskset -c "$PAXAGE_CPUS" bash -c '
+        set -eu; cd /work; unset WOLF_BIN LUPIN_BIN WOLF_STD
+        mkdir -p target/tmp
+        sh tools/build
+        python3 -I tools/check-e2e
+        sh tools/check-test
+        # Discard rebuildable unit binaries before creating the disk fixtures.
+        rm -rf target/tests src/.lu-cache
+        rm -f target/bin/payload-probe target/bin/chunk-probe
+      '
+    ;;
+abi-build|abi-linux)
+    bash "$root/tools/pax-root-census" "${1#abi-}"
+    ;;
+linux)
+    binary=${PAX_READER_BINARY:-$root/target/static/paxage}
+    [ -f "$binary" ] || { printf 'FAIL pax-reader-binary-missing\n'; exit 1; }
+    mkdir -p "$CENSUS_OUT/linux-results"
+    python3 -I "$root/tools/check-pax-readonly" prepare "$CENSUS_OUT/readonly-fixtures"
+    cp "$binary" "$CENSUS_OUT/pxg"
+    chmod 755 "$CENSUS_OUT/pxg"
+    "$engine" run --rm --network none --memory "$LIGHT_MEM" \
+      -v "$CENSUS_OUT/pxg:/bin/pxg:ro" \
+      -v "$CENSUS_OUT/readonly-fixtures:/usr/share/pxg-census:ro" \
+      -v "$CENSUS_OUT/linux-results:/var/log/pxg-census" "$image" \
+      taskset -c "$PAXAGE_CPUS" sh /usr/share/pxg-census/session.sh
+    python3 -I "$root/tools/check-pax-readonly" judge "$CENSUS_OUT/linux-results" \
+      "$CENSUS_OUT/readonly-fixtures" --platform linux
+    ;;
+qemu)
+    export CENSUS_PXG_BINARY=$root/target/static/paxage
+    bash "$root/tools/pax-root-qemu"
+    ;;
+*) printf 'usage: pax-reader-take native|abi-build|abi-linux|linux|qemu\n' >&2; exit 2 ;;
+esac

@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Prepare and judge identical read-only CLI sessions on Linux and installed PAX."""
+from pathlib import Path
+import argparse
+import hashlib
+import json
+import shlex
+import shutil
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+BASE = '/usr/share/pxg-census'
+RESULTS = '/var/log/pxg-census'
+EMPTY = '/var/lib/pxg-census-empty'
+INIT = '/var/lib/pxg-census-init'
+CASES = [
+    ('version', ['version']),
+    ('compare', ['compare', '1~rc-1', '1-1']),
+    ('bad-version', ['compare', '1-0', '1-1']),
+    ('manifest', ['check-manifest', BASE + '/valid.manifest']),
+    ('bad-manifest', ['check-manifest', BASE + '/bad.manifest']),
+    ('solver', ['resolve', '--snapshot', BASE + '/snapshot', '--want', 'app', '--json']),
+    ('status-empty', ['status', '--root', EMPTY]),
+    ('live-install', ['install', '--root', '/', 'alpha']),
+    ('live-remove', ['remove', '--root', '/', 'alpha']),
+    ('live-upgrade', ['upgrade', '--root', '/']),
+    ('unqualified-init', ['init', '--root', INIT, '--repo', 'file://' + BASE,
+                          '--pinned-root', BASE + '/unused-root', '--arch', 'x86_64',
+                          '--slot', 'default', '--now', '2026-11-12T00:00:00Z']),
+]
+MATCH = [name for name, _ in CASES if name != 'unqualified-init'] + ['no-state-writes']
+FAILED = []
+
+
+def row(ok, name, detail=''):
+    print(('PASS ' if ok else 'FAIL ') + name + (' ' + detail if detail else ''), flush=True)
+    if not ok:
+        FAILED.append(name)
+
+
+def prepare(out):
+    out.mkdir(parents=True, exist_ok=True)
+    (out / 'snapshot').mkdir(exist_ok=True)
+    shutil.copyfile(ROOT / 'tests/manifests/valid.manifest', out / 'valid.manifest')
+    shutil.copyfile(ROOT / 'tests/snapshots/basic/snapshot.pxg', out / 'snapshot/snapshot.pxg')
+    (out / 'bad.manifest').write_bytes(b'manifest { schema: 1, schema: 1 }\n')
+    script = ['#!/bin/sh', 'set -u', f'R={RESULTS}', f'mkdir -p "$R" {EMPTY} {INIT}',
+              'run() {', '  label=$1; shift',
+              '  "$@" > "$R/$label.stdout" 2> "$R/$label.stderr"',
+              '  result=$?', '  printf "%s\\n" "$result" > "$R/$label.exit"', '}']
+    for name, args in CASES:
+        script.append('run ' + shlex.join([name, '/bin/pxg', *args]))
+    script += ['run no-state-writes /bin/sh -c ' + shlex.quote(
+        f'test ! -e {INIT}/var && test ! -e {EMPTY}/var'),
+        'printf "PAX_READER_DONE\\n"']
+    (out / 'session.sh').write_text('\n'.join(script) + '\n')
+
+
+def result(directory, name):
+    try:
+        return (int((directory / (name + '.exit')).read_text().strip()),
+                (directory / (name + '.stdout')).read_bytes(),
+                (directory / (name + '.stderr')).read_bytes())
+    except (OSError, ValueError) as error:
+        row(False, 'pax-reader-' + name + '-receipt', str(error))
+        return None
+
+
+def judge(directory, fixtures, platform, reference):
+    got = {name: result(directory, name) for name, _ in CASES}
+    got['no-state-writes'] = result(directory, 'no-state-writes')
+    raw = (fixtures / 'valid.manifest').read_bytes()
+    expected = {
+        'version': (0, b'paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n', b''),
+        'compare': (0, b'-1\n', b''),
+        'bad-version': (1, b'', b'paxage: bad-version\n'),
+        'manifest': (0, f'manifest ok sha256={hashlib.sha256(raw).hexdigest()} bytes={len(raw)}\n'.encode(), b''),
+        'bad-manifest': (1, b'', b'paxage: duplicate-key\n'),
+        'status-empty': (1, b'', b'paxage: current-invalid\n'),
+        'no-state-writes': (0, b'', b''),
+    }
+    for name in ('live-install', 'live-remove', 'live-upgrade'):
+        expected[name] = (1, b'', b'paxage: live-root-is-pm05\n')
+    for name, want in expected.items():
+        row(got[name] == want, 'pax-reader-' + name, '' if got[name] == want else repr(got[name]))
+    solver = got['solver']
+    valid_solver = False
+    if solver is not None and solver[0] == 0 and solver[2] == b'':
+        try:
+            valid_solver = json.loads(solver[1]) == {
+                'status': 'solved', 'selected': ['app@x86_64/default=1-1', 'lib@x86_64/default=2-1'],
+                'removals': [], 'nodes': 3,
+                'explanation': 'complete plan; packages=3; wants=app; holds=; installed=',
+            }
+        except (ValueError, UnicodeError):
+            pass
+    row(valid_solver, 'pax-reader-solver', '' if valid_solver else repr(solver))
+    refusal = got['unqualified-init']
+    kind = b'ext2' if platform == 'pax' else b'overlay'
+    row(refusal is not None and refusal[0] == 1 and refusal[1] == b''
+        and b'unqualified-filesystem' in refusal[2] and kind in refusal[2],
+        'pax-reader-' + platform + '-unqualified-init', repr(refusal))
+    if reference is not None:
+        for name in MATCH:
+            baseline = result(reference, name)
+            row(got[name] is not None and got[name] == baseline,
+                'pax-reader-linux-match-' + name)
+    return 1 if FAILED else 0
+
+
+def export(image, out):
+    out.mkdir(parents=True, exist_ok=True)
+    for name in [n for n, _ in CASES] + ['no-state-writes']:
+        for suffix in ('exit', 'stdout', 'stderr'):
+            filename = name + '.' + suffix
+            p = subprocess.run(['debugfs', '-R', f'dump {RESULTS}/{filename} {out / filename}', str(image)],
+                               capture_output=True, text=True)
+            if p.returncode != 0 or not (out / filename).is_file():
+                row(False, 'pax-reader-' + name + '-export', p.stderr.strip())
+    return 1 if FAILED else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest='command', required=True)
+    p = sub.add_parser('prepare'); p.add_argument('out', type=Path)
+    p = sub.add_parser('export'); p.add_argument('image', type=Path); p.add_argument('out', type=Path)
+    p = sub.add_parser('judge')
+    p.add_argument('results', type=Path); p.add_argument('fixtures', type=Path)
+    p.add_argument('--platform', choices=['linux', 'pax'], required=True)
+    p.add_argument('--reference', type=Path)
+    args = ap.parse_args()
+    if args.command == 'prepare':
+        prepare(args.out)
+        return 0
+    if args.command == 'export':
+        return export(args.image, args.out)
+    return judge(args.results, args.fixtures, args.platform, args.reference)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
