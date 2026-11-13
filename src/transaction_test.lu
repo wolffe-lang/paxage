@@ -1,6 +1,7 @@
 use database as db
 use failpoint
 use intent
+use qualify
 use txn
 use walk
 
@@ -45,6 +46,10 @@ fn sample() -> intent.Intent {
 
 fn main() -> int {
     var ok = true
+    if !row(qualify.development_host("macos"), "X2-macos-development-host") { ok = false }
+    for host in ["linux", "pax", "freebsd", "windows", "unknown", ""] {
+        if !row(!qualify.development_host(host), "X2-not-development-{host}") { ok = false }
+    }
     let bytes = intent.render(sample())
     let back = intent.parse(bytes)
     if !row(
