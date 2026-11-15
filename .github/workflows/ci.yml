@@ -2,7 +2,6 @@
 # Existing nightly commands and publication jobs are preserved.
 name: ci
 on:
-  workflow_call:
   schedule:
     - cron: "51 8 * * *"
   workflow_dispatch:
