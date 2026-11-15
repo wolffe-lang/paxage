@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — 0.1.0
+## 0.1.0 — 2026-11-15
+
+- Experimental 0.1.0 preview: file:// transport only and test-only signing; no network fetch, production signing, live-root writes or PAX root transactions.
+- Provide manifest/version checks, bounded dependency planning, canonical payload packing and authenticated local-file staging. Linux synthetic-root transaction tests do not qualify production deployment.
+- Require the full cross-platform gate at the exact tag before staging checksummed macOS arm64 and Linux x86-64 archives as a draft.
+
+## Development history
 
 - Add a borrowed-handle canonical archive writer with exact phase/length checks,
   error/abort latching, and explicit caller-admitted resource profiles. Package

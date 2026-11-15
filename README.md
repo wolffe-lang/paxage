@@ -1,8 +1,6 @@
 # paxage
 
-formerly larder, renamed 2026-11-09
-
-PAX's package manager, also invoked as `pxg`. The current 0.1.0 implementation
+**Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.1.0 implementation
 validates formats, orders versions, plans dependencies, packs canonical payloads,
 and publishes test-only signed file repositories. It bootstraps, updates and fetches
 from local repositories through a bounded TUF profile. Install, upgrade and removal
@@ -15,6 +13,39 @@ production signing remains out of scope. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
+
+## Install 0.1.0
+
+Release preparation targets macOS arm64 (`aarch64-apple-darwin`) and Linux
+x86-64 (`x86_64-unknown-linux-gnu`). A release workflow creates a **draft**;
+these instructions apply only once `v0.1.0` has been published on the
+[release page](https://github.com/wolffe-lang/paxage/releases).
+Other platforms have no prebuilt archive in this release.
+
+Download `paxage-0.1.0-TARGET.tar.gz` and its `.sha256` sidecar into an empty
+directory, replacing `TARGET` with your platform above. Before unpacking, run:
+
+```sh
+# Linux:
+sha256sum -c paxage-0.1.0-TARGET.tar.gz.sha256
+# macOS:
+shasum -a 256 -c paxage-0.1.0-TARGET.tar.gz.sha256
+tar -xzf paxage-0.1.0-TARGET.tar.gz
+cd paxage-0.1.0-TARGET
+./paxage --version
+```
+
+The archive contains the executables, license, documentation, toolchain pins
+and `BUILD.json` provenance. Keep it outside system directories and add its
+absolute directory to your PATH if desired. Checksums detect altered bytes;
+they do not replace a trusted download channel or constitute signed releases.
+Homebrew and AUR recipes are prepared separately after published hashes are
+known; preparation does not imply that either package is already available.
+
+This release is experimental: file transport only, test-only signing, no
+production signing, network transport or PAX root transactions. Do not use it
+as a production system package manager. Both `paxage` and `pxg` are included.
+
 
 ## Build and try
 
