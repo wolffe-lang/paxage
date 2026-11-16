@@ -3,7 +3,7 @@ on:
   pull_request:
   push:
     branches: [trunk]
-    paths: ['.github/**', 'src/**', 'CHANGELOG.md']
+    paths: ['.github/**', 'src/**', 'CHANGELOG.md', 'ci/release-config-test.py']
 permissions:
   contents: read
 jobs:
@@ -22,6 +22,8 @@ jobs:
           persist-credentials: false
       - name: same complete gate and immutable caller pin
         run: python3 -I release-infrastructure/tools/release-adapter --root . --check-pin 45f3bd27f8e26a54af5eced64c759396bdf1f850
+      - name: release command bootstrap and alias
+        run: python3 -B -I ci/release-config-test.py
       - name: workflow syntax
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.load_file(f) }'

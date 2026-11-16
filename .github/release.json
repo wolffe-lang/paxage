@@ -8,7 +8,7 @@
     "sh",
     "-eu",
     "-c",
-    ". tools/lib-toolchain.sh; mkdir -p target/release; \"$WOLF\" build --release --deny-warnings src/paxage.lu -o target/release/paxage; cp target/release/paxage target/release/pxg"
+    "PAXAGE_ROOT=\"$PWD\"; export PAXAGE_ROOT; . tools/lib-toolchain.sh; mkdir -p target/release; \"$WOLF\" build --release --deny-warnings src/paxage.lu -o target/release/paxage; cp target/release/paxage target/release/pxg"
   ],
   "binaries": {
     "paxage": "target/release/paxage",
