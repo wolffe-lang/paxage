@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -11,6 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseBuild(unittest.TestCase):
+    def test_release_readme_and_rename_census_agree(self):
+        (ROOT / 'target').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='release census ', dir=ROOT / 'target') as tmp:
+            home = Path(tmp)
+            env = dict(os.environ, HOME=str(home), TMPDIR=str(home), SHELL='/bin/sh')
+            result = subprocess.run([sys.executable, '-B', '-I', str(ROOT / 'tools/check-census')],
+                                    cwd=ROOT, env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertIn('PASS census-allowlist', result.stdout)
+            self.assertIn('PASS census-old-names', result.stdout)
+
     def test_build_bootstraps_its_root_and_preserves_alias_bytes(self):
         config = json.loads((ROOT / '.github/release.json').read_text())
         (ROOT / 'target').mkdir(exist_ok=True)
