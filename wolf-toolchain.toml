@@ -1,27 +1,28 @@
-# paxage release archives, checked twice (GitHub API digest and a downloaded sha256) 2026-11-09.
+# paxage release archives, checked twice (GitHub API digest and a downloaded sha256) 2026-11-20.
 # Std has an explicit git pin and is staged in place of the bundled tree.
 [wolf]
-version = "0.2.38"
+version = "0.2.40"
 repo = "wolffe-lang/wolf-lang"
-rev = "95ae0827a8ad4d0bbed9302df7811caaa7009fa1"
-version_line = "wolf 0.2.38 (wolfgang, pin 95ae082)"
-aarch64-apple-darwin = "66a2c31324e9e4c4cbb6f103e4014e36b400366c198598b67c71491a65cffba4"
-x86_64-unknown-linux-gnu = "8447a57944da67ba8e76f5b4e88c2f38a32f39466f44b65e5817dcc276394f39"
+rev = "b333b9da8560e4e1dfd6e30099d14d98e752f9e1"
+version_line = "wolf 0.2.40 (wolfgang, pin b333b9d)"
+aarch64-apple-darwin = "3f18a56562fb089da05a50a612e031cd297f20a617b9e6e7ada768fbeb69e72b"
+x86_64-unknown-linux-gnu = "bc2020e0b7400c18162a6072c299c65c0582ea74a0eba22aaa57ca04ae13e7e1"
 
 [lupin]
-# The reference interpreter wolf 0.2.38 declares as its pairing:
-# `wolf --version` line 2 reads "paired with lupin 0.1.60 (reference
-# interpreter), pin 5f1f1c9...". 0.2.38 adds the descriptor walk (s277).
-version = "0.1.60"
+# The reference interpreter wolf 0.2.40 declares as its pairing:
+# `wolf --version` line 2 reads "paired with lupin 0.1.62 (reference
+# interpreter), pin 5f1f1c9...".
+version = "0.1.62"
 repo = "wolffe-lang/wolf-interp"
-rev = "17bd522382373b361fe035a5cc61f9e136e1caba"
-version_line = "lupin 0.1.60 (wolf-interp, reference interpreter at pin 5f1f1c9)"
-aarch64-apple-darwin = "f3cae16fdb88a94702c0fd816d5eb90cdc8e8636c028dcf40f03868c5dc36bb8"
-x86_64-unknown-linux-gnu = "e7d4c4f1534736c9262f4ccd01a631f03ff70e3b8122eefe6e9ec1e15c02637e"
+rev = "72eff3c99b3a9e434b059f5dd3e4b1d29c862ddc"
+version_line = "lupin 0.1.62 (wolf-interp, reference interpreter at pin 5f1f1c9)"
+aarch64-apple-darwin = "228790ef3aef7605a2f9524abdcb6de5c8a5fa179437d82f3d3af262495a4e7f"
+x86_64-unknown-linux-gnu = "3b3bf9c23a9e545a4a99e65a5183d0c5e71e91d6bfb8a189147e2701c03e177f"
 
 
 [std]
 # The tree is pinned by commit: git's object hash is the digest.
-# sc77 adds strict Ed25519 verification; bounded SHA-2 remains included.
+# This is the tree wolf 0.2.40 bundles (its std/STD-REV); it carries the
+# public-PKI TLS client (P-384, RSA-PSS, path building).
 repo = "wolffe-lang/wolf-std"
-rev = "23baa1add4e0f5565e298fa075e7bc7029ac410d"
+rev = "be1d10fa2798cc6bc2a1fd0b2e559e283469c9bf"
