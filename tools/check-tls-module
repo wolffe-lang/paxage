@@ -1,0 +1,16 @@
+#!/bin/sh
+# check-tls-module — build and run the std TLS probe under the pinned toolchain.
+# Red at a std that lacks the public-PKI modules; green once the pin carries them.
+set -eu
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
+. tools/lib-toolchain.sh
+mkdir -p target/tests
+rm -rf "$PAXAGE_ROOT/tests/tls-module/.lu-cache"
+result=0
+"$WOLF" build --deny-warnings tests/tls-module/main.lu -o target/tests/tls-probe || result=$?
+if [ "$result" -eq 0 ]; then target/tests/tls-probe || result=$?; fi
+echo "tls-module exit=$result"
+if [ "$result" -ne 0 ]; then echo "FAIL tls-module exit=$result" >&2; fi
+exit "$result"

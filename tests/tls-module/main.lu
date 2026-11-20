@@ -1,0 +1,36 @@
+//! Proves the std TLS client modules the HTTPS fetch needs resolve and build.
+//! A package of its own, so paxage's declared capabilities stay [env, fs].
+//! No network, no socket: it checks the public-PKI additions (P-384, RSA-PSS)
+//! are present and agree with their numbers.
+
+use std.x.tls.client as tls
+use std.x.tls.cert as cert
+use std.x.crypto.p384 as p384
+use std.x.crypto.rsa as rsa
+
+fn row(ok: bool, name: str) -> bool {
+    if !ok {
+        fs_write(2, "FAIL {name}\n") else |_| {}
+    } else {
+        print("PASS {name}")
+    }
+    ok
+}
+
+fn main() -> int {
+    var ok = true
+    if !row(tls.scheme_ecdsa_p384_sha384() == 1283, "tls-scheme-p384") { ok = false }
+    if !row(tls.scheme_rsa_pss_sha256() == 2052, "tls-scheme-rsa-pss-sha256") { ok = false }
+    if !row(tls.scheme_rsa_pss_sha384() == 2053, "tls-scheme-rsa-pss-sha384") { ok = false }
+    if !row(tls.scheme_rsa_pss_sha512() == 2054, "tls-scheme-rsa-pss-sha512") { ok = false }
+    if !row(tls.signature_schemes().len == 6, "tls-six-schemes") { ok = false }
+    if !row(tls.suite_chacha20_sha256() == 4867, "tls-suite") { ok = false }
+    if !row(p384.self_test(), "p384-self-test") { ok = false }
+    if !row(cert.oid_secp384r1() != cert.oid_secp256r1(), "cert-curve-oids") { ok = false }
+    if !row(rsa.hash_sha256() != rsa.hash_sha384(), "rsa-hash-ids") { ok = false }
+    if ok {
+        print("PASS tls-module")
+        return 0
+    }
+    1
+}
