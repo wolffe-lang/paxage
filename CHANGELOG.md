@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.1.0 — 2026-11-15
+## 0.1.0 — 2026-11-20
 
 - Experimental 0.1.0 preview: file:// transport only and test-only signing; no network fetch, production signing, live-root writes or PAX root transactions.
 - Provide manifest/version checks, bounded dependency planning, canonical payload packing and authenticated local-file staging. Linux synthetic-root transaction tests do not qualify production deployment.
 - Require the full cross-platform gate at the exact tag before staging checksummed macOS arm64 and Linux x86-64 archives as a draft.
+- Pin wolf 0.2.40, lupin 0.1.62 and the std tree that wolf 0.2.40 bundles. The release build initializes its own build root before it loads the compiler pins, and the release checks catch stale rename exceptions in the public-text census. No behaviour of the tool changes.
+- Add the borrowed-handle canonical archive writer, with explicit caller-admitted resource profiles. Package defaults and canonical bytes are unchanged.
 
 ## Development history
 
