@@ -59,3 +59,7 @@
   the reserved `/etc/paxage/`, `.paxage-new`, the intent header, the `.pxg` data files
   and the `PAXAGE_*` variables follow. No former name is accepted as an alias, and
   nothing migrates: nothing was ever installed under the former paths.
+- Pin wolf 0.2.40 and lupin 0.1.62, with std at the tree wolf 0.2.40 bundles
+  (be1d10fa). That std carries the public-PKI TLS client (P-384 and RSA-PSS
+  verification, path building). A row builds a probe against those modules and
+  was red at the old pins. No behaviour changes.
