@@ -31,7 +31,7 @@ permissions:
 jobs:
   plan:
     name: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: full job set selected
@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: linux x86-64, os: ubuntu-latest, arch: x86_64}
+          - {name: linux x86-64, os: ubuntu-24.04, arch: x86_64}
           - {name: macOS arm64, os: macos-latest, arch: arm64}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -79,7 +79,7 @@ jobs:
     name: Cross-host four-payload byte identity
     needs: gate
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) && (!cancelled()) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@v4
