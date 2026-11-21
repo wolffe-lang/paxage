@@ -1,6 +1,6 @@
 //! member: false
 //! The paxage CLI: formats, planning, pack and stage, file trust, and transactions
-//! over a synthetic root (pm04). The root verbs live in root_cli.
+//! over a synthetic root. The root verbs live in root_cli.
 
 use literal
 use schema
