@@ -135,7 +135,7 @@ def main():
     run('T13-timestamp-rewrite', 'update', '--repo', url, '--state', state, '--now', NOW, error='same-version-rewrite')
     (repo / 'metadata/timestamp.json').write_bytes(latest)
     run('T13-clock-floor', 'update', '--repo', url, '--state', state, '--now', '2026-11-02T23:59:59Z', error='clock-before-floor')
-    run('T1-network-refused', 'update', '--repo', 'https://invalid.example/', '--state', state, '--now', NOW, error='unsupported-transport')
+    run('T1-network-refused', 'update', '--repo', 'http://invalid.example/', '--state', state, '--now', NOW, error='unsupported-transport')
     run('T1-offline-recovery-refused', 'recover-offline', error='offline-recovery-refused')
     for version in range(2, 35):
         run(f'T12-publish-root-{version}', 'repo', 'rotate', '--repo', url, '--old-keys', keys, '--keys', keys,
