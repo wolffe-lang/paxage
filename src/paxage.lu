@@ -318,7 +318,7 @@ fn main() -> int {
     if verb == "recover-offline" { return fail("offline-recovery-refused") }
     if (verb == "--help" || verb == "help") && a.len == 1 { print(usage()); return 0 }
     if (verb == "version" || verb == "--version") && a.len == 1 {
-        print("paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)")
+        print("paxage 0.1.1 (pxg; format v1, file trust, pack and stage, linux transactions)")
         return 0
     }
     if verb == "compare" && a.len == 3 {
