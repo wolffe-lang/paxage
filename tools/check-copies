@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""copies-match-pin: each HTTP source copied from den equals its pinned bytes.
+
+tools/http-copies/PROVENANCE names, for each copy, the den commit and path, the
+git blob id of the pinned bytes and the named patch (if any). A copy is its
+fixed provenance preamble (the leading `// paxage: ` lines) followed by the
+pinned bytes with the patch applied. The row strips the preamble, checks it
+names the pin, reverses the patch, and compares the git blob id of what is left
+with the table: no network needed. With --den DIR (a fresh clone of den) it
+also compares those bytes with `git show COMMIT:PATH`, the networked form.
+
+The patch is a unified diff of the pinned file against the copy's body; it is
+reversed here by a small hunk applier that requires every context and removed
+line to match exactly.
+"""
+import argparse
+import hashlib
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+TABLE = ROOT / 'tools/http-copies/PROVENANCE'
+PREFIX = b'// paxage: '
+
+FAILED = []
+
+
+def emit(ok, row, detail=''):
+    print(f'PASS {row}' if ok else f'FAIL {row}' + (f' {detail}' if detail else ''), flush=True)
+    if not ok:
+        FAILED.append(row)
+    return ok
+
+
+def blob(data):
+    return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
+
+
+def split_preamble(data):
+    lines = data.splitlines(keepends=True)
+    n = 0
+    while n < len(lines) and lines[n].startswith(PREFIX):
+        n += 1
+    return b''.join(lines[:n]), b''.join(lines[n:])
+
+
+def reverse(body, patch):
+    """The pinned bytes from the copy's body and a unified diff (pinned -> body)."""
+    lines = body.splitlines(keepends=True)
+    out, at = [], 0
+    hunks = []
+    current = None
+    for raw in patch.splitlines(keepends=True):
+        if raw.startswith(b'@@'):
+            new_start = int(raw.split(b'+')[1].split(b' ')[0].split(b',')[0])
+            current = [new_start, []]
+            hunks.append(current)
+        elif current is not None and raw[:1] in (b' ', b'-', b'+'):
+            current[1].append(raw)
+        elif current is not None and raw.startswith(b'\\'):
+            continue
+    for new_start, body_lines in hunks:
+        start = new_start - 1 if new_start > 0 else 0
+        if start < at:
+            raise ValueError('overlapping hunks')
+        out.extend(lines[at:start])
+        at = start
+        for raw in body_lines:
+            tag, text = raw[:1], raw[1:]
+            if tag in (b' ', b'+'):
+                if at >= len(lines) or lines[at] != text:
+                    raise ValueError(f'hunk at +{new_start} does not match the copy')
+                at += 1
+                if tag == b' ':
+                    out.append(text)
+            else:
+                out.append(text)
+    out.extend(lines[at:])
+    return b''.join(out)
+
+
+def rows():
+    out = []
+    for line in TABLE.read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        path, commit, den_path, blob_id, patch = line.split('\t')
+        out.append((path, commit, den_path, blob_id, patch))
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--den', type=Path, help='a fresh clone of den, for the networked comparison')
+    args = ap.parse_args()
+    table = rows()
+    emit(len(table) == 3, 'copies-table', f'{len(table)} rows')
+    for path, commit, den_path, blob_id, patch in table:
+        name = Path(path).name
+        copy = ROOT / path
+        if not emit(copy.is_file(), f'copies-present-{name}', f'missing {path}'):
+            continue
+        preamble, body = split_preamble(copy.read_bytes())
+        emit(f'{den_path} at'.encode() in preamble and commit.encode() in preamble and
+             b'GPL-3.0-or-later' in preamble, f'copies-preamble-{name}', repr(preamble[:200]))
+        pinned = body
+        if patch != '-':
+            if not emit((ROOT / patch).is_file(), f'copies-patch-present-{name}', f'missing {patch}'):
+                continue
+            try:
+                pinned = reverse(body, (ROOT / patch).read_bytes())
+            except ValueError as e:
+                emit(False, f'copies-patch-applies-{name}', str(e))
+                continue
+            emit(pinned != body, f'copies-patch-nonempty-{name}')
+        emit(blob(pinned) == blob_id, f'copies-match-pin-{name}', f'blob {blob(pinned)} != {blob_id}')
+        if args.den:
+            p = subprocess.run(['git', '-C', str(args.den), 'show', f'{commit}:{den_path}'], capture_output=True)
+            emit(p.returncode == 0 and p.stdout == pinned, f'copies-match-den-clone-{name}',
+                 f'git show exit={p.returncode}')
+    if FAILED:
+        print(f'copies: {len(FAILED)} red rows', flush=True)
+        return 1
+    print('PASS copies-match-pin', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

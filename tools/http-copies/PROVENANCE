@@ -1,0 +1,7 @@
+# The HTTP sources paxage copies from den, and how each copy relates to its pin.
+# Columns (tab-separated): paxage file, den commit, den path, git blob id of the
+# pinned bytes, the named patch over them ("-" for none). tools/check-copies
+# checks every row; a change to a copy that is not in its patch turns it red.
+src/http/url.lu	fbfe0852101bd031973f8bb017f6dff01051c6ce	src/http/url.lu	3bf3449dce2fcc2a402791c24e89a5e2e57374c6	-
+src/http/framing.lu	fbfe0852101bd031973f8bb017f6dff01051c6ce	src/http/framing.lu	45884ec0a62b49d1affc38089776c5bae684fbea	-
+src/http/tls.lu	fbfe0852101bd031973f8bb017f6dff01051c6ce	src/http/tls.lu	4d4f447f090ad2b4885d26868c39d7c6eea0d0f4	tools/http-copies/tls.lu.patch
