@@ -398,7 +398,11 @@ lookup is reported the same way), a refused one `fetch: refused HOST:PORT`, a
 connection lost before a whole response `fetch: reset HOST:PORT`. These, a stall,
 a body cut short, a 5xx and a 429 are retried twice, after 10 and then 30
 seconds. A TLS rejection (`fetch: tls NAME`, NAME being the client's own name
-for it), a length or hash refusal and any other 4xx are never retried.
+for it), a length or hash refusal and any other 4xx are never retried. The
+connection attempt itself has no deadline in this toolchain: it waits as long
+as the host's own connect does (about two minutes for an address that never
+answers, with Linux defaults), its name lookup included. The transport takes a
+connect deadline when the toolchain offers one.
 
 Absence is only a 404 or 410. For the next root it ends rotation (T12); for any
 other metadata it is the `not-found` a missing local file gives (the timestamp's
