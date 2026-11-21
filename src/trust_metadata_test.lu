@@ -78,10 +78,10 @@ fn main() -> int {
     let key_limit = "{{\"signatures\":[],\"signed\":{{\"_type\":\"root\",\"consistent_snapshot\":true,\"expires\":\"2030-01-01T00:00:00Z\",\"keys\":{{{keys}}},\"roles\":{{}},\"spec_version\":\"1.0.37\",\"version\":1}}}}"
     if !expect(key_limit, "root", "key-limit", "T1-key-limit") { ok = false }
     var targets = ""
-    for i in 0..73 {
+    for i in 0..769 {
         if i > 0 { targets += "," }
         var label = "t{i}"
-        if i < 10 { label = "t0{i}" }
+        if i < 10 { label = "t00{i}" } else if i < 100 { label = "t0{i}" }
         targets += "\"{label}\":{{}}"
     }
     let target_limit = "{{\"signatures\":[],\"signed\":{{\"_type\":\"targets\",\"expires\":\"2030-01-01T00:00:00Z\",\"spec_version\":\"1.0.37\",\"targets\":{{{targets}}},\"version\":1}}}}"
