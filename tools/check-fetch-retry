@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tools/fetch-toolchain against a loopback server that answers 504 (pm04b).
+"""tools/fetch-toolchain against a loopback server that answers 504.
 
 A GitHub release origin can answer 504 for minutes at a time. fetch_release
 (tools/lib-fetch.sh) must outlast six in a row, give up by name inside its
