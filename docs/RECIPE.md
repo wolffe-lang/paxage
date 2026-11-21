@@ -8,7 +8,7 @@ F3; inputs is a nonempty list of `input { name, sha256, length, kind }`, with
 kind `source`, `script`, `toolchain`, `container` or `dependency`. All hashes and
 lengths are immutable, names unique and logical, no host paths or secrets.
 requires is F4 edges, never executable graph discovery. source_date_epoch is a
-nonnegative integer. No recipe is evaluated or executed by pm01.
+nonnegative integer. No recipe is evaluated or executed by the format layer.
 
 ## R2 — Environment and argv
 
@@ -18,7 +18,7 @@ environment is a list of `env { name, value }`, unique ASCII environment names
 of nonempty strings. No shell interpretation is implicit. An explicitly invoked
 script must be a digest-pinned input. There are no install hooks or install phase.
 
-## R3 — Builder policy (pm08)
+## R3 — Builder policy
 
 Fetch and verify declared inputs before isolation; no network during build,
 check or packaging, no home/secrets/privileged mounts, only declared tools and a
@@ -36,4 +36,4 @@ for recipe/toolchain/container/source_package, lists of source records F3 for
 sources and dependencies, nonnegative source_date_epoch. No signing keys, secrets
 or host paths. Source package reference preserves licence-compliance provenance.
 R1–R4 are frozen schemas; recipe execution, reproducibility and buildinfo production
-are later gates, not implemented CLI verbs in pm01.
+are later gates, not implemented CLI verbs in the format layer.
