@@ -88,3 +88,11 @@ else
   echo 'SKIP trust-fuzz reason=Linux-only capped 100000 mutations; never on the Mac'
 fi
 step trust-local-replay-limit python3 -I tools/witness-trust-replay "$PWD/target/bin/paxage"
+step copies python3 -I tools/check-copies
+step fetch-https python3 -I tools/check-fetch-https
+if [ "$(uname -s)" = Linux ]; then
+  step fetch-attacks prlimit --as=2147483648 python3 -I tools/check-fetch-attacks
+else
+  step fetch-attacks python3 -I tools/check-fetch-attacks --bounded
+fi
+echo 'SKIP fetch-live-handshake reason=needs the network; runs only in the record'"'"'s networked step'
