@@ -10,21 +10,30 @@ root = pathlib.Path(__file__).resolve().parent.parent
 patterns = {
     'machine': re.compile(r'(?<![A-Za-z0-9_])(?:' + '|'.join(('ha'+'su', 'ka'+'sumi', 'sato'+'yama', 'no'+'mad')) + r')(?![A-Za-z0-9_])', re.I),
     'decision': re.compile('R-' + r'pm[0-9][A-Za-z0-9-]*', re.I),
-    'lane-path': re.compile('lan' + 'es/', re.I),
+    'work-path': re.compile('lan' + 'es/', re.I),
     'private-plan-path': re.compile('spr' + 'ints/pm/', re.I),
     'role': re.compile(r'the (?:main' + r'tainer|ow' + r'ner)\b', re.I),
     'home-user': re.compile('mfw' + 'olffe', re.I),
+}
+# Tool code prints what users and CI logs read; these apply to its paths and lines only.
+tool_dirs = ('tools/', 'ci/', '.github/')
+tool_patterns = {
+    # The internal word for a unit of development work, singular or plural, in any case,
+    # as a whole word: a letter on either side makes another word (plane, planet), and
+    # anything else ends it (space, hyphen, underscore, digit, quote, punctuation).
+    'process-word': re.compile(r'(?<![A-Za-z])' + 'la' + r'nes?(?![A-Za-z])', re.I),
 }
 # Tracked paths only, never excepted: planning notes are kept outside this repository.
 path_patterns = {
     'planning-file': re.compile(r'(?:^|/)prediction[^/]*\.txt$', re.I),
 }
+line_patterns = {**patterns, **tool_patterns}
 allowed = set()
 for number, line in enumerate((root / 'tools/public-text-allowlist').read_text().splitlines(), 1):
     if not line or line.startswith('#'):
         continue
     fields = line.split('|', 3)
-    if len(fields) != 4 or not all(fields) or fields[1] not in patterns or fields[1] == 'machine' or not re.fullmatch(r'[0-9a-f]{64}', fields[2]):
+    if len(fields) != 4 or not all(fields) or fields[1] not in line_patterns or fields[1] == 'machine' or not re.fullmatch(r'[0-9a-f]{64}', fields[2]):
         print(f'FAIL public-text-allowlist line={number}')
         sys.exit(1)
     allowed.add(tuple(fields[:3]))
@@ -34,7 +43,8 @@ for raw in paths:
     if not raw:
         continue
     path = raw.decode('utf-8')
-    for name, pattern in patterns.items():
+    rules = line_patterns if path.startswith(tool_dirs) else patterns
+    for name, pattern in rules.items():
         if pattern.search(path):
             print(f'FAIL public-text-path {path} pattern={name}')
             failed = True
@@ -48,7 +58,7 @@ for raw in paths:
         continue
     for number, line in enumerate(lines, 1):
         digest = hashlib.sha256(line.encode()).hexdigest()
-        for name, pattern in patterns.items():
+        for name, pattern in rules.items():
             if pattern.search(line) and (path, name, digest) not in allowed:
                 print(f'FAIL public-text {path}:{number} pattern={name}')
                 failed = True

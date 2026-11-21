@@ -54,6 +54,31 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     allow.write_text(f'prediction.txt|planning-file|{digest}|not permitted\n')
     assert 'FAIL public-text-allowlist' in check().stdout, 'a planning file takes no exception'
     allow.write_text('')
+    word = 'la' + 'ne'
+    (repo / 'ci').mkdir()
+    (repo / '.github').mkdir()
+    for where in ('tools/sample-tool', 'ci/sample.py', '.github/sample.yml'):
+        for text in (f'set a new {word}-local directory', f'{word.upper()}_DIR=x', f'two {word}s', f'"{word.capitalize()}2"'):
+            (repo / where).write_text(text + '\n')
+            git('add', where)
+            red = check()
+            assert red.returncode == 1 and f'FAIL public-text {where}:1 pattern=process-word' in red.stdout, (text, red.stdout)
+        (repo / where).write_text('an air' + 'plane, a planet, planes and a ' + word + 'way\n')
+        assert check().returncode == 0, 'a word that only contains the letters must pass'
+    (repo / 'docs/sample.md').write_text(f'a {word} outside tool code\n')
+    git('add', 'docs/sample.md')
+    assert check().returncode == 0, 'the word is refused only in tools/, ci/ and .github/'
+    named = f'tools/{word}-helper'
+    (repo / named).write_text('clean\n')
+    git('add', named)
+    assert f'FAIL public-text-path {named} pattern=process-word' in check().stdout, 'a tool path must not carry the word'
+    git('rm', '-q', '--cached', named)
+    text = f'set a new {word}-local directory'
+    (repo / 'tools/sample-tool').write_text(text + '\n')
+    assert check().returncode == 1, 'the word must fail before an exception'
+    allow.write_text(f'tools/sample-tool|process-word|{hashlib.sha256(text.encode()).hexdigest()}|a narrow test exception\n')
+    assert check().returncode == 0, 'an exact-line exception applies to the word'
+    allow.write_text('')
     forbidden = 'ha' + 'su'
     (repo / forbidden).write_text('clean\n')
     git('add', forbidden)
