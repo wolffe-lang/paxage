@@ -1,0 +1,710 @@
+#!/usr/bin/env python3
+"""The HTTPS transport rows: paxage against a loopback repository fixture.
+
+Every row prints PASS or FAIL by name and every row runs; the step fails at the
+end if any row is red. The fixture (tools/fetch-fixture) serves copies of one
+test repository built by paxage's own test-only writer, over TLS 1.3 under a
+per-run test CA, or over plain HTTP on 127.0.0.1 (the one plaintext form the
+client accepts). Nothing leaves the loopback interface except the one name
+lookup of a `.invalid` name, which RFC 6761 answers with NXDOMAIN.
+
+Rows that need short retry waits or a short read deadline run through the
+test-only paxage-failpoint binary with PAXAGE_FETCH_KNOBS; the shipped binary's
+waits are fixed, and fetch-http-503-retry runs it at those waits.
+"""
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+ct = load('check_transactions', 'check-transactions')
+BIN = ROOT / 'target/bin/paxage'
+FPBIN = ROOT / 'target/bin/paxage-failpoint'
+WORK = ROOT / 'target/fetch-https'
+ct.BIN, ct.FPBIN, ct.WORK, ct.KEEP_GOING = BIN, FPBIN, WORK, True
+NOW = ct.NOW
+FAST = {'PAXAGE_FETCH_KNOBS': 'waits=0,0 read=1500'}
+PAYLOAD = 'alpha-1-1.payload.tar'
+
+ROWS = []
+
+
+def row(name):
+    def wrap(fn):
+        ROWS.append((name, fn))
+        return fn
+    return wrap
+
+
+class Env:
+    """The run's PKI, its repository and helpers to serve copies of it."""
+
+    def __init__(self):
+        self.pki = fx.Pki(WORK / 'pki')
+        print(f'fetch-https: {self.pki.version}', flush=True)
+        fixture = ct.fixture_dir(WORK / 'fixture')
+        ct.fixture_dir(fixture / 'packages')
+        self.repo = ct.Repo(fixture)
+        self.repo.setup()
+        self.repo.publish([ct.simple('alpha'), ct.simple('beta', requires=[ct.dep('alpha')])])
+        self.www = WORK / 'www'
+        self.www.mkdir()
+        self.servers = []
+        self.count = 0
+
+    def copy(self, label):
+        dst = self.www / label
+        shutil.copytree(self.repo.repo, dst)
+        return dst
+
+    def serve(self, label, cert='good', groups=None, tls=True, copy=True):
+        if copy:
+            self.copy(label)
+        if tls:
+            c, k = getattr(self.pki, cert.replace('-', '_'))
+            server, port = fx.serve(self.www, c, k, groups)
+        else:
+            server, port = fx.serve(self.www)
+        self.servers.append(server)
+        scheme, host = ('https', 'localhost') if tls else ('http', '127.0.0.1')
+        return server, f'{scheme}://{host}:{port}/{label}/'
+
+    def object_path(self, label, logical):
+        found = sorted((self.www / label / 'targets').glob(f'*.{logical}'))
+        return f'/{label}/targets/{found[0].name}'
+
+    def fresh(self, label):
+        self.count += 1
+        d = WORK / 'runs' / f'{self.count:03d}-{label}'
+        d.mkdir(parents=True, mode=0o700)
+        return d
+
+
+def pxg(*args, binary=BIN, env=None, timeout=300):
+    return ct.pxg(*args, binary=binary, env=env, timeout=timeout)
+
+
+def bootstrap(e, url, label):
+    state = e.fresh(label) / 'state'
+    p = pxg('bootstrap', '--repo', url, '--root', e.repo.pinned, '--state', state, '--now', NOW)
+    return state, p
+
+
+def trusted(e, url, label, roots=None):
+    """A bootstrapped and updated state, or a red row naming the setup step."""
+    state, p = bootstrap(e, url, label)
+    if not ct.ok(p, f'{label}-bootstrap', last='bootstrap ok'):
+        return None
+    p = update(url, state, roots or e.pki.roots)
+    if not ct.ok(p, f'{label}-update', last='update ok'):
+        return None
+    return state
+
+
+def update(url, state, roots, *extra, binary=BIN, env=None, now=NOW):
+    args = ['update', '--repo', url, '--state', state, '--now', now]
+    if roots:
+        args += ['--tls-roots', roots]
+    return pxg(*args, *extra, binary=binary, env=env)
+
+
+def fetch(url, state, cache, target, roots, *extra, binary=BIN, env=None):
+    args = ['fetch', '--repo', url, '--state', state, '--cache', cache, '--target', target, '--now', NOW]
+    if roots:
+        args += ['--tls-roots', roots]
+    return pxg(*args, *extra, binary=binary, env=env)
+
+
+def root_init(e, url, label, binary=BIN):
+    root = e.fresh(label) / 'root'
+    root.mkdir(mode=0o755)
+    p = pxg('init', '--root', root, '--repo', url, '--pinned-root', e.repo.pinned,
+            '--arch', ct.ARCH, '--slot', ct.SLOT, '--now', NOW, binary=binary)
+    return root, p
+
+
+def install(root, roots, *names, binary=BIN, env=None):
+    args = ['install', '--root', root, *names, '--now', NOW]
+    if roots:
+        args += ['--tls-roots', roots]
+    return pxg(*args, binary=binary, env=env)
+
+
+def ready_root(e, url, label, binary=BIN):
+    root, p = root_init(e, url, label, binary=binary)
+    if not ct.ok(p, f'{label}-init', last='init ok'):
+        return None
+    return root
+
+
+# ---------------------------------------------------------------- the transport
+
+@row('fetch-https-transport')
+def https_transport(e):
+    server, url = e.serve('transport')
+    state = trusted(e, url, 'fetch-https-transport', e.pki.roots)
+    if state is None:
+        return
+    staged = e.fresh('transport-stage') / 'stage'
+    staged.mkdir(mode=0o700)
+    cache = staged.parent / 'cache'
+    p = fetch(url, state, cache, PAYLOAD, e.pki.roots, '--stage', staged)
+    ct.ok(p, 'fetch-https-transport-fetch', last='fetch ok')
+    body = (staged / 'usr/share/alpha/alpha')
+    ct.check(body.is_file() and body.read_bytes() == b'alpha 1-1\n', 'fetch-https-transport-staged-tree')
+    root = ready_root(e, url, 'fetch-https-transport-root')
+    if root is None:
+        return
+    p = install(root, e.pki.roots, 'beta')
+    ct.ok(p, 'fetch-https-transport-install', last='install ok generation=1')
+    ct.check(set(ct.installed(root)) == {'alpha', 'beta'}, 'fetch-https-transport-installed',
+             str(ct.installed(root)))
+    ct.check(server.count('/transport/metadata/timestamp.json') >= 2, 'fetch-https-transport-reached')
+
+
+@row('fetch-one-connection')
+def one_connection(e):
+    server, url = e.serve('keepalive')
+    root = ready_root(e, url, 'fetch-one-connection')
+    if root is None:
+        return
+    p = install(root, e.pki.roots, 'beta')
+    if not ct.ok(p, 'fetch-one-connection-install', last='install ok generation=1'):
+        return
+    ct.check(len(server.log) >= 8 and server.connections == 1, 'fetch-one-connection',
+             f'requests={len(server.log)} connections={server.connections}')
+
+
+@row('fetch-http-loopback')
+def http_loopback(e):
+    server, url = e.serve('plain', tls=False)
+    state, p = bootstrap(e, url, 'fetch-http-loopback')
+    if not ct.ok(p, 'fetch-http-loopback-bootstrap', last='bootstrap ok'):
+        return
+    ct.ok(update(url, state, None), 'fetch-http-loopback-update', last='update ok')
+    cache = state.parent / 'cache'
+    ct.ok(fetch(url, state, cache, PAYLOAD, None), 'fetch-http-loopback', last='fetch ok')
+
+
+@row('fetch-chunked')
+def chunked(e):
+    server, url = e.serve('chunked')
+    for path in ['metadata/timestamp.json', 'metadata/1.snapshot.json', 'metadata/1.targets.json']:
+        server.rules[f'/chunked/{path}'] = {'kind': 'chunked'}
+    server.rules[e.object_path('chunked', PAYLOAD)] = {'kind': 'chunked'}
+    state = trusted(e, url, 'fetch-chunked')
+    if state is None:
+        return
+    ct.ok(fetch(url, state, state.parent / 'cache', PAYLOAD, e.pki.roots), 'fetch-chunked', last='fetch ok')
+
+
+@row('fetch-url-canonical')
+def url_canonical(e):
+    server, url = e.serve('canon')
+    port = url.split(':')[2].split('/')[0]
+    state, p = bootstrap(e, f'HTTPS://LOCALHOST:{port}/canon', 'fetch-url-canonical')
+    if not ct.ok(p, 'fetch-url-canonical-bootstrap', last='bootstrap ok'):
+        return
+    ct.ok(update(url, state, e.pki.roots), 'fetch-url-canonical', last='update ok')
+
+
+@row('fetch-name-nxdomain')
+def name_nxdomain(e):
+    server, url = e.serve('nx')
+    port = url.split(':')[2].split('/')[0]
+    root = ready_root(e, f'https://pxg-fixture.invalid:{port}/nx/', 'fetch-name-nxdomain', binary=FPBIN)
+    if root is None:
+        return
+    p = install(root, e.pki.roots, 'alpha', binary=FPBIN, env=FAST)
+    ct.refused(p, 'fetch-name-nxdomain', 1, f'fetch: connect pxg-fixture.invalid:{port}')
+    ct.check(not server.log, 'fetch-name-nxdomain-no-request', str(server.log))
+
+
+@row('fetch-connect-refused')
+def connect_refused(e):
+    port = fx.closed_port()
+    root = ready_root(e, f'https://127.0.0.1:{port}/none/', 'fetch-connect-refused', binary=FPBIN)
+    if root is None:
+        return
+    p = install(root, e.pki.roots, 'alpha', binary=FPBIN, env=FAST)
+    ct.refused(p, 'fetch-connect-refused', 1, f'fetch: refused 127.0.0.1:{port}')
+
+
+# ---------------------------------------------------------------- TLS
+
+def tls_row(e, name, label, cert, needle, roots=None, groups=None):
+    server, url = e.serve(label, cert=cert, groups=groups)
+    state, p = bootstrap(e, url, name)
+    if not ct.ok(p, f'{name}-bootstrap', last='bootstrap ok'):
+        return
+    p = update(url, state, roots or e.pki.roots)
+    ct.refused(p, name, 1, needle)
+    ct.check(not server.log, f'{name}-no-request', str(server.log))
+
+
+@row('fetch-tls-issuer')
+def tls_issuer(e):
+    tls_row(e, 'fetch-tls-issuer', 'issuer', 'foreign', 'fetch: tls issuer_mismatch')
+
+
+@row('fetch-tls-name')
+def tls_name(e):
+    tls_row(e, 'fetch-tls-name', 'name', 'wrong-name', 'fetch: tls name_mismatch')
+
+
+@row('fetch-tls-not-yet-valid')
+def tls_not_yet(e):
+    tls_row(e, 'fetch-tls-not-yet-valid', 'notyet', 'not-yet', 'fetch: tls not_yet_valid')
+
+
+@row('fetch-tls-expired')
+def tls_expired(e):
+    tls_row(e, 'fetch-tls-expired', 'expired', 'expired', 'fetch: tls expired')
+
+
+@row('fetch-tls-alert')
+def tls_alert(e):
+    tls_row(e, 'fetch-tls-alert', 'alert', 'good', 'fetch: tls handshake_failure', groups='prime256v1')
+
+
+@row('fetch-tls-unsupported-alg')
+def tls_unsupported(e):
+    tls_row(e, 'fetch-tls-unsupported-alg', 'p521', 'weak-issuer', 'fetch: tls unsupported_alg',
+            roots=e.pki.roots_p521)
+
+
+# ---------------------------------------------------------------- the clock
+
+@row('fetch-clock-floor')
+def clock_floor(e):
+    server, url = e.serve('floor')
+    state = trusted(e, url, 'fetch-clock-floor')
+    if state is None:
+        return
+    before = len(server.log)
+    p = update(url, state, e.pki.roots, now='2026-11-08T23:59:59Z')
+    ct.refused(p, 'fetch-clock-floor', 1, 'clock-before-floor')
+    ct.check(len(server.log) == before, 'fetch-clock-floor-no-request', str(server.log[before:]))
+
+
+# ---------------------------------------------------------------- absence
+
+@row('fetch-repository-missing')
+def repository_missing(e):
+    (e.www / 'empty').mkdir()
+    server, url = e.serve('empty', copy=False)
+    state, p = bootstrap(e, url, 'fetch-repository-missing')
+    if not ct.ok(p, 'fetch-repository-missing-bootstrap', last='bootstrap ok'):
+        return
+    ct.refused(update(url, state, e.pki.roots), 'fetch-repository-missing', 1, 'timestamp: repository-missing')
+
+
+def file_refusal(e, label, mutate, verb):
+    """The refusal file:// gives for a mutated copy, the reference the https row must equal."""
+    local = e.copy(f'{label}-file')
+    mutate(local)
+    url = local.as_uri()
+    state, p = bootstrap(e, url, f'{label}-file')
+    if p.returncode != 0:
+        return None, ct.describe(p)
+    if verb == 'update':
+        q = update(url, state, None)
+    else:
+        q = update(url, state, None)
+        if q.returncode != 0:
+            return None, ct.describe(q)
+        q = fetch(url, state, state.parent / 'cache', PAYLOAD, None)
+    return q, ''
+
+
+@row('fetch-object-missing')
+def object_missing(e):
+    def no_snapshot(d):
+        (d / 'metadata/1.snapshot.json').unlink()
+
+    def no_payload(d):
+        next((d / 'targets').glob(f'*.{PAYLOAD}')).unlink()
+
+    for name, mutate, verb in [('snapshot', no_snapshot, 'update'), ('payload', no_payload, 'fetch')]:
+        rowname = f'fetch-object-missing-{name}'
+        reference, why = file_refusal(e, f'missing-{name}', mutate, verb)
+        if reference is None:
+            ct.check(False, rowname, f'file:// reference setup: {why}')
+            continue
+        server, url = e.serve(f'missing-{name}-https')
+        mutate(e.www / f'missing-{name}-https')
+        state, p = bootstrap(e, url, rowname)
+        if not ct.ok(p, f'{rowname}-bootstrap', last='bootstrap ok'):
+            continue
+        q = update(url, state, e.pki.roots)
+        if verb == 'fetch' and q.returncode == 0:
+            q = fetch(url, state, state.parent / 'cache', PAYLOAD, e.pki.roots)
+        ct.check(reference.returncode == 1 and q.returncode == 1 and q.stderr == reference.stderr, rowname,
+                 f'file:// {ct.describe(reference)} https {ct.describe(q)}')
+
+
+# ---------------------------------------------------------------- HTTP misbehaviour
+
+@row('fetch-http-503-retry')
+def http_503_retry(e):
+    server, url = e.serve('retry')
+    state, p = bootstrap(e, url, 'fetch-http-503-retry')
+    if not ct.ok(p, 'fetch-http-503-retry-bootstrap', last='bootstrap ok'):
+        return
+    server.rules['/retry/metadata/timestamp.json'] = {'kind': 'status', 'code': 503, 'times': 2}
+    started = time.monotonic()
+    q = update(url, state, e.pki.roots)
+    took = time.monotonic() - started
+    ct.ok(q, 'fetch-http-503-retry', last='update ok')
+    ct.check(server.count('/retry/metadata/timestamp.json') == 3 and took >= 40, 'fetch-http-503-retry-shipped-waits',
+             f'requests={server.count("/retry/metadata/timestamp.json")} seconds={took:.1f}')
+
+
+def root_failure(e, label, rules, needle, rowname, names=('alpha',), fast=True):
+    """A failpoint-binary install over https against a fixture with rules; returns the server."""
+    server, url = e.serve(label)
+    root = ready_root(e, url, rowname, binary=FPBIN)
+    if root is None:
+        return None
+    for path, rule in rules(label).items():
+        server.rules[path] = rule
+    p = install(root, e.pki.roots, *names, binary=FPBIN, env=FAST if fast else None)
+    ct.refused(p, rowname, 1, needle)
+    return server
+
+
+@row('fetch-http-503-always')
+def http_503_always(e):
+    path = '/always/metadata/timestamp.json'
+    s = root_failure(e, 'always', lambda l: {path: {'kind': 'status', 'code': 503}},
+                     'timestamp: http-status 503', 'fetch-http-503-always')
+    if s is not None:
+        ct.check(s.count(path) == 3, 'fetch-http-503-always-three-attempts', f'requests={s.count(path)}')
+
+
+@row('fetch-http-redirect')
+def http_redirect(e):
+    server, url = e.serve('redirect')
+    state, p = bootstrap(e, url, 'fetch-http-redirect')
+    if not ct.ok(p, 'fetch-http-redirect-bootstrap', last='bootstrap ok'):
+        return
+    server.rules['/redirect/metadata/timestamp.json'] = {'kind': 'redirect'}
+    ct.refused(update(url, state, e.pki.roots), 'fetch-http-redirect', 1, 'timestamp: http-redirect')
+    ct.check(server.count('/elsewhere') == 0 and server.count('/redirect/metadata/timestamp.json') == 1,
+             'fetch-http-redirect-not-followed', str(server.log))
+
+
+@row('fetch-short-body')
+def short_body(e):
+    paths = {}
+
+    def rules(label):
+        paths['p'] = e.object_path(label, PAYLOAD)
+        return {paths['p']: {'kind': 'short'}}
+    s = root_failure(e, 'short', rules, 'target-length', 'fetch-short-body')
+    if s is not None:
+        ct.check(s.count(paths['p']) == 3, 'fetch-short-body-retried', f'requests={s.count(paths["p"])}')
+
+
+def trust_failure(e, label, rule_paths, needle, rowname, verb='update'):
+    server, url = e.serve(label)
+    state = trusted(e, url, rowname) if verb == 'fetch' else None
+    if verb == 'update':
+        state, p = bootstrap(e, url, rowname)
+        if not ct.ok(p, f'{rowname}-bootstrap', last='bootstrap ok'):
+            return None, None
+    elif state is None:
+        return None, None
+    paths = rule_paths(label)
+    for path, rule in paths.items():
+        server.rules[path] = rule
+    if verb == 'update':
+        q = update(url, state, e.pki.roots)
+    else:
+        q = fetch(url, state, state.parent / 'cache', PAYLOAD, e.pki.roots)
+    ct.refused(q, rowname, 1, needle)
+    return server, list(paths)
+
+
+@row('fetch-target-hash')
+def target_hash(e):
+    s, paths = trust_failure(e, 'hash', lambda l: {e.object_path(l, PAYLOAD): {'kind': 'altered'}},
+                             'target-hash', 'fetch-target-hash', verb='fetch')
+    if s is not None:
+        ct.check(s.count(paths[0]) == 1, 'fetch-target-hash-no-retry', f'requests={s.count(paths[0])}')
+
+
+@row('fetch-lying-length')
+def lying_length(e):
+    trust_failure(e, 'lie-target', lambda l: {e.object_path(l, PAYLOAD): {'kind': 'length+1'}},
+                  'target-length', 'fetch-lying-length-target', verb='fetch')
+    trust_failure(e, 'lie-meta', lambda l: {f'/{l}/metadata/1.snapshot.json': {'kind': 'length+1'}},
+                  'snapshot: metadata-length', 'fetch-lying-length-metadata')
+
+
+@row('fetch-metadata-byte-limit')
+def metadata_byte_limit(e):
+    trust_failure(e, 'big', lambda l: {f'/{l}/metadata/timestamp.json': {'kind': 'big', 'size': 20480}},
+                  'timestamp: metadata-byte-limit', 'fetch-metadata-byte-limit-length')
+    trust_failure(e, 'endless', lambda l: {f'/{l}/metadata/timestamp.json': {'kind': 'endless'}},
+                  'timestamp: metadata-byte-limit', 'fetch-metadata-byte-limit-endless')
+
+
+@row('fetch-stalled')
+def stalled(e):
+    paths = {}
+
+    def rules(label):
+        paths['p'] = e.object_path(label, PAYLOAD)
+        return {paths['p']: {'kind': 'stall', 'seconds': 4}}
+    s = root_failure(e, 'stall', rules, 'fetch: stalled', 'fetch-stalled')
+    if s is not None:
+        ct.check(s.count(paths['p']) == 3, 'fetch-stalled-retried', f'requests={s.count(paths["p"])}')
+
+
+@row('fetch-http-coding')
+def http_coding(e):
+    trust_failure(e, 'gzip', lambda l: {f'/{l}/metadata/timestamp.json': {'kind': 'gzip'}},
+                  'timestamp: http-coding', 'fetch-http-coding')
+
+
+@row('fetch-http-framing')
+def http_framing(e):
+    trust_failure(e, 'framing', lambda l: {f'/{l}/metadata/timestamp.json': {'kind': 'close-delimited'}},
+                  'timestamp: http-framing', 'fetch-http-framing')
+
+
+@row('fetch-next-root-503')
+def next_root_503(e):
+    label = 'rotate'
+    path = f'/{label}/metadata/2.root.json'
+    s = root_failure(e, label, lambda l: {path: {'kind': 'status', 'code': 503}},
+                     'root: http-status 503', 'fetch-next-root-503')
+    if s is None:
+        return
+    ct.check(s.count(path) == 3, 'fetch-next-root-503-three-attempts', f'requests={s.count(path)}')
+    # The repository then rotates; the next install, with the server healthy, takes root 2.
+    local = e.www / label
+    p = pxg('repo', 'rotate', '--repo', local.as_uri(), '--old-keys', e.repo.keys, '--keys', e.repo.keys,
+            '--version', '2', '--now', NOW)
+    if not ct.ok(p, 'fetch-next-root-503-rotate', last='repo rotate ok'):
+        return
+    del s.rules[path]
+    root = sorted((WORK / 'runs').glob('*-fetch-next-root-503'))[-1] / 'root'
+    q = install(root, e.pki.roots, 'alpha', binary=FPBIN, env=FAST)
+    ct.ok(q, 'fetch-next-root-503-then-rotates', last='install ok generation=1')
+    ct.check(s.count(path) == 4, 'fetch-next-root-503-root-2-read', f'requests={s.count(path)}')
+
+
+@row('fetch-repo-changes')
+def repo_changes(e):
+    label = 'changes'
+    local = e.copy(label)
+    newer = e.copy(f'{label}-next')
+    p = pxg('repo', 'publish', '--repo', newer.as_uri(), '--keys', e.repo.keys, '--version', '2',
+            *sum((['--manifest', m, '--buildinfo', b] for m, b in e.repo.built.values()), []), '--now', NOW)
+    if not ct.ok(p, 'fetch-repo-changes-publish', last='repo publish ok'):
+        return
+
+    def swap(_path):
+        # The publisher moves on between the timestamp read and the snapshot read.
+        for name in ['2.snapshot.json', '2.targets.json', 'timestamp.json']:
+            shutil.copyfile(newer / 'metadata' / name, local / 'metadata' / name)
+        (local / 'metadata/1.snapshot.json').unlink()
+    server, url = e.serve(label, copy=False)
+    state, q = bootstrap(e, url, 'fetch-repo-changes')
+    if not ct.ok(q, 'fetch-repo-changes-bootstrap', last='bootstrap ok'):
+        return
+    server.rules[f'/{label}/metadata/1.snapshot.json'] = {'kind': 'hook', 'call': swap, 'times': 1}
+    ct.ok(update(url, state, e.pki.roots), 'fetch-repo-changes-one-restart', last='update ok')
+    ct.check(server.count(f'/{label}/metadata/timestamp.json') == 2, 'fetch-repo-changes-restarted-once',
+             str(server.log))
+
+
+@row('fetch-cache-space')
+def cache_space(e):
+    server, url = e.serve('space')
+    root = ready_root(e, url, 'fetch-cache-space', binary=FPBIN)
+    if root is None:
+        return
+    payload = e.object_path('space', PAYLOAD)
+    p = install(root, e.pki.roots, 'alpha', binary=FPBIN, env={'PAXAGE_FETCH_KNOBS': 'waits=0,0 read=1500 free=1'})
+    ct.refused(p, 'fetch-cache-space', 1, 'cache-space')
+    ct.check(server.count(payload) == 0, 'fetch-cache-space-before-payload', str(server.log))
+
+
+@row('fetch-locked')
+def locked(e):
+    server, url = e.serve('locked')
+    root = ready_root(e, url, 'fetch-locked')
+    if root is None:
+        return
+    path = '/locked/metadata/timestamp.json'
+    server.rules[path] = {'kind': 'hold', 'max': 60}
+    first = subprocess.Popen([str(BIN), 'install', '--root', str(root), 'alpha', '--now', NOW,
+                              '--tls-roots', str(e.pki.roots)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, preexec_fn=ct.no_core)
+    deadline = time.monotonic() + 30
+    while server.count(path) == 0 and time.monotonic() < deadline and first.poll() is None:
+        time.sleep(0.1)
+    held = server.count(path) == 1 and first.poll() is None
+    second = install(root, e.pki.roots, 'alpha')
+    server.release()
+    out, err = first.communicate(timeout=120)
+    ct.check(held, 'fetch-locked-first-held', f'exit={first.returncode} stderr={err[-300:]!r}')
+    ct.refused(second, 'fetch-locked', 7, 'locked')
+    ct.check(first.returncode == 0 and out.splitlines()[-1:] == ['install ok generation=1'],
+             'fetch-locked-first-completes', f'exit={first.returncode} stdout={out!r} stderr={err[-300:]!r}')
+
+
+@row('fetch-no-durable-before-network')
+def no_durable(e):
+    for step in ['root', 'timestamp', 'snapshot', 'targets', 'manifest', 'payload']:
+        label = f'durable-{step}'
+        rowname = f'fetch-no-durable-before-network-{step}'
+        server, url = e.serve(label)
+        root = ready_root(e, url, rowname)
+        if root is None:
+            continue
+        path = {'root': f'/{label}/metadata/2.root.json', 'timestamp': f'/{label}/metadata/timestamp.json',
+                'snapshot': f'/{label}/metadata/1.snapshot.json', 'targets': f'/{label}/metadata/1.targets.json',
+                'manifest': e.object_path(label, 'alpha-1-1.manifest'),
+                'payload': e.object_path(label, PAYLOAD)}[step]
+        server.rules[path] = {'kind': 'status', 'code': 403}
+        before = ct.tree_digest(root)
+        p = install(root, e.pki.roots, 'alpha')
+        ct.check(server.count(path) >= 1, f'{rowname}-reached', str(server.log))
+        ct.refused(p, f'{rowname}-refused', 1, 'http-status 403')
+        ct.check(ct.tree_digest(root) == before, rowname)
+
+
+# ---------------------------------------------------------------- the cache and target kinds
+
+@row('fetch-part-reaper')
+def part_reaper(e):
+    local = e.copy('reaper')
+    obj = next((local / 'targets').glob(f'*.{PAYLOAD}'))
+    data = bytearray(obj.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    obj.write_bytes(bytes(data))
+    url = local.as_uri()
+    state, p = bootstrap(e, url, 'fetch-part-reaper')
+    if not ct.ok(p, 'fetch-part-reaper-bootstrap', last='bootstrap ok'):
+        return
+    if not ct.ok(update(url, state, None), 'fetch-part-reaper-update', last='update ok'):
+        return
+    cache = state.parent / 'cache'
+    last = None
+    for _ in range(65):
+        last = fetch(url, state, cache, PAYLOAD, None)
+        if last.returncode != 1 or 'target-hash' not in last.stderr:
+            break
+    ct.refused(last, 'fetch-part-reaper', 1, 'target-hash')
+    parts = list((cache / '.part').iterdir()) if (cache / '.part').is_dir() else []
+    ct.check(len(parts) <= 1, 'fetch-part-reaper-slots', f'parts={len(parts)}')
+
+
+@row('fetch-unknown-kind')
+def unknown_kind(e):
+    tv = load('generate_trust_vectors', 'generate-trust-vectors')
+    tool = e.pki.tool
+
+    def command(*args):
+        p = subprocess.run([tool, *map(str, args)], capture_output=True, timeout=30)
+        if p.returncode:
+            raise RuntimeError(f'OpenSSL black-box exit={p.returncode}: {p.stderr.decode(errors="replace")}')
+        return p.stdout
+    tv.command = command
+    home = e.fresh('unknown-kind')
+    gen = tv.Generator(home / 'out', home / 'keys')
+    repo = home / 'repo'
+    (repo / 'metadata').mkdir(parents=True)
+    (repo / 'targets').mkdir()
+    root = gen.root(1)
+    (repo / 'metadata/1.root.json').write_bytes(tv.canonical(root))
+    body = gen.target_body(100)
+    data = b'test-only target of a kind this client does not know\n'
+    body['targets']['alpha-1-1.index'] = {
+        'length': len(data), 'hashes': {'sha256': tv.digest(data)},
+        'custom': {'name': 'alpha', 'version': '1-1', 'architecture': 'x86_64', 'kind': 'index'}}
+    (repo / 'targets' / f'{tv.digest(data)}.alpha-1-1.index').write_bytes(data)
+    gen.chain(repo, target_body=body)
+    pinned = repo / 'metadata/1.root.json'
+    url = repo.as_uri()
+    state = home / 'state'
+    p = pxg('bootstrap', '--repo', url, '--root', pinned, '--state', state, '--now', tv.NOW)
+    if not ct.ok(p, 'fetch-unknown-kind-bootstrap', last='bootstrap ok'):
+        return
+    p = pxg('update', '--repo', url, '--state', state, '--now', tv.NOW)
+    ct.ok(p, 'fetch-unknown-kind', last='update ok')
+    p = pxg('fetch', '--repo', url, '--state', state, '--cache', home / 'cache', '--target', 'alpha-1-1.index',
+            '--now', tv.NOW)
+    ct.refused(p, 'fetch-unknown-kind-never-used', 1, 'target-kind')
+
+
+# ---------------------------------------------------------------- refusals that stay
+
+@row('fetch-scheme-refused')
+def scheme_refused(e):
+    state = e.fresh('scheme') / 'state'
+    for label, url, needle in [
+        ('ftp', 'ftp://127.0.0.1/repo/', 'unsupported-transport'),
+        ('http-name', 'http://localhost:9/repo/', 'unsupported-transport'),
+        ('userinfo', 'https://user@localhost/repo/', 'unsupported-transport'),
+        ('query', 'https://localhost/repo/?x=1', 'unsupported-transport'),
+        ('fragment', 'https://localhost/repo/#x', 'unsupported-transport'),
+    ]:
+        p = pxg('bootstrap', '--repo', url, '--root', e.repo.pinned, '--state', state, '--now', NOW)
+        ct.refused(p, f'fetch-scheme-refused-{label}', 1, needle)
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    wanted = set(filter(None, (sys.argv[1] if len(sys.argv) > 1 else '').split(',')))
+    e = Env()
+    try:
+        for name, fn in ROWS:
+            if wanted and name not in wanted:
+                continue
+            try:
+                fn(e)
+            except ct.RowFailed:
+                continue
+            except Exception as exc:
+                try:
+                    ct.emit(False, name, f'crashed {type(exc).__name__}: ' + ' | '.join(str(exc).splitlines()))
+                except ct.RowFailed:
+                    continue
+    finally:
+        for s in e.servers:
+            fx.stop(s)
+    if ct.FAILED:
+        print(f'fetch-https: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS fetch-https', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
