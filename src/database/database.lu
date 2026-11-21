@@ -230,7 +230,7 @@ pub fn parse(bytes: List[byte]) -> Db {
         if !schema.digest(p.manifest) { return bad("manifest") }
         (mut db.packages).push(p)
     }
-    if db.packages.len > 24 { return bad("snapshot-limit") }
+    if db.packages.len > 256 { return bad("snapshot-limit") }
     for c in rows(d, "baselines") {
         let e = schema.shape(
             d,
