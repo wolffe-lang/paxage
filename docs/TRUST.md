@@ -26,8 +26,9 @@ Refuse `metadata-byte-limit`; a bound length must match exactly, otherwise
 `metadata-length`. Root rotation accepts at most 32 steps per invocation;
 reaching the limit without establishing termination refuses `root-chain-limit`.
 Already accepted roots remain durable and the next invocation can continue.
-Maximum keys 16, signatures per envelope 16, targets 72 (F3's 24 packages times
-F1's three files); refuse `key-limit`, `signature-limit`, `target-limit`.
+Maximum keys 16, signatures per envelope 16, targets 768 (256 package versions
+times F1's three files, which is also the most a test-only publish writes);
+refuse `key-limit`, `signature-limit`, `target-limit`.
 These are application bounds under TUF §5.3.3, §5.4.1, §5.5.1 and §5.6.1.
 The signature ceiling is fixed at 16 from the native Linux measurement:
 five batches of eight verifications of a 1 MiB message gave a median
