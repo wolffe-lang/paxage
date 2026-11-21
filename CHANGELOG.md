@@ -18,7 +18,7 @@
 - Specify immutable package targets, strict literals, recipes and version v1.
 - Add standalone bounded manifest parser and exact-byte std SHA-256.
 - Add complete bounded resolver and independent checker for immutable snapshots.
-- Add read-only paxage / pxg CLI with pm04 mutation refusals.
+- Add read-only paxage / pxg CLI with refusals for the mutating verbs.
 - Gate formatting, build, unit properties and CLI fixtures on Linux x86-64 and
   macOS arm64.
 - Add canonical restricted pax packing, strict streaming payload inspection and
@@ -27,7 +27,7 @@
   and container interop/confinement gates; record the bounded std SHA-2 pin and
   require under 8 MiB RSS growth under a 2 GiB Linux cap. No threshold is waived.
 - Keep live-root installs, trust/signing, transactions and fetch unavailable.
-- Add durable transactions over a synthetic Linux root (pm04, TRANSACTIONS
+- Add durable transactions over a synthetic Linux root (TRANSACTIONS
   X1–X10). The verbs are init, status, verify, install, remove, upgrade,
   autoremove and rescue. They take a persistent lock inode, refuse an
   unjournalled filesystem, and write only through the descriptor walk. Each
@@ -41,7 +41,7 @@
   crash at every hook, a crash during rescue, injected EIO and ENOSPC, ancestor
   races, lock contention and owner death. The check is that the root reaches the
   old or the new generation, recovered twice identically.
-- Add the power-cut witness (pm04b, TRANSACTIONS X11). An NBD recorder logs the
+- Add the power-cut witness (TRANSACTIONS X11). An NBD recorder logs the
   guest's block writes and flushes, and crash states are synthesized at and
   between every durable step, with torn sectors. On ext4 and ext3 in a KVM
   guest, each state must recover to the old or the new generation, twice
