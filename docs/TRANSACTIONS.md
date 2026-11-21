@@ -9,10 +9,10 @@ archiver's or filesystem's source was read.
 ## X1 — Roots and privilege
 
 Every root verb takes `--root DIR`, a synthetic root. `/` refuses
-`live-root-is-pm05`: the live root waits for PAX's boot recovery. A root is
+`live-root-unsupported`: the live root waits for PAX's boot recovery. A root is
 initialized once (`init`) as *privileged* (euid 0: manifest owners are applied by
 handle) or *logical* (any other caller, on a root that caller owns; owners are
-recorded but never applied, pm02's rule). The mode is fixed at init; using a root
+recorded but never applied, as staging does). The mode is fixed at init; using a root
 in the other mode refuses `ownership-mode-mismatch`.
 
 ## X2 — Qualification
@@ -66,10 +66,10 @@ process-wide working directory is sound.
   bytes. The ownership index is derived from those manifests and never stored.
 - `transactions/t<N>/`: the one in-flight transaction to generation N. It holds
   `intent`, `backup/<i>` and `stage/<package>/`.
-- `trust/`: pm03's trust generations. They are monotonic and outside package
+- `trust/`: the trust generations. They are monotonic and outside package
   rollback.
 
-`ROOT/var/cache/paxage/` is pm03's hash-bound cache. Generation numbers and
+`ROOT/var/cache/paxage/` is the hash-bound trust cache. Generation numbers and
 transaction ids are deterministic, so two identical runs write identical bytes.
 
 ## X5 — The transaction
@@ -78,7 +78,7 @@ Planning is read-only. Any refusal leaves zero writes. The durable steps follow,
 in order, each followed by its named hook (X8):
 
 1. **stage**: `t<N>/` is made. Each new or changed package is fetched through
-   pm03's verified cache and staged by pm02's `stage` into `t<N>/stage/<name>`,
+   the verified trust cache and staged by `stage` into `t<N>/stage/<name>`,
    with euid 0 allowed only there.
 2. **backup:<i>**: an exact copy of every regular file the plan replaces or
    deletes, checked against the planned digest and fsynced. The backup directory
