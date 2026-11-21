@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Solver memory witness: a budget refusal's peak RSS does not grow with the nodes searched.
+
+The test-only solver-probe resolves an adversarial snapshot (64 packages, built in memory) that
+only the budget can stop, once at a small budget and once at the shipped 1,000,000 nodes, each
+under a 2 GiB address-space cap. Both must refuse budget-exceeded at exactly their budget, and the
+large run's peak may exceed the small run's by less than 8 MiB. Linux-only (GNU time's -v peak).
+"""
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+PROBE = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / 'target/bin/solver-probe'
+CAP = 2147483648
+ENTRIES = 64
+SMALL, SHIPPED = 20000, 1000000
+GROWTH_KIB = 8192
+
+
+def fail(row, detail):
+    print(f'FAIL {row} {detail}', flush=True)
+    sys.exit(1)
+
+
+def gnu_time():
+    """GNU time from PATH and the floor it imposes (its own high-water mark, which a child it
+    forks starts from, since ru_maxrss survives exec)."""
+    found = shutil.which('time')
+    if not found:
+        fail('solver-budget-rss', 'rss-gnu-time-missing: GNU time must be on PATH for the -v peak report')
+    p = subprocess.Popen(['prlimit', f'--as={CAP}', '--', found, '-v', 'sleep', '1'], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    floor = 0
+    while p.poll() is None:
+        try:
+            status = Path(f'/proc/{p.pid}/status').read_text()
+        except OSError:
+            break
+        name = re.search(r'^Name:\s*(\S+)', status, re.M)
+        hwm = re.search(r'^VmHWM:\s*(\d+)', status, re.M)
+        if name and hwm and name[1] == 'time':
+            floor = max(floor, int(hwm[1]))
+        time.sleep(0.05)
+    _, err = p.communicate()
+    if p.returncode != 0 or not re.search(r'Maximum resident set size \(kbytes\):', err.decode()):
+        fail('solver-budget-rss', f'rss-gnu-time-not-gnu {found} exit={p.returncode}')
+    return found, floor
+
+
+def run(gnu, budget):
+    cmd = ['prlimit', f'--as={CAP}', '--', gnu, '-v', str(PROBE), str(ENTRIES), str(budget)]
+    started = time.monotonic()
+    p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=900)
+    secs = time.monotonic() - started
+    want = f'solver-probe entries={ENTRIES} budget={budget} status=budget-exceeded nodes={budget}\n'.encode()
+    if p.returncode != 0 or p.stdout != want:
+        fail('solver-budget-rss-cap', f'budget={budget} exit={p.returncode} stdout={p.stdout[-200:]!r} '
+             f'stderr={p.stderr[-300:]!r} cap_bytes={CAP}')
+    peak = int(re.search(r'Maximum resident set size \(kbytes\):\s*(\d+)', p.stderr.decode())[1])
+    print(f'solver-budget-rss entries={ENTRIES} budget={budget} peak_kib={peak} secs={secs:.2f} cap_bytes={CAP}',
+          flush=True)
+    return peak
+
+
+def main():
+    if platform.system() != 'Linux':
+        print('SKIP solver-budget-rss reason=Linux-only capped peak measurement', flush=True)
+        return 0
+    gnu, floor = gnu_time()
+    print(f'solver-budget-rss rusage_parent={gnu} floor_kib={floor}', flush=True)
+    small = run(gnu, SMALL)
+    shipped = run(gnu, SHIPPED)
+    per_node = (shipped - small) * 1024 / (SHIPPED - SMALL)
+    print(f'solver-budget-rss growth_kib={shipped - small} bytes_per_node={per_node:.2f}', flush=True)
+    if small <= floor:
+        fail('solver-budget-rss-floor', f'the floor masks the peak: floor_kib={floor} small_kib={small}')
+    if shipped - small >= GROWTH_KIB:
+        fail('solver-budget-rss', f'peak grows with nodes: {small} KiB at {SMALL}, {shipped} KiB at {SHIPPED}')
+    print('PASS solver-budget-rss', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
