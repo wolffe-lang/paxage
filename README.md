@@ -3,11 +3,12 @@
 **Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.1.0 implementation
 validates formats, orders versions, plans dependencies, packs canonical payloads,
 and publishes test-only signed file repositories. It bootstraps, updates and fetches
-from local repositories through a bounded TUF profile. Install, upgrade and removal
+from local repositories, or over HTTPS, through a bounded TUF profile. Install, upgrade and removal
 use crash-safe transactions on journalled Linux filesystems under test, with a rescue
 entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
 transactions are not enabled. The live root `/` remains refused until PAX's boot
-recovery. Network fetch is not supported. `sync` is refused:
+recovery. The HTTPS transport is experimental: it is tested only against local
+test repositories, and no public repository is published. `sync` is refused:
 `upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
 production signing remains out of scope. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
@@ -117,9 +118,10 @@ a tree to a live root. Missing descriptor-relative calls leave a same-uid ancest
 swap race; use a private empty caller-owned staging directory. [CLI C4–C7](docs/CLI.md)
 details the interface, safety refusals, failure state and large-file measurement policy.
 `fetch --stage` authenticates payload, manifest and buildinfo through signed
-metadata and binds the manifest again at staging consumption. The client supports
-only literal `file://` URLs and a caller-supplied pinned root. Network transports
-remain later work. Transactions (TRANSACTIONS X1–X11) write a root only through
+metadata and binds the manifest again at staging consumption. The client takes a
+literal `file://` URL or an `https://` base ([TRUST T21](docs/TRUST.md)) and a
+caller-supplied pinned root; the HTTPS transport is tested only against local test
+repositories. Transactions (TRANSACTIONS X1–X11) write a root only through
 handles held from its root directory, take the root's persistent lock and refuse an
 unjournalled filesystem. Tests exercise recovery to the old or the new generation
 after process and power cuts. Trusted local state must not be coherently
