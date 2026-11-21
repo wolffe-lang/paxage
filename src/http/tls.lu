@@ -9,11 +9,8 @@ use std.time
 use std.x.tls.cert
 use std.x.tls.client
 
-fn root_bundle() -> List[byte] ! Errors {
-    let path = env_get("DEN_TLS_ROOTS") else {
-        return Unsupported("TLS roots required (DEN_TLS_ROOTS)")
-    }
-    if path == "" { return Unsupported("TLS roots required (DEN_TLS_ROOTS)") }
+fn root_bundle(path: str) -> List[byte] ! Errors {
+    if path == "" { return Unsupported("TLS roots required") }
     var file = fs.open(path) else |_| { return Unsupported("TLS roots unreadable") }
     defer fs.close(take file) else |_| {}
     var out = List[byte]()
@@ -48,9 +45,9 @@ fn entropy() -> List[byte] ! Errors {
     out
 }
 
-fn secure(fd: int, host: str) -> client.Client ! Errors {
-    let roots = root_bundle()?
-    let clock = time.local_in("UTC0", time.unix_ms() / 1000) else |_| {
+fn secure(fd: int, host: str, roots_path: str, unix_now: int) -> client.Client ! Errors {
+    let roots = root_bundle(roots_path)?
+    let clock = time.local_in("UTC0", unix_now) else |_| {
         return Unsupported("TLS UTC clock unavailable")
     }
     let now = cert.timestamp(
