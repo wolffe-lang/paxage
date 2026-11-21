@@ -25,3 +25,4 @@ tools/pax-root-qemu|work-id|1ee9dc19578282c81dc8b8937bac737f8910cc0cc964451f056d
 tools/pax-root-qemu|work-id|07284fcf028b3c7d3de85de41cc97e1642b05861e97ebec3250f33f07fd64fc3|probe and seed name inside the PAX root image rig; renaming needs a Linux take
 tools/pax-root-qemu|work-id|c101c824387d5921615447bdca66e03cc2a3b462c795a5de16ca0a4657e85296|probe and seed name inside the PAX root image rig; renaming needs a Linux take
 tools/pax-root-qemu|work-id|b796dbe8e381a7bc6a53af57e262a0c469abb992c0f313b455e966f9e1775fb2|probe and seed name inside the PAX root image rig; renaming needs a Linux take
+CHANGELOG.md|work-id|1a9356770ec883c28aa741910c60c2089977813a6c8f8c4cd06a0eefc8d1d82f|the changelog names the two old codes so a script that matches them can be updated
