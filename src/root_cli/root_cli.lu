@@ -155,7 +155,7 @@ fn cache_dir(c: txn.Ctx) -> str { "{c.root.path}/var/cache/paxage" }
 
 fn open_root(path: str, fp: failpoint.Fail) -> txn.Ctx {
     var r = walk.open_root(path)
-    if r.error == "" && r.path == "/" { r.error = "live-root-is-pm05" }
+    if r.error == "" && r.path == "/" { r.error = "live-root-unsupported" }
     let uid = os_euid() else |_| { -1 }
     txn.Ctx { root: r, fail: fp, privileged: uid == 0 }
 }
