@@ -1,4 +1,10 @@
 //! Complete bounded obligation-driven backtracking. No checker code is imported.
+//!
+//! Every relation the search asks about (does package q satisfy need n, do p and q share a
+//! slot, does p conflict with or replace q) is computed once per resolve into flat tables;
+//! the search itself then only reads integers and booleans and keeps the chosen packages in
+//! one preallocated list, so a node allocates nothing and a search's memory does not grow
+//! with the nodes it visits. Order, node counts, plans and explanations are unchanged.
 
 use model
 use version
@@ -17,6 +23,22 @@ struct Work {
     found: bool,
     selected: List[int],
     first: str,
+}
+
+/// The relations of one snapshot, indexed by package (p packages; pairs at a * p + b).
+/// Needs are the wants first, then each package's requirements from req_base[i].
+struct Tables {
+    p: int,
+    order: List[int],
+    req_base: List[int],
+    sat: List[bool],
+    same: List[bool],
+    conflicts: List[bool],
+    replaces: List[bool],
+    arch_ok: List[bool],
+    installed_at: List[int],
+    installed_id: List[bool],
+    held_id: List[bool],
 }
 
 fn constraint(v: str, n: model.Need) -> bool {
@@ -41,16 +63,21 @@ fn satisfies(p: model.Package, n: model.Need) -> bool {
     false
 }
 
-fn has(s: model.Snapshot, selected: List[int], n: model.Need) -> bool {
-    for i in selected { if satisfies(s.packages[i], n) { return true } }
-    false
-}
-
 fn replaced(p: model.Package, old: model.Package) -> bool {
     for r in p.replaces { if direct(old, r) { return true } }
     false
 }
 
+fn conflicting(p: model.Package, q: model.Package) -> bool {
+    for c in p.conflicts { if satisfies(q, c) { return true } }
+    false
+}
+
+fn same_slot(p: model.Package, q: model.Package) -> bool {
+    p.name == q.name && p.arch == q.arch && p.slot == q.slot
+}
+
+/// The first incompatibility's text, exactly as the search reports it.
 fn compatible(s: model.Snapshot, chosen: List[int], candidate: int) -> str {
     let p = copy s.packages[candidate]
     if p.arch != s.arch { return "architecture {model.id(p)}" }
@@ -97,107 +124,217 @@ fn candidates(s: model.Snapshot) -> List[int] {
     order
 }
 
-fn walk(
+fn tables(s: model.Snapshot, wants: List[model.Need]) -> Tables {
+    let p = s.packages.len
+    var req_base = List[int]()
+    var needs = wants.len
+    for i in 0..p {
+        (mut req_base).push(needs)
+        needs += s.packages[i].requires.len
+    }
+    var sat = List[bool]()
+    for w in 0..wants.len {
+        for q in 0..p { (mut sat).push(satisfies(s.packages[q], wants[w])) }
+    }
+    for i in 0..p {
+        for r in 0..s.packages[i].requires.len {
+            for q in 0..p { (mut sat).push(satisfies(s.packages[q], s.packages[i].requires[r])) }
+        }
+    }
+    var same = List[bool]()
+    var conflicts = List[bool]()
+    var replaces = List[bool]()
+    var arch_ok = List[bool]()
+    for a in 0..p {
+        (mut arch_ok).push(s.packages[a].arch == s.arch)
+        for b in 0..p {
+            (mut same).push(same_slot(s.packages[a], s.packages[b]))
+            (mut conflicts).push(conflicting(s.packages[a], s.packages[b]))
+            (mut replaces).push(replaced(s.packages[a], s.packages[b]))
+        }
+    }
+    var installed_at = List[int]()
+    var installed_id = List[bool]()
+    for old in s.installed {
+        var at = -1
+        for q in 0..p {
+            let matches = model.id(s.packages[q]) == old
+            if matches { at = q }
+            (mut installed_id).push(matches)
+        }
+        (mut installed_at).push(at)
+    }
+    var held_id = List[bool]()
+    for h in s.holds {
+        for q in 0..p { (mut held_id).push(model.id(s.packages[q]) == h) }
+    }
+    Tables {
+        p,
+        order: candidates(s),
+        req_base,
+        sat,
+        same,
+        conflicts,
+        replaces,
+        arch_ok,
+        installed_at,
+        installed_id,
+        held_id,
+    }
+}
+
+fn met(t: Tables, chosen: List[int], depth: int, need: int) -> bool {
+    for d in 0..depth { if t.sat[need * t.p + chosen[d]] { return true } }
+    false
+}
+
+fn chosen_already(chosen: List[int], depth: int, candidate: int) -> bool {
+    for d in 0..depth { if chosen[d] == candidate { return true } }
+    false
+}
+
+/// compatible() as a yes or no, from the tables alone.
+fn fits_with(t: Tables, chosen: List[int], depth: int, c: int) -> bool {
+    if !t.arch_ok[c] { return false }
+    for d in 0..depth {
+        let q = chosen[d]
+        if t.same[c * t.p + q] { return false }
+        if t.conflicts[c * t.p + q] || t.conflicts[q * t.p + c] { return false }
+        for k in 0..t.installed_at.len {
+            if t.installed_id[k * t.p + q] && t.replaces[c * t.p + q] ||
+                t.installed_id[k * t.p + c] && t.replaces[q * t.p + c] {
+                return false
+            }
+        }
+    }
+    true
+}
+
+fn prefix(chosen: List[int], depth: int) -> List[int] {
+    var out = List[int]()
+    for d in 0..depth { (mut out).push(chosen[d]) }
+    out
+}
+
+fn untried(
     s: model.Snapshot,
     wants: List[model.Need],
-    order: List[int],
-    chosen: List[int],
+    kind: int,
+    which: int,
+    owner: int,
+    req: int,
+) -> str {
+    if kind == 1 { return "hold {s.holds[which]} @/any" }
+    if kind == 4 { return "installed {s.installed[which]} @/any" }
+    if kind == 2 {
+        let n = copy wants[which]
+        return "want  {n.name}@{n.arch}/{n.slot}{n.op}{n.version}"
+    }
+    let n = copy s.packages[owner].requires[req]
+    "dependency {model.id(s.packages[owner])} {n.name}@{n.arch}/{n.slot}{n.op}{n.version}"
+}
+
+// kind: 1 hold, 2 want, 3 dependency, 4 installed. `which` is the hold, the want (its need
+// index too), the dependency's need index, or the installed entry.
+fn walk(
+    t: Tables,
+    s: model.Snapshot,
+    wants: List[model.Need],
+    mut chosen: List[int],
+    depth: int,
     mut w: Work,
 ) {
     if w.nodes >= s.budget { w.exceeded = true; return }
     w.nodes += 1
-    var kind = ""
-    var exact = ""
-    var old_index = -1
-    var need = model.Need { name: "", op: "any", version: "", arch: "", slot: "" }
-    for h in s.holds {
+    var kind = 0
+    var which = -1
+    var owner = -1
+    var req = -1
+    for k in 0..s.holds.len {
         var present = false
-        for i in chosen { if model.id(s.packages[i]) == h { present = true } }
+        for d in 0..depth { if t.held_id[k * t.p + chosen[d]] { present = true } }
         if !present {
-            kind = "hold"
-            exact = h
+            kind = 1
+            which = k
             break
         }
     }
-    if kind == "" {
-        for n in wants {
-            if !has(s, chosen, n) {
-                need = copy n
-                kind = "want"
+    if kind == 0 {
+        for i in 0..wants.len {
+            if !met(t, chosen, depth, i) {
+                kind = 2
+                which = i
                 break
             }
         }
     }
-    if kind == "" {
-        for i in chosen {
-            for n in s.packages[i].requires {
-                if !has(s, chosen, n) {
-                    need = copy n
-                    kind = "dependency"
-                    exact = model.id(s.packages[i])
+    if kind == 0 {
+        for d in 0..depth {
+            let i = chosen[d]
+            for r in 0..s.packages[i].requires.len {
+                if !met(t, chosen, depth, t.req_base[i] + r) {
+                    kind = 3
+                    which = t.req_base[i] + r
+                    owner = i
+                    req = r
                     break
                 }
             }
-            if kind != "" { break }
+            if kind != 0 { break }
         }
     }
-    if kind == "" {
-        for old in s.installed {
+    if kind == 0 {
+        for k in 0..t.installed_at.len {
+            let at = t.installed_at[k]
             var kept = false
-            var at = -1
-            for i in 0..s.packages.len { if model.id(s.packages[i]) == old { at = i } }
-            for i in chosen {
-                let p = copy s.packages[i]
-                let q = copy s.packages[at]
-                if p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q) {
-                    kept = true
-                }
+            for d in 0..depth {
+                let i = chosen[d]
+                if t.same[i * t.p + at] || t.replaces[i * t.p + at] { kept = true }
             }
             if !kept {
-                kind = "installed"
-                old_index = at
-                exact = old
+                kind = 4
+                which = k
                 break
             }
         }
     }
-    if kind == "" {
+    if kind == 0 {
         w.found = true
-        w.selected = copy chosen
+        w.selected = prefix(chosen, depth)
         return
     }
     var tried = false
-    for candidate in order {
-        let p = copy s.packages[candidate]
+    for o in 0..t.order.len {
+        let candidate = t.order[o]
         var fits = false
-        if kind == "hold" {
-            fits = model.id(p) == exact
-        } else if kind == "installed" {
-            let q = copy s.packages[old_index]
-            fits = p.name == q.name && p.arch == q.arch && p.slot == q.slot || replaced(p, q)
+        if kind == 1 {
+            fits = t.held_id[which * t.p + candidate]
+        } else if kind == 4 {
+            let at = t.installed_at[which]
+            fits = t.same[candidate * t.p + at] || t.replaces[candidate * t.p + at]
         } else {
-            fits = satisfies(p, need)
+            fits = t.sat[which * t.p + candidate]
         }
-        var already = false
-        for i in chosen { if i == candidate { already = true } }
-        if !fits || already { continue }
+        if !fits || chosen_already(chosen, depth, candidate) { continue }
         tried = true
-        let bad = compatible(s, chosen, candidate)
-        if bad != "" { if w.first == "" { w.first = bad }; continue }
-        var branch = copy chosen
-        (mut branch).push(candidate)
-        walk(s, wants, order, branch, mut w)
+        if !fits_with(t, chosen, depth, candidate) {
+            if w.first == "" { w.first = compatible(s, prefix(chosen, depth), candidate) }
+            continue
+        }
+        chosen[depth] = candidate
+        walk(t, s, wants, mut chosen, depth + 1, mut w)
         if w.found || w.exceeded { return }
     }
-    if !tried && w.first == "" {
-        w.first = "{kind} {exact} {need.name}@{need.arch}/{need.slot}{need.op}{need.version}"
-    }
+    if !tried && w.first == "" { w.first = untried(s, wants, kind, which, owner, req) }
 }
 
 /// Resolve the exact immutable snapshot; never returns a partial plan on refusal.
 pub fn resolve(s: model.Snapshot, wants: List[model.Need]) -> Plan {
     var w = Work { nodes: 0, exceeded: false, found: false, selected: List[int](), first: "" }
-    walk(s, wants, candidates(s), List[int](), mut w)
+    let t = tables(s, wants)
+    var chosen = List[int]()
+    for _i in 0..s.packages.len { (mut chosen).push(-1) }
+    walk(t, s, wants, mut chosen, 0, mut w)
     var status = "unsatisfiable"
     if w.found { status = "solved" } else if w.exceeded { status = "budget-exceeded" }
     var explanation = "exhaustive proof; {w.first}"
