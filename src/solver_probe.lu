@@ -1,0 +1,69 @@
+//! member: false
+//! Test-only solver memory witness: one adversarial snapshot built in memory and resolved once.
+//! Arguments: ENTRIES BUDGET. The snapshot has `top`, `last` and (ENTRIES - 2) / 2 names of two
+//! versions each; `top` requires every name and `last`, and `last` requires a name nothing
+//! provides, so the search tries every assignment of the names until the budget stops it. The
+//! schema's snapshot limit does not apply here: this measures the search, not the reader.
+
+use model
+use solver
+
+fn count(s: str) -> int {
+    let b = s.bytes()
+    if b.len == 0 || b.len > 12 { return -1 }
+    var n = 0
+    for c in b {
+        let v = c as int
+        if v < 48 || v > 57 { return -1 }
+        n = n * 10 + v - 48
+    }
+    n
+}
+
+fn any(name: str) -> model.Need {
+    model.Need { name, op: "any", version: "", arch: "x86_64", slot: "default" }
+}
+
+fn package(name: str, version: str, requires: List[model.Need]) -> model.Package {
+    model.Package {
+        name,
+        version,
+        arch: "x86_64",
+        slot: "default",
+        requires: copy requires,
+        optional: List[model.Need](),
+        provides: List[model.Offer](),
+        conflicts: List[model.Need](),
+        replaces: List[model.Need](),
+    }
+}
+
+fn main() -> int {
+    let a = env_args()
+    if a.len != 2 { return 2 }
+    let entries = count(a[0])
+    let budget = count(a[1])
+    if entries < 4 || budget < 1 { return 2 }
+    var top = List[model.Need]()
+    var packages = List[model.Package]()
+    for i in 0..(entries - 2) / 2 {
+        let name = "a{i}"
+        (mut top).push(any(name))
+        (mut packages).push(package(name, "2-1", List[model.Need]()))
+        (mut packages).push(package(name, "1-1", List[model.Need]()))
+    }
+    (mut top).push(any("last"))
+    (mut packages).push(package("top", "1-1", top))
+    (mut packages).push(package("last", "1-1", [any("nowhere")]))
+    let s = model.Snapshot {
+        packages,
+        installed: List[str](),
+        holds: List[str](),
+        arch: "x86_64",
+        slot: "default",
+        budget,
+    }
+    let p = solver.resolve(s, [any("top")])
+    print("solver-probe entries={s.packages.len} budget={budget} status={p.status} nodes={p.nodes}")
+    0
+}
