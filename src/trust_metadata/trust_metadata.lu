@@ -211,7 +211,7 @@ fn entries(mut m: Meta, signed: int) -> str {
     if d.nodes[at].kind != "object" { return "field-type" }
     let children = json.children(d, at)
     if m.role != "targets" && children.len != 1 { return "metadata-reference" }
-    if children.len > 72 { return "target-limit" }
+    if children.len > 768 { return "target-limit" }
     var groups = Map[str, int]()
     for i in children {
         let n = copy d.nodes[i]
@@ -259,7 +259,7 @@ fn entries(mut m: Meta, signed: int) -> str {
                 let previous = groups[identity] else 0
                 if previous / bit % 2 == 1 { return "target-incomplete" }
                 groups[identity] = previous + bit
-                if groups.len > 24 { return "target-limit" }
+                if groups.len > 256 { return "target-limit" }
             }
         } else {
             var expected = "targets.json"
