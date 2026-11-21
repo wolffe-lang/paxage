@@ -23,7 +23,7 @@ OLD_ENV = OLD.upper() + '_'
 PATTERN = re.compile(re.escape(OLD).encode() + rb'|(?<![A-Za-z0-9])' + re.escape(OLD_SHORT).encode()
                      + rb'(?![A-Za-z0-9])', re.I)
 
-# Records, whole files: lane notes, name checks, provenance and predictions.
+# Records, whole files: dated notes, name checks and provenance.
 RECORDS = (
     'notes/name-checks.txt',
     'notes/pm01-the-format-and-harness.md',
@@ -33,11 +33,6 @@ RECORDS = (
     'notes/pm04b-recovery-and-power-cuts.md',
     'notes/pm05a-the-rename.md',
     'notes/provenance.txt',
-    'prediction.txt',
-    'prediction-pm02.txt',
-    'prediction-pm04.txt',
-    'prediction-pm04b.txt',
-    'prediction-pm05a.txt',
     'tools/check-census',
 )
 
