@@ -80,7 +80,7 @@ what was built:
     the Mac; both records are void. The fixture now expects:
     - the new line;
     - `sync` refused by name;
-    - `root-missing` and `live-root-is-pm05` for the three root verbs;
+    - `root-missing` and `live-root-unsupported` for the three root verbs;
     - usage errors for root verbs without `--root`.
   - pm02's container rows had been recorded only on the FHS Linux host. On the NixOS Linux host
     (NixOS) they failed twice:
