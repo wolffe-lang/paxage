@@ -118,7 +118,7 @@ fn main() -> int {
         manifest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     })
     (mut g.residuals).push(db.Residual { path: "etc/a{{b}}.conf", package: "alpha" })
-    (mut g.accounts).push(db.Account { name: "pm04-daemon", uid: 901, gid: 901, package: "alpha" })
+    (mut g.accounts).push(db.Account { name: "test-daemon", uid: 901, gid: 901, package: "alpha" })
     let text = db.render(g)
     let parsed = db.parse(text.bytes())
     if !row(
