@@ -80,7 +80,7 @@ def judge(directory, fixtures, platform, reference):
         and probe[1].startswith(prefix) and kind in probe[1],
         'pax-reader-' + platform + '-host-dispatch-refusal', repr(probe))
     expected = {
-        'version': (0, b'paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n', b''),
+        'version': (0, b'paxage 0.1.1 (pxg; format v1, file trust, pack and stage, linux transactions)\n', b''),
         'compare': (0, b'-1\n', b''),
         'bad-version': (1, b'', b'paxage: bad-version\n'),
         'manifest': (0, f'manifest ok sha256={hashlib.sha256(raw).hexdigest()} bytes={len(raw)}\n'.encode(), b''),
