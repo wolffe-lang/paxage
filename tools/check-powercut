@@ -85,7 +85,7 @@ def missing(piece, rows):
 
 
 def transactions_module():
-    """pm04a's harness, imported for its fixture repository, roots and digest."""
+    """The transaction harness, imported for its fixture repository, roots and digest."""
     loader = importlib.machinery.SourceFileLoader('check_transactions', str(TOOLS / 'check-transactions'))
     spec = importlib.util.spec_from_loader('check_transactions', loader)
     mod = importlib.util.module_from_spec(spec)
@@ -404,7 +404,7 @@ def mark_rows():
     try:
         base, _old, new = ct.references(roots, 'install')
     except ct.RowFailed as e:
-        emit(False, 'failpoint-mark-setup', f'pm04a fixture row {e} failed')
+        emit(False, 'failpoint-mark-setup', f'transaction fixture row {e} failed')
     trace, names = ct.failpoints(roots, base, 'install')
     check(trace.returncode == 0 and names, 'failpoint-mark-trace', ct.describe(trace))
     try:
