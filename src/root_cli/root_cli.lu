@@ -456,7 +456,12 @@ fn universe(o: Open, now: int, mut r: transport.Repo) -> Universe {
     u
 }
 
-fn fetch_payload(c: txn.Ctx, mut r: transport.Repo, entries: List[meta.Entry], mut p: txn.Pkg) -> str {
+fn fetch_payload(
+    c: txn.Ctx,
+    mut r: transport.Repo,
+    entries: List[meta.Entry],
+    mut p: txn.Pkg,
+) -> str {
     let clock = io.lock(cache_dir(c))
     if clock < 0 { return "cache-locked" }
     var e = "target-incomplete {p.name}"
@@ -740,7 +745,10 @@ fn payload_bytes(c: txn.Ctx, entries: List[meta.Entry], stage: List[txn.Pkg]) ->
     var need = 1048576
     for p in stage {
         for t in entries {
-            if t.kind == "payload" && t.name == p.name && t.package_version == p.version && t.arch == p.arch {
+            if t.kind == "payload" &&
+                t.name == p.name &&
+                t.package_version == p.version &&
+                t.arch == p.arch {
                 if !fs_exists("{cache_dir(c)}/objects/sha256/{t.digest}") { need += t.length }
             }
         }

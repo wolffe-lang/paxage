@@ -132,7 +132,9 @@ pub fn logical(path: str) -> bool {
 }
 
 /// A target kind this client uses (T9); any other kind is retained, never used.
-pub fn known_kind(kind: str) -> bool { kind == "manifest" || kind == "payload" || kind == "buildinfo" }
+pub fn known_kind(kind: str) -> bool {
+    kind == "manifest" || kind == "payload" || kind == "buildinfo"
+}
 
 /// Client byte ceiling for the named top-level role; zero means unsupported.
 pub fn limit(role: str) -> int {
