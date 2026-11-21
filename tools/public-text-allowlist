@@ -1,28 +1,9 @@
 # path|pattern|sha256 of exact line|reason
 # Exceptions must be narrow, justified, and reviewed.
-src/registry/registry.lu|work-id|ed450afaa90805bd294bd0a17bed4f7bb154c9376d49ead9d7e0193195ae6bc7|compiled test registry entry name; renaming changes action names, left for a ruling
-src/registry/registry.lu|work-id|3b1ea8c944927c712a9a693472a389557f07e28c38257c780d6252a441c13b7c|compiled test registry entry name; renaming changes action names, left for a ruling
-src/registry/registry.lu|work-id|bef7f13c5eab4e6c1a17e12b62d98c06c7485efbc81a2dbf9c4fa1309aace22d|compiled test registry entry name; renaming changes action names, left for a ruling
-src/registry/registry.lu|work-id|eb0aa450beb6ba256d823c4ffa05f2f6f870b7b9aac5c318273c0461ffce0c1a|compiled test registry entry name; renaming changes action names, left for a ruling
-src/registry/registry.lu|work-id|067014a687e441e2fc26bcd900bb2589710ab509fcbe7ae7aabc5bd064420a1c|compiled test registry entry name; renaming changes action names, left for a ruling
-src/transaction_test.lu|work-id|fb3f5393e0329c6ac77e55f97bd6c74fc3a2ae5ef17ac3082aa9693e077adb99|fixture for the test registry entry name; follows the registry
 tools/check-census|work-id|0038f5c2a6689cb811d90fe808584561ca1a48058e976d5c0f22c92803c41f5b|names a historical note file; the notes keep their names
 tools/check-census|work-id|f1d031fcb8be4bb035c9394c882d926371c44671d7da085ab1471b40af0625b6|names a historical note file; the notes keep their names
 tools/check-census|work-id|bc8ece6a6284f0659672d735a005535ef6f79646717de312f36071d1bffb5e67|names a historical note file; the notes keep their names
 tools/check-census|work-id|d4b0ad49d3984e6a9a073c37d86a063f87cec88fca828eff52a9e79db02cbcc8|names a historical note file; the notes keep their names
 tools/check-census|work-id|dbc5ccc3f0f20143688b2f46b2e5f9efd4852ece80338b1f8c767f0472c125b2|names a historical note file; the notes keep their names
 tools/check-census|work-id|4f7b1e35c6bf6bbe1669d64bb24ba6218086d0f16a42cdf606ea650e9cc4eaae|names a historical note file; the notes keep their names
-tools/check-transactions|work-id|470abe4d88d9643da3d925ff75b7e5bab51f75a16fb6ab85c98641626ff6b1f6|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|30117dbdc2b28c01dd0a222ae474c3232040dcefe9f563fce71d0f58b56a720d|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|318cb21d34a522dd55dd9d2988217b78baf4583cd6aab045a47cf3f2cfa5a6b6|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|aaa54e7f80106ce6d820eb5809a4605166d9e157c0da5a4b6bd16cd6927e9cd3|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|cdbee1dc1eb3bc9512866836fbb7b685c9104609cdfc68f5adb67f7f3aff817b|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|e09c2993971085ff519906069bb1f97aaf96b6f05e0e67a51a088441b0314237|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|f44052593c955c5f18ef8bc9571aa7f04ec91e7ccbdfeac499f0d10052c56b23|row for the test registry entry name; follows the registry
-tools/check-transactions|work-id|71856da14570ab689198d7c6f60b0d235f394261ec436912ba897292963b8740|row for the test registry entry name; follows the registry
-tools/pax-root-qemu|work-id|43bfb27fc3a03dd6f0c7885dd8a0f5fe88196b19e29f879efd09a50c763e6fba|probe and seed name inside the PAX root image rig; renaming needs a Linux take
-tools/pax-root-qemu|work-id|1ee9dc19578282c81dc8b8937bac737f8910cc0cc964451f056d629bb6878d99|probe and seed name inside the PAX root image rig; renaming needs a Linux take
-tools/pax-root-qemu|work-id|07284fcf028b3c7d3de85de41cc97e1642b05861e97ebec3250f33f07fd64fc3|probe and seed name inside the PAX root image rig; renaming needs a Linux take
-tools/pax-root-qemu|work-id|c101c824387d5921615447bdca66e03cc2a3b462c795a5de16ca0a4657e85296|probe and seed name inside the PAX root image rig; renaming needs a Linux take
-tools/pax-root-qemu|work-id|b796dbe8e381a7bc6a53af57e262a0c469abb992c0f313b455e966f9e1775fb2|probe and seed name inside the PAX root image rig; renaming needs a Linux take
 CHANGELOG.md|work-id|1a9356770ec883c28aa741910c60c2089977813a6c8f8c4cd06a0eefc8d1d82f|the changelog names the two old codes so a script that matches them can be updated
