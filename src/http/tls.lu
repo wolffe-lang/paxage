@@ -1,0 +1,119 @@
+// paxage: copied from den (https://github.com/wolffe-lang/den), src/http/tls.lu at
+// paxage: fbfe0852101bd031973f8bb017f6dff01051c6ce; den and paxage are both GPL-3.0-or-later.
+// paxage: The lines below are that file's bytes with the named patch tools/http-copies/tls.lu.patch; tools/check-copies holds them to the pin.
+// wolf-std d4a4d4c public-PKI client: caller-owned entropy, roots, UTC and
+// descriptor cleanup. No external TLS implementation or insecure fallback.
+use std.fs
+use std.net
+use std.time
+use std.x.tls.cert
+use std.x.tls.client
+
+fn root_bundle() -> List[byte] ! Errors {
+    let path = env_get("DEN_TLS_ROOTS") else {
+        return Unsupported("TLS roots required (DEN_TLS_ROOTS)")
+    }
+    if path == "" { return Unsupported("TLS roots required (DEN_TLS_ROOTS)") }
+    var file = fs.open(path) else |_| { return Unsupported("TLS roots unreadable") }
+    defer fs.close(take file) else |_| {}
+    var out = List[byte]()
+    loop {
+        let bytes = fs.read_chunk(mut file, 65536) else |e| match e {
+            eof => { break },
+            _ => { return io },
+        }
+        if bytes.len == 0 { break }
+        if bytes.len > 2097152 - out.len { return limit }
+        append(mut out, bytes)
+    }
+    if out.len == 0 { return Unsupported("TLS empty root bundle") }
+    out
+}
+
+fn entropy() -> List[byte] ! Errors {
+    // Bounded device reads, never a stored scalar/random file. PAX needs its
+    // entropy device as well as roots, clock and resolver support.
+    var file = fs.open("/dev/urandom") else |_| {
+        return Unsupported("TLS host entropy unavailable")
+    }
+    defer fs.close(take file) else |_| {}
+    var out = List[byte]()
+    while out.len < 64 {
+        let bytes = fs.read_chunk(mut file, 64 - out.len) else |_| {
+            return Unsupported("TLS host entropy unavailable")
+        }
+        if bytes.len == 0 { return Unsupported("TLS host entropy unavailable") }
+        append(mut out, bytes)
+    }
+    out
+}
+
+fn secure(fd: int, host: str) -> client.Client ! Errors {
+    let roots = root_bundle()?
+    let clock = time.local_in("UTC0", time.unix_ms() / 1000) else |_| {
+        return Unsupported("TLS UTC clock unavailable")
+    }
+    let now = cert.timestamp(
+        clock.year,
+        clock.month,
+        clock.day,
+        clock.hour,
+        clock.minute,
+        clock.second,
+    )
+    let random = entropy()?
+    let pending = client.begin(
+        take net.Socket { fd: fd },
+        host,
+        roots,
+        now,
+        random[0..32],
+        random[32..64],
+    ) else |e| {
+        return Unsupported("TLS {e}")
+    }
+    client.complete(take pending) else |e| { return Unsupported("TLS {e}") }
+}
+
+/// One TLS application-data read appended to the connection's own buffer.
+/// The record, its plaintext and every temporary of client.read live in
+/// this read's scratch region and die with it (wolf s255,
+/// [mem.region.outer-write]); only plaintext bytes and a copy of the small
+/// cipher state reach the long-lived connection. 0 is data or the peer's
+/// close; otherwise a read_code naming the client's refusal.
+fn fill_secure(mut c: Connection) -> int {
+    var code = -1
+    region scratch {
+        var tls = copy c.tls[0]
+        while code == -1 {
+            let data = client.read(mut tls) else |e| match e {
+                closed => { code = 0; List[byte]() },
+                timeout => { code = 1; List[byte]() },
+                bad_record_mac => { code = 2; List[byte]() },
+                decode_error => { code = 3; List[byte]() },
+                unexpected_message => { code = 4; List[byte]() },
+                io => { code = 5; List[byte]() },
+            }
+            if data.len > 0 {
+                for b in data { (mut c.buffer).push(b) }
+                code = 0
+            }
+        }
+        c.tls[0] = copy tls
+    }
+    code
+}
+
+fn write_bytes(mut c: Connection, data: List[byte]) -> () ! Errors {
+    if c.tls.len == 0 {
+        net_write_bytes(c.fd, data) else |_| { return io }
+        return
+    }
+    var tls = copy c.tls[0], at = 0
+    while at < data.len {
+        let end = if data.len - at > 16384 then at + 16384 else data.len
+        client.write(mut tls, data[at..end]) else |e| { return Unsupported("TLS {e}") }
+        at = end
+    }
+    c.tls[0] = tls
+}
