@@ -1,0 +1,227 @@
+//! The repository transport (TRUST T1, T10, T16). A repository is a local
+//! directory, named by a literal file:/// URL and read through trust_io and
+//! trust_cache exactly as before, or an https:// base (http:// to a literal
+//! loopback address, for tests) read through http over one connection a run.
+//! Every byte a network read returns is verified by its caller exactly as a
+//! file's bytes are, and all of it happens before a transaction's first
+//! durable step. Absence is only a 404 or 410; every other failure fails the
+//! step. Retries (two, after the knobs' waits) cover a failed or refused
+//! connect, a reset, a stall, a short body, 5xx and 429, never a TLS, length,
+//! hash or 4xx refusal.
+
+use http
+use trust_io as io
+use trust_options as options
+use trust_metadata as meta
+
+/// Test-only overrides. The shipped binary passes shipped(); only the
+/// test-only paxage-failpoint binary reads PAXAGE_FETCH_KNOBS.
+pub struct Knobs { waits: List[int], read_ms: int, free: int, clock: int }
+
+/// The shipped values: retries after 10 s and 30 s, 30 s for every read, the
+/// filesystem's own free space, the system clock.
+pub fn shipped() -> Knobs { Knobs { waits: [10000, 30000], read_ms: 30000, free: -1, clock: -1 } }
+
+/// Parse "waits=MS,MS read=MS free=BYTES clock=UNIX" over shipped(); an
+/// unknown word is ignored and a malformed number keeps the shipped value.
+pub fn knobs(text: str) -> Knobs {
+    var k = shipped()
+    for word in text.split(" ") {
+        let eq = word.find("=") else { continue }
+        let key = word[0..eq]
+        let value = word[eq + 1..]
+        if key == "waits" {
+            var waits = List[int]()
+            for part in value.split(",") {
+                let n = options.integer(part)
+                if n >= 0 { (mut waits).push(n) }
+            }
+            k.waits = waits
+        } else if key == "read" {
+            let n = options.integer(value)
+            if n > 0 { k.read_ms = n }
+        } else if key == "free" {
+            k.free = options.integer(value)
+        } else if key == "clock" {
+            k.clock = options.integer(value)
+        }
+    }
+    k
+}
+
+/// The TLS roots PAX ships: concatenated DER certificates.
+pub fn default_roots() -> str { "/etc/ssl/certs/ca-roots.der" }
+
+/// One repository for one run: the name its trust state and database bind (a
+/// realpath for a local directory, the canonical URL for a network base) and,
+/// for a network base, the run's one connection.
+pub struct Repo { name: str, network: bool, conn: http.Connection, knobs: Knobs, error: str }
+
+fn canonical(c: http.Connection) -> str {
+    var host = c.endpoint.host
+    if host == "::1" { host = "[::1]" }
+    var port = ":{c.endpoint.port}"
+    if c.endpoint.scheme == "https" && c.endpoint.port == 443 ||
+        c.endpoint.scheme == "http" && c.endpoint.port == 80 {
+        port = ""
+    }
+    "{c.endpoint.scheme}://{host}{port}{c.endpoint.path}/"
+}
+
+/// Open a caller-supplied repository URL: a literal file:/// URL (its realpath;
+/// "repository-file" when it does not resolve), https://, or http:// to a
+/// literal loopback address. Anything else is "unsupported-transport", before
+/// any network.
+pub fn open(url: str, roots: str, now: int, k: Knobs) -> Repo {
+    var r = Repo { name: "", network: false, conn: http.idle(), knobs: k, error: "" }
+    let raw = options.file_path(url)
+    if raw != "" {
+        let real = fs_realpath(raw) else |_| { "" }
+        if real == "" {
+            r.error = "repository-file"
+        } else {
+            r.name = real
+        }
+        return r
+    }
+    let lower = url.lower()
+    if !lower.starts_with("https://") && !lower.starts_with("http://") {
+        r.error = "unsupported-transport"
+        return r
+    }
+    var bad = false
+    let conn = http.connection(url, roots, now, k.read_ms) else |_| {
+        bad = true
+        http.idle()
+    }
+    if bad {
+        r.error = "unsupported-transport"
+        return r
+    }
+    r.conn = conn
+    r.network = true
+    r.name = canonical(r.conn)
+    r
+}
+
+/// Reopen the repository a trust state or database binds: a local realpath,
+/// or a canonical URL.
+pub fn named(name: str, roots: str, now: int, k: Knobs) -> Repo {
+    if name.starts_with("/") {
+        return Repo { name, network: false, conn: http.idle(), knobs: k, error: "" }
+    }
+    open(name, roots, now, k)
+}
+
+/// Close the run's connection, if any.
+pub fn finish(mut r: Repo) {
+    if r.network { http.close(mut r.conn) }
+}
+
+struct Verdict { error: str, retry: bool }
+
+fn verdict(r: Repo, g: http.Got, target: bool) -> Verdict {
+    let place = "{r.conn.endpoint.host}:{r.conn.endpoint.port}"
+    let length = if target then "target-length" else "metadata-length"
+    if g.refusal == "" {
+        if g.status == 404 || g.status == 410 {
+            let absent = if target then "target-file" else "not-found"
+            return Verdict { error: absent, retry: false }
+        }
+        return Verdict { error: "http-status {g.status}", retry: g.status >= 500 || g.status == 429 }
+    }
+    let f = g.refusal
+    if f == "connect" { return Verdict { error: "fetch: connect {place}", retry: true } }
+    if f == "refused" { return Verdict { error: "fetch: refused {place}", retry: true } }
+    if f == "reset" { return Verdict { error: "fetch: reset {place}", retry: true } }
+    if f == "stalled" { return Verdict { error: "fetch: stalled", retry: true } }
+    if f == "short" { return Verdict { error: length, retry: true } }
+    if f == "length" { return Verdict { error: length, retry: false } }
+    if f == "byte-limit" { return Verdict { error: "metadata-byte-limit", retry: false } }
+    if f == "write" { return Verdict { error: "target-write", retry: false } }
+    if f.starts_with("tls ") { return Verdict { error: "fetch: {f}", retry: false } }
+    Verdict { error: f, retry: false }
+}
+
+fn pause(mut r: Repo, attempt: int) {
+    http.close(mut r.conn)
+    time_sleep_ms(r.knobs.waits[attempt])
+}
+
+/// A metadata file under the repository, at most cap bytes, in trust_io.read's
+/// vocabulary: a local directory is read by trust_io.read itself; over the
+/// network "not-found" is a 404 or 410 ("repository-missing" for the
+/// timestamp, which every repository has).
+pub fn metadata(mut r: Repo, name: str, cap: int) -> io.Input {
+    if !r.network { return io.read("{r.name}/{name}", cap) }
+    var out = io.Input { bytes: List[byte](), error: "" }
+    let target = "{r.conn.endpoint.path}/{name}"
+    var attempt = 0
+    loop {
+        let g = http.request_bytes(mut r.conn, target, cap, false)
+        if g.refusal == "" && g.status == 200 {
+            out.bytes = copy g.body
+            return out
+        }
+        let v = verdict(r, g, false)
+        if v.retry && attempt < r.knobs.waits.len {
+            pause(mut r, attempt)
+            attempt += 1
+            continue
+        }
+        out.error = v.error
+        if out.error == "not-found" && name == "metadata/timestamp.json" { out.error = "repository-missing" }
+        return out
+    }
+}
+
+/// A target object streamed create-only into dest and judged against expected
+/// (length, then SHA-256) in trust_cache.copy_verified's vocabulary: target-file
+/// (a 404 or 410), target-length, target-hash, immutable-rewrite, target-write,
+/// target-sync, target-close, and the network's own refusals.
+pub fn object(mut r: Repo, dest: str, expected: meta.Entry) -> str {
+    let target = "{r.conn.endpoint.path}/targets/{expected.digest}.{expected.path}"
+    var attempt = 0
+    loop {
+        let fd = fs_open_perm(dest, 20, 384) else |e| match e {
+            exists => { return "immutable-rewrite" },
+            _ => { return "target-write" },
+        }
+        let g = http.request_file(mut r.conn, target, expected.length, fd)
+        if g.refusal == "" && g.status == 200 {
+            var error = ""
+            if g.length != expected.length {
+                error = "target-length"
+            } else if g.digest != expected.digest {
+                error = "target-hash"
+            }
+            if error == "" { fs_sync(fd) else |_| { error = "target-sync" } }
+            fs_close(fd) else |_| { if error == "" { error = "target-close" } }
+            return error
+        }
+        fs_close(fd) else |_| {}
+        let v = verdict(r, g, true)
+        if v.retry && attempt < r.knobs.waits.len {
+            fs_remove(dest) else |_| { return "target-write" }
+            pause(mut r, attempt)
+            attempt += 1
+            continue
+        }
+        return v.error
+    }
+}
+
+/// The free-space preflight before a network fetch writes need bytes under
+/// dir: "cache-space" when they do not fit. A local repository is unchanged:
+/// its copies keep their own write refusals.
+pub fn space(r: Repo, dir: str, need: int) -> str {
+    if !r.network { return "" }
+    var available = r.knobs.free
+    if available < 0 {
+        let sf = fs_statfs(dir) else |_| { return "cache-space: statfs refused" }
+        if sf[0] / 32 % 2 == 0 { return "" }
+        available = sf[5] * sf[2]
+    }
+    if need > available { return "cache-space: need {need} bytes, {available} available" }
+    ""
+}
