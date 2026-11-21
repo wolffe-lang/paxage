@@ -21,7 +21,7 @@ use trust_store as store
 use trust_io as io
 use trust_cache as cache
 use trust_client
-use trust_options
+use transport
 use std.json as json
 use std.str as text
 use std.list as list
@@ -33,6 +33,7 @@ struct Opts {
     arch: str,
     slot: str,
     now: str,
+    tls_roots: str,
     dry_run: bool,
     purge: bool,
     yes: bool,
@@ -49,6 +50,7 @@ fn parse(a: List[str]) -> Opts {
         arch: "",
         slot: "",
         now: "",
+        tls_roots: "",
         dry_run: false,
         purge: false,
         yes: false,
@@ -94,6 +96,8 @@ fn parse(a: List[str]) -> Opts {
                 o.slot = v
             } else if f == "--now" && o.now == "" {
                 o.now = v
+            } else if f == "--tls-roots" && o.tls_roots == "" {
+                o.tls_roots = v
             } else {
                 o.error = "unknown or repeated option {f}"
                 return o
@@ -118,6 +122,11 @@ fn usage(message: str) -> int {
 }
 
 fn fail(message: str) -> int { eprint("paxage: {message}"); 1 }
+
+fn roots_of(o: Opts) -> str {
+    if o.tls_roots != "" { return o.tls_roots }
+    transport.default_roots()
+}
 
 fn quote(s: str) -> str { json.stringify(json.from_str(s)) else |_| { "\"json-error\"" } }
 
@@ -311,9 +320,9 @@ fn init(o: Opts) -> int {
     if !schema.identity(o.arch) || !schema.identity(o.slot) { return fail("bad-identity") }
     let now = now_of(o)
     if now < 0 { return fail("metadata-time") }
-    let raw = trust_options.file_path(o.repo)
-    if raw == "" { return fail("unsupported-transport") }
-    let repo = fs_realpath(raw) else |_| { return fail("repository-file") }
+    let opened = transport.open(o.repo, roots_of(o), now, transport.shipped())
+    if opened.error != "" { return fail(opened.error) }
+    let repo = opened.name
     let c = open_root(o.root, failpoint.none())
     if c.root.error != "" { return fail(c.root.error) }
     let v = qualify.root(c.root.path)
@@ -386,15 +395,14 @@ fn init(o: Opts) -> int {
 
 struct Universe { pkgs: List[txn.Pkg], entries: List[meta.Entry], error: str }
 
-fn universe(o: Open, now: int) -> Universe {
+fn universe(o: Open, now: int, mut r: transport.Repo) -> Universe {
     var u = Universe { pkgs: List[txn.Pkg](), entries: List[meta.Entry](), error: "" }
     let c = o.c
-    let repo = o.g.repository
     let guard = check_state(c)
     if guard != "" { u.error = guard; return u }
     let tlock = io.lock(trust_dir(c))
     if tlock < 0 { u.error = "trust-locked"; return u }
-    var e = trust_client.update(repo, trust_dir(c), now)
+    var e = trust_client.update(mut r, trust_dir(c), now)
     let loaded = store.load(trust_dir(c))
     fs_close(tlock) else |_| {}
     if e != "" { u.error = "update: {e}"; return u }
@@ -408,7 +416,7 @@ fn universe(o: Open, now: int) -> Universe {
     if clock < 0 { u.error = "cache-locked"; return u }
     for t in loaded.value.targets.entries {
         if t.kind != "manifest" { continue }
-        e = cache.fetch(repo, cache_dir(c), t)
+        e = cache.fetch(mut r, cache_dir(c), t)
         if e != "" { break }
         let input = io.read("{cache_dir(c)}/objects/sha256/{t.digest}", 1048576)
         if input.error != "" || meta.digest(input.bytes) != t.digest {
@@ -434,7 +442,7 @@ fn universe(o: Open, now: int) -> Universe {
                     e = "buildinfo-hash {t.path}"
                     break
                 }
-                e = cache.fetch(repo, cache_dir(c), b)
+                e = cache.fetch(mut r, cache_dir(c), b)
                 bound = true
             }
         }
@@ -448,7 +456,7 @@ fn universe(o: Open, now: int) -> Universe {
     u
 }
 
-fn fetch_payload(c: txn.Ctx, repo: str, entries: List[meta.Entry], mut p: txn.Pkg) -> str {
+fn fetch_payload(c: txn.Ctx, mut r: transport.Repo, entries: List[meta.Entry], mut p: txn.Pkg) -> str {
     let clock = io.lock(cache_dir(c))
     if clock < 0 { return "cache-locked" }
     var e = "target-incomplete {p.name}"
@@ -457,7 +465,7 @@ fn fetch_payload(c: txn.Ctx, repo: str, entries: List[meta.Entry], mut p: txn.Pk
             t.name == p.name &&
             t.package_version == p.version &&
             t.arch == p.arch {
-            e = cache.fetch(repo, cache_dir(c), t)
+            e = cache.fetch(mut r, cache_dir(c), t)
             p.payload = "{cache_dir(c)}/objects/sha256/{t.digest}"
             p.payload_length = t.length
             p.payload_sha256 = t.digest
@@ -577,7 +585,7 @@ fn finish_open(o: Open, code: int, message: str) -> int {
     code
 }
 
-fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
+fn mutate(verb: str, opts: Opts, fp: failpoint.Fail, k: transport.Knobs) -> int {
     let c = open_root(opts.root, fp)
     if c.root.error != "" { return fail(c.root.error) }
     var o = take_lock(c)
@@ -605,6 +613,7 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
     var news = List[txn.Pkg]()
     var purge = List[str]()
     var entries = List[meta.Entry]()
+    var r = transport.named("/", "", 0, k)
     if verb == "install" || verb == "upgrade" {
         if verb == "install" && opts.names.len == 0 {
             return finish_open(o, 2, "install needs at least one package")
@@ -614,7 +623,9 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         }
         let now = now_of(opts)
         if now < 0 { return finish_open(o, 1, "metadata-time") }
-        let u = universe(o, now)
+        r = transport.named(o.g.repository, roots_of(opts), now, k)
+        if r.error != "" { return finish_open(o, 1, r.error) }
+        let u = universe(o, now, mut r)
         if u.error != "" { return finish_open(o, 1, u.error) }
         entries = copy u.entries
         var wants = List[model.Need]()
@@ -711,14 +722,30 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail) -> int {
         )
         return finish_open(o, 0, "")
     }
-    for k in 0..plan.stage.len {
-        let e = fetch_payload(c, o.g.repository, entries, mut plan.stage[k])
+    let space = transport.space(r, cache_dir(c), payload_bytes(c, entries, plan.stage))
+    if space != "" { return finish_open(o, 1, space) }
+    for i in 0..plan.stage.len {
+        let e = fetch_payload(c, mut r, entries, mut plan.stage[i])
         if e != "" { return finish_open(o, 1, e) }
     }
     let done = txn.execute(c, plan, o.g.generation)
     if done.error != "" { return finish_open(o, 1, done.error) }
     print("{verb} ok generation={done.generation}")
     finish_open(o, 0, "")
+}
+
+/// The bytes the plan's payloads will add to the cache (those not already in
+/// it), with 1 MiB of headroom: the free-space preflight's need.
+fn payload_bytes(c: txn.Ctx, entries: List[meta.Entry], stage: List[txn.Pkg]) -> int {
+    var need = 1048576
+    for p in stage {
+        for t in entries {
+            if t.kind == "payload" && t.name == p.name && t.package_version == p.version && t.arch == p.arch {
+                if !fs_exists("{cache_dir(c)}/objects/sha256/{t.digest}") { need += t.length }
+            }
+        }
+    }
+    need
 }
 
 /// The old generation with the next one's number and transaction, for comparing content.
@@ -895,7 +922,10 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
 }
 
 /// Run one root verb. fail is inert for the shipped executable.
-pub fn run(a: List[str], fp: failpoint.Fail) -> int {
+pub fn run(a: List[str], fp: failpoint.Fail) -> int { run_with(a, fp, transport.shipped()) }
+
+/// The root verbs with the test-only binary's transport overrides.
+pub fn run_with(a: List[str], fp: failpoint.Fail, k: transport.Knobs) -> int {
     let opts = parse(a)
     if opts.error != "" { return usage(opts.error) }
     let verb = a[0]
@@ -904,7 +934,7 @@ pub fn run(a: List[str], fp: failpoint.Fail) -> int {
     if verb == "verify" { return verify(opts) }
     if verb == "rescue" { return rescue(opts, fp) }
     if verb == "install" || verb == "remove" || verb == "upgrade" || verb == "autoremove" {
-        return mutate(verb, opts, fp)
+        return mutate(verb, opts, fp, k)
     }
     usage("unknown root verb {verb}")
 }

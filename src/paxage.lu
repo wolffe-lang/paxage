@@ -13,6 +13,7 @@ use trust_options
 use trust_client
 use trust_repo
 use root_cli
+use transport
 use failpoint
 use std.json as json
 use std.str as text
@@ -288,7 +289,7 @@ fn trust(args: List[str]) -> int {
     if verb == "repo" {
         error = trust_repo.run(operation, o, now)
     } else {
-        error = trust_client.run(verb, o, now)
+        error = trust_client.run(verb, o, now, transport.shipped())
     }
     if error != "" { return fail(error) }
     if verb == "repo" { print("repo {operation} ok") } else { print("{verb} ok") }

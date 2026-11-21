@@ -46,6 +46,7 @@ pub fn parse(args: List[str], start: int) -> Options {
             "--targets-validity",
             "--manifest",
             "--buildinfo",
+            "--tls-roots",
         ] {
             if name == allowed { known = true }
         }

@@ -4,6 +4,7 @@
 
 use root_cli
 use failpoint
+use transport
 
 fn main() -> int {
     let a = env_args()
@@ -16,5 +17,6 @@ fn main() -> int {
         eprint("paxage-failpoint: bad PAXAGE_FAILPOINT {spec}")
         return 2
     }
-    root_cli.run(a, f)
+    let knobs = env_get("PAXAGE_FETCH_KNOBS") else |_| { "" }
+    root_cli.run_with(a, f, transport.knobs(knobs))
 }

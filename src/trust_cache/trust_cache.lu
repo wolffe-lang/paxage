@@ -4,6 +4,7 @@ use payload
 use trust_metadata as meta
 use trust_io as io
 use std.x.crypto.sha2 as sha2
+use transport
 
 /// File identity measured from a held descriptor, or a named refusal.
 pub struct Object { length: int, digest: str, error: str }
@@ -84,10 +85,10 @@ pub fn directory(path: str) -> str {
     io.private_dir(path)
 }
 
-/// Acquire a verified cache object. Caller holds cache's advisory lock. A
-/// digest's .part files left by failed attempts are reaped before a new
-/// attempt (T16), so failures never exhaust the part area.
-pub fn fetch(repo: str, cache: str, expected: meta.Entry) -> str {
+/// Acquire a verified cache object from repository r. Caller holds cache's
+/// advisory lock. A digest's .part files left by failed attempts are reaped
+/// before a new attempt (T16), so failures never exhaust the part area.
+pub fn fetch(mut r: transport.Repo, cache: str, expected: meta.Entry) -> str {
     let object = "{cache}/objects/sha256/{expected.digest}"
     let existing = fs_lstat(object) else |e| match e {
         not_found => { List[int]() },
@@ -109,8 +110,13 @@ pub fn fetch(repo: str, cache: str, expected: meta.Entry) -> str {
         if old.len != 0 { fs_remove(candidate) else |_| { return "cache-part-reap" } }
     }
     let part = "{cache}/.part/{expected.digest}.0"
-    let source = "{repo}/targets/{expected.digest}.{expected.path}"
-    let copied = copy_verified(source, part, expected)
+    var copied = ""
+    if r.network {
+        copied = transport.object(mut r, part, expected)
+    } else {
+        let source = "{r.name}/targets/{expected.digest}.{expected.path}"
+        copied = copy_verified(source, part, expected)
+    }
     if copied != "" { return copied }
     fs_rename(part, object) else |_| { return "cache-promote" }
     fs_sync_dir("{cache}/objects/sha256") else |_| { return "cache-dir-sync" }

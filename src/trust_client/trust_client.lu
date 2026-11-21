@@ -1,4 +1,5 @@
-//! File-only bootstrap/update/fetch. All mutations stay in caller-named state/cache.
+//! Bootstrap/update/fetch over a file:// or HTTPS repository (transport). All
+//! mutations stay in caller-named state/cache.
 
 use trust_options as options
 use trust_metadata as meta
@@ -9,11 +10,12 @@ use trust_cache as cache
 use literal
 use schema
 use payload_cli
+use transport
 
-fn bound(repo: str, role: str, ref: meta.Entry) -> meta.Meta {
+fn bound(mut r: transport.Repo, role: str, ref: meta.Entry) -> meta.Meta {
     var m = meta.absent(role)
     if ref.length > meta.limit(role) { m.error = "metadata-byte-limit"; return m }
-    let input = io.read("{repo}/metadata/{ref.version}.{role}.json", ref.length)
+    let input = transport.metadata(mut r, "metadata/{ref.version}.{role}.json", ref.length)
     if input.error != "" {
         m.error = input.error
         if m.error == "metadata-byte-limit" { m.error = "metadata-length" }
@@ -24,7 +26,7 @@ fn bound(repo: str, role: str, ref: meta.Entry) -> meta.Meta {
     meta.parse(input.bytes, role)
 }
 
-fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
+fn bootstrap(r: transport.Repo, dir: str, o: options.Options, now: int) -> str {
     let pinned = options.flag_value(o, "--root")
     if pinned == "" { return "bootstrap-unpinned" }
     let input = io.read(pinned, 65536)
@@ -36,7 +38,7 @@ fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
     if old.error == "" { return "trust-state-exists" }
     if old.error != "not-found" { return old.error }
     var s = state.initial(root, now)
-    s.repository = repo
+    s.repository = r.name
     let error = store.save(dir, s, 0)
     if error != "" { return error }
     fs_sync_dir("{dir}/..") else |_| { return "state-dir-sync" }
@@ -44,11 +46,13 @@ fn bootstrap(repo: str, dir: str, o: options.Options, now: int) -> str {
 }
 
 /// Rotate roots and verify timestamp, snapshot and targets into dir (C9); the
-/// root verbs call it under the root's own lock (pm04).
-pub fn update(repo: str, dir: str, now: int) -> str {
+/// root verbs call it under the root's own lock. Over the network, a versioned
+/// file that vanishes mid-update (the publisher moved on) restarts the update
+/// from the timestamp once.
+pub fn update(mut r: transport.Repo, dir: str, now: int) -> str {
     var loaded = store.load(dir)
     if loaded.error != "" { return loaded.error }
-    if loaded.value.repository != repo { return "repository-mismatch" }
+    if loaded.value.repository != r.name { return "repository-mismatch" }
     let clock = state.clock_error(loaded.value.floor, now)
     if clock != "" { return clock }
     var rotations = 0
@@ -56,13 +60,19 @@ pub fn update(repo: str, dir: str, now: int) -> str {
         if loaded.value.root.version == 9223372036854775807 { return "root: metadata-version" }
         let next = loaded.value.root.version + 1
         if rotations >= 32 {
-            let _present = fs_lstat("{repo}/metadata/{next}.root.json") else |e| match e {
+            if r.network {
+                let probe = transport.metadata(mut r, "metadata/{next}.root.json", 65536)
+                if probe.error == "not-found" { break }
+                if probe.error != "" { return "root: {probe.error}" }
+                return "root: root-chain-limit"
+            }
+            let _present = fs_lstat("{r.name}/metadata/{next}.root.json") else |e| match e {
                 not_found => { break },
                 _ => { return "root: repository-file" },
             }
             return "root: root-chain-limit"
         }
-        let input = io.read("{repo}/metadata/{next}.root.json", 65536)
+        let input = transport.metadata(mut r, "metadata/{next}.root.json", 65536)
         if input.error == "not-found" { break }
         if input.error != "" { return "root: {input.error}" }
         let candidate = meta.parse(input.bytes, "root")
@@ -75,43 +85,57 @@ pub fn update(repo: str, dir: str, now: int) -> str {
         rotations += 1
     }
     if loaded.value.root.expires <= now { return "root: expired-root" }
-    let input = io.read("{repo}/metadata/timestamp.json", 16384)
-    if input.error != "" { return "timestamp: {input.error}" }
-    let timestamp = meta.parse(input.bytes, "timestamp")
-    if timestamp.error != "" { return "timestamp: {timestamp.error}" }
-    if loaded.value.stage == 3 &&
-        timestamp.version == loaded.value.timestamp_mark.version &&
-        meta.digest(input.bytes) == loaded.value.timestamp_mark.hash {
-        let ready = state.ready(loaded.value, now)
-        if ready != "" { return ready }
-        loaded.value.floor = now
-        return store.save(dir, loaded.value, loaded.generation)
-    }
-    let accepted = state.advance(mut loaded.value, timestamp, now)
-    if accepted != "" { return "timestamp: {accepted}" }
-    let saved = store.save(dir, loaded.value, loaded.generation)
-    if saved != "" { return "timestamp: {saved}" }
-    loaded = store.load(dir)
-    if loaded.error != "" { return "timestamp: {loaded.error}" }
-    for role in ["snapshot", "targets"] {
-        if role == "snapshot" && loaded.value.stage >= 2 {
-            if loaded.value.snapshot.expires <= now { return "snapshot: expired-snapshot" }
-            continue
+    var restarts = 0
+    var result = ""
+    loop {
+        let input = transport.metadata(mut r, "metadata/timestamp.json", 16384)
+        if input.error != "" { return "timestamp: {input.error}" }
+        let timestamp = meta.parse(input.bytes, "timestamp")
+        if timestamp.error != "" { return "timestamp: {timestamp.error}" }
+        if loaded.value.stage == 3 &&
+            timestamp.version == loaded.value.timestamp_mark.version &&
+            meta.digest(input.bytes) == loaded.value.timestamp_mark.hash {
+            let ready = state.ready(loaded.value, now)
+            if ready != "" { return ready }
+            loaded.value.floor = now
+            return store.save(dir, loaded.value, loaded.generation)
         }
-        var ref = copy loaded.value.timestamp.entries[0]
-        if role == "targets" { ref = copy loaded.value.snapshot.entries[0] }
-        let candidate = bound(repo, role, ref)
-        let error = state.advance(mut loaded.value, candidate, now)
-        if error != "" { return "{role}: {error}" }
-        let written = store.save(dir, loaded.value, loaded.generation)
-        if written != "" { return "{role}: {written}" }
+        let accepted = state.advance(mut loaded.value, timestamp, now)
+        if accepted != "" { return "timestamp: {accepted}" }
+        let saved = store.save(dir, loaded.value, loaded.generation)
+        if saved != "" { return "timestamp: {saved}" }
         loaded = store.load(dir)
-        if loaded.error != "" { return "{role}: {loaded.error}" }
+        if loaded.error != "" { return "timestamp: {loaded.error}" }
+        var restart = false
+        for role in ["snapshot", "targets"] {
+            if role == "snapshot" && loaded.value.stage >= 2 {
+                if loaded.value.snapshot.expires <= now { return "snapshot: expired-snapshot" }
+                continue
+            }
+            var ref = copy loaded.value.timestamp.entries[0]
+            if role == "targets" { ref = copy loaded.value.snapshot.entries[0] }
+            let candidate = bound(mut r, role, ref)
+            if candidate.error == "not-found" && r.network && restarts == 0 {
+                restart = true
+                break
+            }
+            let error = state.advance(mut loaded.value, candidate, now)
+            if error != "" { return "{role}: {error}" }
+            let written = store.save(dir, loaded.value, loaded.generation)
+            if written != "" { return "{role}: {written}" }
+            loaded = store.load(dir)
+            if loaded.error != "" { return "{role}: {loaded.error}" }
+        }
+        if !restart {
+            result = state.ready(loaded.value, now)
+            break
+        }
+        restarts += 1
     }
-    state.ready(loaded.value, now)
+    result
 }
 
-fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -> str {
+fn fetch_locked(mut r: transport.Repo, cache_dir: str, s: state.State, o: options.Options) -> str {
     let logical = options.flag_value(o, "--target")
     if !meta.logical(logical) { return "logical-name" }
     var index = -1
@@ -119,7 +143,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
     if index < 0 { return "target-not-found" }
     let target = copy s.targets.entries[index]
     if !meta.known_kind(target.kind) { return "target-kind" }
-    let error = cache.fetch(repo, cache_dir, target)
+    let error = cache.fetch(mut r, cache_dir, target)
     if error != "" { return error }
     let object = "{cache_dir}/objects/sha256/{target.digest}"
     let into = options.flag_value(o, "--stage")
@@ -138,7 +162,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         }
         if manifest < 0 || buildinfo < 0 { return "target-incomplete" }
         let entry = copy s.targets.entries[manifest]
-        let fetched = cache.fetch(repo, cache_dir, entry)
+        let fetched = cache.fetch(mut r, cache_dir, entry)
         if fetched != "" { return fetched }
         let input = io.read("{cache_dir}/objects/sha256/{entry.digest}", 1048576)
         if input.error != "" || meta.digest(input.bytes) != entry.digest { return "manifest-hash" }
@@ -154,7 +178,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
         if schema.string(d, 0, "buildinfo") != s.targets.entries[buildinfo].digest {
             return "buildinfo-hash"
         }
-        let provenance = cache.fetch(repo, cache_dir, s.targets.entries[buildinfo])
+        let provenance = cache.fetch(mut r, cache_dir, s.targets.entries[buildinfo])
         if provenance != "" { return provenance }
         let arguments = [
             "stage",
@@ -178,7 +202,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
     ""
 }
 
-fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
+fn fetch(mut r: transport.Repo, o: options.Options, s: state.State, now: int) -> str {
     let ready = state.ready(s, now)
     if ready != "" { return ready }
     let dir = options.flag_value(o, "--cache")
@@ -189,16 +213,18 @@ fn fetch(repo: str, o: options.Options, s: state.State, now: int) -> str {
     }
     let lock = io.lock(dir)
     if lock < 0 { return "cache-locked" }
-    var error = fetch_locked(repo, dir, s, o)
+    var error = fetch_locked(mut r, dir, s, o)
     fs_close(lock) else |_| { error = "cache-close" }
     error
 }
 
-/// Execute a file-only client command while holding its private trust-directory lock.
-pub fn run(verb: str, o: options.Options, now: int) -> str {
-    let raw = options.file_path(options.flag_value(o, "--repo"))
-    if raw == "" { return "unsupported-transport" }
-    let repo = fs_realpath(raw) else |_| { return "repository-file" }
+/// Execute a client command while holding its private trust-directory lock;
+/// k carries the test-only binary's overrides (transport.shipped() otherwise).
+pub fn run(verb: str, o: options.Options, now: int, k: transport.Knobs) -> str {
+    var roots = options.flag_value(o, "--tls-roots")
+    if roots == "" { roots = transport.default_roots() }
+    var r = transport.open(options.flag_value(o, "--repo"), roots, now, k)
+    if r.error != "" { return r.error }
     let dir = options.flag_value(o, "--state")
     if dir == "" { return "missing-state-directory" }
     var error = ""
@@ -214,21 +240,22 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
     let lock = io.lock(dir)
     if lock < 0 { return "state-locked" }
     if verb == "bootstrap" {
-        error = bootstrap(repo, dir, o, now)
+        error = bootstrap(r, dir, o, now)
     } else if verb == "update" {
-        error = update(repo, dir, now)
+        error = update(mut r, dir, now)
     } else if verb == "fetch" {
         let loaded = store.load(dir)
         if loaded.error != "" {
             error = loaded.error
-        } else if loaded.value.repository != repo {
+        } else if loaded.value.repository != r.name {
             error = "repository-mismatch"
         } else {
-            error = fetch(repo, o, loaded.value, now)
+            error = fetch(mut r, o, loaded.value, now)
         }
     } else {
         error = "unsupported-client-verb"
     }
+    transport.finish(mut r)
     fs_close(lock) else |_| { error = "state-close" }
     error
 }
