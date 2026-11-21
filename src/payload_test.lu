@@ -9,7 +9,7 @@ fn expect(ok: bool, row: str) -> bool {
 
 fn main() -> int {
     if !expect(
-        staging.privilege(0) == "privileged-staging-is-pm04-pm05",
+        staging.privilege(0) == "privileged-staging-refused",
         "stage-euid-zero-refused",
     ) {
         return 1
