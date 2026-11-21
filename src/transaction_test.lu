@@ -44,6 +44,25 @@ fn sample() -> intent.Intent {
     intent.Intent { transaction: "t3", from: 2, to: 3, database: h, ops, error: "" }
 }
 
+/// A generation record with `count` installed packages, rendered and parsed back: the error.
+fn installed_rows(count: int) -> str {
+    var g = db.empty("x86_64", "default", "/repo", "logical")
+    for i in 0..count {
+        (mut g.packages).push(db.Installed {
+            name: "p{i}",
+            version: "1-1",
+            arch: "x86_64",
+            slot: "default",
+            reason: "explicit",
+            manifest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        })
+    }
+    let parsed = db.parse(db.render(g).bytes())
+    if parsed.error != "" { return parsed.error }
+    if parsed.packages.len != count { return "count {parsed.packages.len}" }
+    ""
+}
+
 fn main() -> int {
     var ok = true
     if !row(qualify.development_host("macos"), "X2-macos-development-host") { ok = false }
@@ -206,6 +225,11 @@ fn main() -> int {
     ) {
         ok = false
     }
+    let at_limit = installed_rows(256)
+    let past = installed_rows(257)
+    print("bound-installed: 256 gives '{at_limit}', 257 gives '{past}'")
+    if !row(at_limit == "", "bound-installed-256") { ok = false }
+    if !row(past == "database-invalid snapshot-limit", "bound-installed-257-refused") { ok = false }
     if ok { return 0 }
     1
 }
