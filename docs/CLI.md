@@ -141,6 +141,14 @@ and metadata are present and synced. A failed publish can leave unreferenced
 immutable files, but must not publish a timestamp that refers to incomplete data.
 Success ends `repo VERB ok`. No command accepts unmarked production signing keys.
 
+Trust directories belong to an unprivileged caller. At euid 0 every command that
+takes one refuses `privileged-trust-refused`: the key directories of `repo
+keygen`, `repo init`, `repo rotate` and `repo publish`, the repository directories
+the `repo` verbs write, and the `--state` and `--cache` directories of `bootstrap`, `update` and `fetch`.
+A missing directory that the command would create may already exist when the
+refusal is reported. A directory that is not owned by the caller, or is group or
+world writable, refuses `directory-owner`, and `/` refuses `directory-root`.
+
 ## C9 — Bootstrap and update
 
 `bootstrap --repo URL --root PINNED_FILE --state DIR [--now UTC]`
