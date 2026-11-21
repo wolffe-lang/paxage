@@ -306,6 +306,33 @@ def clock_floor(e):
     ct.check(len(server.log) == before, 'fetch-clock-floor-no-request', str(server.log[before:]))
 
 
+@row('fetch-clock-build')
+def clock_build(e):
+    # A system clock before this build refuses before any repository read; the
+    # test-only binary stands in for a wrong clock. An explicit --now is a test
+    # option and is never judged against the floor (every other row uses one).
+    root = ready_root(e, e.repo.url, 'fetch-clock-build')
+    if root is None:
+        return
+    p = pxg('install', '--root', root, 'alpha', binary=FPBIN, env={'PAXAGE_FETCH_KNOBS': 'clock=1000'})
+    ct.refused(p, 'fetch-clock-build', 1, 'clock-before-build')
+    ct.check(set(ct.installed(root)) == set(), 'fetch-clock-build-nothing-installed', str(ct.installed(root)))
+
+
+@row('fetch-build-floor-not-ahead')
+def build_floor_not_ahead(e):
+    # The committed floor never runs ahead of the commit that carries it.
+    text = (ROOT / 'src/trust_options/trust_options.lu').read_text()
+    floor = None
+    for line in text.splitlines():
+        if line.startswith('const BUILD_FLOOR: int = '):
+            floor = int(line.split('=')[1])
+    p = subprocess.run(['git', '-C', str(ROOT), 'log', '-1', '--format=%ct'], capture_output=True, text=True)
+    committed = int(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else None
+    ct.check(floor is not None and committed is not None and 0 < floor <= committed, 'fetch-build-floor-not-ahead',
+             f'floor={floor} commit={committed}')
+
+
 # ---------------------------------------------------------------- absence
 
 @row('fetch-repository-missing')
