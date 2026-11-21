@@ -25,7 +25,7 @@ Diagnostics start `paxage:` regardless of invocation name. Usage names both.
 
 `sync` refuses by name, exit 6: `upgrade` is the one refresh-and-upgrade operation.
 `install`, `remove` and `upgrade` act only on a `--root` synthetic root (C12–C16);
-`--root /` refuses `live-root-is-pm05`. `<file>.paxage-new` is a three-way config
+`--root /` refuses `live-root-unsupported`. `<file>.paxage-new` is a three-way config
 proposal (TRANSACTIONS X9).
 
 Exit 0 success; 1 malformed data, I/O or safety refusal; 2 usage; 3 proven
@@ -91,9 +91,9 @@ bytes read at consumption, before parsing; `fetch --stage` always supplies them.
 DIR must be empty, caller-owned, a real directory, not `/`, and not group/world
 writable. Refuse detectable mount roots (different parent device or identical
 parent inode); same-device bind mounts cannot be detected with this surface.
-Euid 0 always refuses `privileged-staging-is-pm04-pm05`. This is not an installer.
+Euid 0 always refuses `privileged-staging-refused`. This is not an installer.
 Numeric archive ownership is logical metadata; on disk, staged entries belong to
-the unprivileged caller. Privileged ownership application belongs to pm04/pm05.
+the unprivileged caller. Privileged ownership application belongs to the root transactions, not to staging.
 
 The cwd pins the staging root after fd/path identity rechecks. Ancestors are
 checked as directories, files created exclusively/no-follow, hard links made
