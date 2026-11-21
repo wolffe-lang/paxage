@@ -39,6 +39,18 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     allow.write_text('')
     specimen.write_text('see ' + 'spr' + 'ints/pm/example\n')
     assert 'pattern=private-plan-path' in check().stdout, 'private planning path must fail'
+    for ident in ('pm' + '04', 'pm' + '05a', 'px' + '75', 'qr' + '12', 'pm' + '03-r2'):
+        specimen.write_text(f'see {ident} for details\n')
+        red = check()
+        assert red.returncode == 1 and 'FAIL public-text sample.txt:1 pattern=work-id' in red.stdout, (ident, red.stdout)
+    for fine in ('sha' + '256', 'the hex word af' + '82', 'ext' + '4', 'pm' + '041x', 'a pm' + '04x7'):
+        specimen.write_text(f'{fine}\n')
+        assert check().returncode == 0, f'{fine} is not a work id'
+    (repo / 'notes').mkdir()
+    (repo / 'notes/history.md').write_text('pm' + '04 was the transactions work\n')
+    git('add', 'notes/history.md')
+    assert check().returncode == 0, 'notes keep their historical ids'
+    git('rm', '-q', '--cached', 'notes/history.md')
     specimen.write_text('clean\n')
     assert check().returncode == 0, 'a clean tree must pass'
     (repo / 'docs').mkdir()
