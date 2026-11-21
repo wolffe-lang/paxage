@@ -5,7 +5,7 @@
 A package consists of `name-version.manifest`, `name-version.payload.tar`, and
 `name-version.buildinfo`. External authenticated index records bind each target's
 exact SHA-256 and byte length; no self-referential archive hash is embedded.
-Logical names acquire TUF consistent-snapshot prefixes in pm03. pm01 parses data
+Logical names acquire TUF consistent-snapshot prefixes in the trust layer. The format layer parses data
 only: no trust claim, archive reader, root mutation, signing or fetch operation.
 
 ## F2 — Literal data and rejection names
@@ -47,7 +47,7 @@ A `manifest` has every field below, no others:
 - `files`: list of F5 file records; `configs`: list of paths of regular files;
 - `actions`: list of `action { kind, name, version }`, where kind is
   `account`, `directory` or `cache`; names are registry references and version is
-  a positive integer. These are declarations, never executed by pm01.
+  a positive integer. These are declarations, never executed by the format layer.
 
 Names, architectures and ABI slots match `[a-z0-9][a-z0-9_+.-]*`, maximum 128
 bytes, excluding `.` and `..`. Licence is a nonempty descriptive string, at most
@@ -94,7 +94,7 @@ Config paths identify regular files
 under `etc/` only. Errors: `bad-path`, `duplicate-path`, `path-conflict`,
 `bad-file`, `bad-link`, `bad-config`, `bad-action`.
 
-## F6 — Restricted POSIX pax payload profile (pm02 implementation)
+## F6 — Restricted POSIX pax payload profile (packing and staging)
 
 512-byte ustar headers plus per-entry pax `path`, `linkpath`, `size`, `mtime`,
 `atime`, `ctime` only when needed for numeric size/time representability. Canonical
@@ -110,7 +110,7 @@ duplicate paths, malformed text, unknown type, escaping or absent hardlink targe
 nonzero padding, overlapping types and inconsistent manifest inventory. Authenticate
 the full blob before even staging; verify installed lengths/digests/metadata before
 promotion. Never follow an archive-created symlink while staging. No archive is
-parsed or extracted by pm01. F6 reader tests are owned by pm02, not claimed here.
+parsed or extracted by the format layer. F6 reader tests belong to packing and staging, not claimed here.
 
 **F6.1 — Exact end:** the reader accepts a payload ending exactly after its two
 512-byte zero end blocks and refuses every additional byte, including zero-filled
