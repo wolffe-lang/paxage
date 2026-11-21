@@ -2,6 +2,7 @@
 
 use trust_json as json
 use trust_metadata as meta
+use trust_writer as writer
 
 /// Parsed flag values and repeated package inputs, or a named usage refusal.
 pub struct Options {
@@ -81,6 +82,18 @@ pub fn now(o: Options) -> int {
     if explicit != "" { return meta.utc(explicit) }
     print("clock=system")
     time_unix_ms() / 1000
+}
+
+/// This build's clock floor, a lower bound on when this paxage was built (UTC
+/// 2026-11-21T00:00:00Z). A system clock before it is wrong. It is raised at
+/// each release and never runs ahead of the commit that carries it.
+const BUILD_FLOOR: int = 1795219200
+
+/// A system clock before this build refuses (T13); an explicit --now, a test
+/// option, is never judged against the floor.
+pub fn build_refusal(explicit: bool, now: int) -> str {
+    if explicit || now >= BUILD_FLOOR { return "" }
+    "clock-before-build: the system clock reads {writer.date(now)}, before this build of paxage ({writer.date(BUILD_FLOOR)}); set the clock (PAX takes it from the machine's battery clock, set in the firmware setup)"
 }
 
 /// Positive validity window added without overflowing the supported UTC range.

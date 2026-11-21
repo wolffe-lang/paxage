@@ -21,6 +21,7 @@ use trust_store as store
 use trust_io as io
 use trust_cache as cache
 use trust_client
+use trust_options
 use transport
 use std.json as json
 use std.str as text
@@ -130,9 +131,10 @@ fn roots_of(o: Opts) -> str {
 
 fn quote(s: str) -> str { json.stringify(json.from_str(s)) else |_| { "\"json-error\"" } }
 
-fn now_of(o: Opts) -> int {
+fn now_of(o: Opts, k: transport.Knobs) -> int {
     if o.now != "" { return meta.utc(o.now) }
     print("clock=system")
+    if k.clock >= 0 { return k.clock }
     time_unix_ms() / 1000
 }
 
@@ -313,13 +315,15 @@ fn create_rel(c: txn.Ctx, rel: str, bytes: List[byte], mode: int) -> str {
     e
 }
 
-fn init(o: Opts) -> int {
+fn init(o: Opts, k: transport.Knobs) -> int {
     if o.repo == "" || o.pinned == "" || o.arch == "" || o.slot == "" {
         return usage("init needs --repo, --pinned-root, --arch and --slot")
     }
     if !schema.identity(o.arch) || !schema.identity(o.slot) { return fail("bad-identity") }
-    let now = now_of(o)
+    let now = now_of(o, k)
     if now < 0 { return fail("metadata-time") }
+    let early = trust_options.build_refusal(o.now != "", now)
+    if early != "" { return fail(early) }
     let opened = transport.open(o.repo, roots_of(o), now, transport.shipped())
     if opened.error != "" { return fail(opened.error) }
     let repo = opened.name
@@ -626,8 +630,10 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail, k: transport.Knobs) -> int 
         if verb == "upgrade" && opts.names.len != 0 {
             return finish_open(o, 2, "upgrade takes no names (whole snapshot)")
         }
-        let now = now_of(opts)
+        let now = now_of(opts, k)
         if now < 0 { return finish_open(o, 1, "metadata-time") }
+        let early = trust_options.build_refusal(opts.now != "", now)
+        if early != "" { return finish_open(o, 1, early) }
         r = transport.named(o.g.repository, roots_of(opts), now, k)
         if r.error != "" { return finish_open(o, 1, r.error) }
         let u = universe(o, now, mut r)
@@ -937,7 +943,7 @@ pub fn run_with(a: List[str], fp: failpoint.Fail, k: transport.Knobs) -> int {
     let opts = parse(a)
     if opts.error != "" { return usage(opts.error) }
     let verb = a[0]
-    if verb == "init" { return init(opts) }
+    if verb == "init" { return init(opts, k) }
     if verb == "status" { return status(opts) }
     if verb == "verify" { return verify(opts) }
     if verb == "rescue" { return rescue(opts, fp) }

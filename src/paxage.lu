@@ -285,6 +285,10 @@ fn trust(args: List[str]) -> int {
     if o.error != "" { return bad_usage(o.error) }
     let now = trust_options.now(o)
     if now < 0 { return fail("metadata-time") }
+    if verb != "repo" {
+        let early = trust_options.build_refusal(trust_options.flag_value(o, "--now") != "", now)
+        if early != "" { return fail(early) }
+    }
     var error = ""
     if verb == "repo" {
         error = trust_repo.run(operation, o, now)
