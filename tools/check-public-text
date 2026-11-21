@@ -15,6 +15,10 @@ patterns = {
     'role': re.compile(r'the (?:main' + r'tainer|ow' + r'ner)\b', re.I),
     'home-user': re.compile('mfw' + 'olffe', re.I),
 }
+# Tracked paths only, never excepted: planning notes are kept outside this repository.
+path_patterns = {
+    'planning-file': re.compile(r'(?:^|/)prediction[^/]*\.txt$', re.I),
+}
 allowed = set()
 for number, line in enumerate((root / 'tools/public-text-allowlist').read_text().splitlines(), 1):
     if not line or line.startswith('#'):
@@ -31,6 +35,10 @@ for raw in paths:
         continue
     path = raw.decode('utf-8')
     for name, pattern in patterns.items():
+        if pattern.search(path):
+            print(f'FAIL public-text-path {path} pattern={name}')
+            failed = True
+    for name, pattern in path_patterns.items():
         if pattern.search(path):
             print(f'FAIL public-text-path {path} pattern={name}')
             failed = True

@@ -40,6 +40,20 @@ with tempfile.TemporaryDirectory(prefix='public-text-test-', dir=scratch) as tmp
     specimen.write_text('see ' + 'spr' + 'ints/pm/example\n')
     assert 'pattern=private-plan-path' in check().stdout, 'private planning path must fail'
     specimen.write_text('clean\n')
+    assert check().returncode == 0, 'a clean tree must pass'
+    (repo / 'docs').mkdir()
+    for planning in ('prediction.txt', 'docs/prediction-notes.txt'):
+        (repo / planning).write_text('clean\n')
+        git('add', planning)
+        red = check()
+        assert red.returncode == 1 and f'FAIL public-text-path {planning} pattern=planning-file' in red.stdout, red.stdout
+        git('rm', '-q', '--cached', planning)
+    (repo / 'docs/predictions.md').write_text('clean\n')
+    git('add', 'docs/predictions.md')
+    assert check().returncode == 0, 'only a prediction*.txt name is a planning file'
+    allow.write_text(f'prediction.txt|planning-file|{digest}|not permitted\n')
+    assert 'FAIL public-text-allowlist' in check().stdout, 'a planning file takes no exception'
+    allow.write_text('')
     forbidden = 'ha' + 'su'
     (repo / forbidden).write_text('clean\n')
     git('add', forbidden)
