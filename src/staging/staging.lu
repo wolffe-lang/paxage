@@ -27,9 +27,9 @@ pub fn manifest(es: List[payload.Entry], d: literal.Data) -> str {
     ""
 }
 
-/// Privileged staging is unavailable until the pm04/pm05 fd surface exists.
+/// Privileged staging is refused: staging is for unprivileged callers only.
 pub fn privilege(uid: int) -> str {
-    if uid == 0 { return "privileged-staging-is-pm04-pm05" }
+    if uid == 0 { return "privileged-staging-refused" }
     ""
 }
 
