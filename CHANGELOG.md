@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — 2026-11-21
+
+- Rename two refusal codes to plain names: `live-root-is-pm05` is now `live-root-unsupported`, and `privileged-staging-is-pm04-pm05` is now `privileged-staging-refused`. Only the error text on stderr changes; exit statuses are unchanged. A script that matches the old text must match the new one.
+- Document `privileged-trust-refused`, which every command that takes a trust directory returns at euid 0.
+- Keep internal work ids out of tracked source, tools and docs: the public-text check now rejects them, and the docs and comments name layers instead.
+- Add an experimental HTTPS transport for `bootstrap`, `update` and `fetch`, beside `file://`. It is tested only against local loopback repositories; no public repository is published, and signing is still test-only. Refuse a system clock earlier than the build.
+- Raise the bounds to 768 targets and 256 installed packages, and hand the solver only the install closure, at most 64 packages. Past 64, install and upgrade refuse `snapshot-limit` and change nothing. The solver's search no longer allocates per node.
+- Keep unknown target kinds under the signature and ignore them; reap a digest's failed part files before a new attempt.
+
 ## 0.1.0 — 2026-11-20
 
 - Experimental 0.1.0 preview: file:// transport only and test-only signing; no network fetch, production signing, live-root writes or PAX root transactions.
