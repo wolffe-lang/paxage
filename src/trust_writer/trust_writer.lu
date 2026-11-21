@@ -96,7 +96,7 @@ pub fn reference(role: str, version: int, expires: int, ref: meta.Entry, signer:
 
 /// Build targets over sorted logical names with F3 identity fields and SHA-256 bindings.
 pub fn targets(entries: List[meta.Entry], version: int, expires: int, signer: Signing) -> str {
-    if version < 1 || entries.len > 72 || date(expires) == "" { return "" }
+    if version < 1 || entries.len > 768 || date(expires) == "" { return "" }
     var order = List[int]()
     for i in 0..entries.len { (mut order).push(i) }
     for i in 0..order.len {
