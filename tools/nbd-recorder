@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""An NBD server that logs every request in arrival order (pm04b's power-cut witness).
+"""An NBD server that logs every request in arrival order (the power-cut witness).
 
 Written from the NBD protocol specification (doc/proto.md, sha256
 4b4eda49c5b9b4bf1572eebbee8bcacf99ca3d910b102d7ecf525b90565592c4) and nothing else.
