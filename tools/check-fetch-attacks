@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""The 41 independent T-clause attack cases, served over HTTPS (the fetch rows).
+
+Each case runs as tools/check-trust-independent runs it over file://: bootstrap
+and update a baseline, verify the stored state against OpenSSL witnesses, swap
+in the attack repository, run the case's verb, require its named refusal (or
+its verified update), and verify the state again. Here the repository is a copy
+served by tools/fetch-fixture at https://localhost:PORT/<case>/, and the state
+binds that canonical URL. The FIFO case has no HTTP form; its HTTP analogue is
+a timestamp body that never ends, refused metadata-byte-limit.
+
+Without --bounded the step requires capped Linux (the three byte-limit cases),
+as check-trust-independent does.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import resource
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+ind = load('check_trust_independent', 'check-trust-independent')
+FIFO_ANALOGUE = 'metadata-byte-limit'
+
+
+class Served:
+    """A served repository: its canonical URL is what the state binds; its files are local."""
+
+    def __init__(self, url, local):
+        self.url, self.local = url, Path(local)
+
+    def resolve(self):
+        return self.url
+
+    def __truediv__(self, rel):
+        return self.local / rel
+
+
+def run_case(binary, fixture, case, work, witnesses, start, server, port, roots):
+    label = case['name']
+    repo = server.docroot / label
+    state, cache = work / 'state', work / 'cache'
+    shutil.copytree(fixture / 'baseline', repo)
+    pinned = fixture / 'pinned-root.json'
+    url = f'https://localhost:{port}/{label}/'
+    common = ['--repo', url, '--state', str(state)]
+    tls = ['--tls-roots', str(roots)]
+    p = ind.invoke(binary, 'bootstrap', *common, '--root', pinned, '--now', start)
+    ind.require(p.returncode == 0 and p.stdout == 'bootstrap ok\n' and not p.stderr, f'{label}-bootstrap:{p.stderr}')
+    p = ind.invoke(binary, 'update', *common, *tls, '--now', start)
+    ind.require(p.returncode == 0 and p.stdout == 'update ok\n' and not p.stderr, f'{label}-baseline:{p.stderr}')
+    served = Served(url, repo)
+    ind.state_verified(state, served, pinned, witnesses, start)
+    shutil.rmtree(repo)
+    shutil.copytree(fixture / case['repository'], repo)
+    expected = case['refusal']
+    if case.get('fifo'):
+        server.rules[f'/{label}/metadata/timestamp.json'] = {'kind': 'endless'}
+        expected = FIFO_ANALOGUE
+    args = [case['action'], *common, *tls, '--now', case['now']]
+    if case['action'] == 'fetch':
+        args += ['--cache', str(cache), '--target', 'alpha-1-1.payload.tar']
+    p = ind.invoke(binary, *args)
+    if expected is None:
+        ind.require(p.returncode == 0 and p.stdout == 'update ok\n' and not p.stderr,
+                    f'{label}: exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    else:
+        ind.require(p.returncode == 1 and not p.stdout and expected in p.stderr,
+                    f'{label}: expected={expected} exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    ind.state_verified(state, served, pinned, witnesses, start)
+    print(f'PASS fetch-https-attack-{label} expected={expected or "verified-update"}', flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bounded', action='store_true', help='omit large input rows on uncapped hosts')
+    parser.add_argument('--fixtures', type=Path, default=ROOT / 'tests/trust/independent')
+    parser.add_argument('--binary', type=Path, default=ROOT / 'target/bin/paxage')
+    parser.add_argument('--work', type=Path, default=ROOT / 'target/fetch-attacks')
+    args = parser.parse_args()
+    if not args.bounded:
+        cap = resource.getrlimit(resource.RLIMIT_AS)[0] if sys.platform == 'linux' else -1
+        ind.require(sys.platform == 'linux' and cap != resource.RLIM_INFINITY and cap <= 2147483648,
+                    'independent-growth-requires-capped-Linux')
+    if args.work.exists():
+        shutil.rmtree(args.work)
+    args.work.mkdir(mode=0o700, parents=True)
+    manifest = json.loads((args.fixtures / 'cases.json').read_bytes())
+    witnesses = {(w['keyid'], w['signed_sha256'], w['signature'])
+                 for w in json.loads((args.fixtures / 'signature-witnesses.json').read_bytes())}
+    ind.require(len(manifest['cases']) >= 41, 'independent-case-count')
+    pki = fx.Pki(args.work / 'pki')
+    www = args.work / 'www'
+    www.mkdir()
+    server, port = fx.serve(www, *pki.good)
+    failed, ran = [], 0
+    try:
+        for case in manifest['cases']:
+            if args.bounded and case['name'].endswith('-byte-limit'):
+                print(f'INFO Linux-only large input omitted: {case["name"]}')
+                continue
+            ran += 1
+            work = args.work / 'cases' / case['name']
+            work.mkdir(mode=0o700, parents=True)
+            try:
+                run_case(args.binary, args.fixtures, case, work, witnesses, manifest['now'], server, port, pki.roots)
+            except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
+                print(f'FAIL fetch-https-attack-{case["name"]} {exc}', flush=True)
+                failed.append(case['name'])
+    finally:
+        fx.stop(server)
+    if failed:
+        print(f'FAIL fetch-https-attacks red={len(failed)} ran={ran}', flush=True)
+        return 1
+    print(f'PASS fetch-https-attacks total={len(manifest["cases"])} ran={ran}', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
