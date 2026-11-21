@@ -310,8 +310,9 @@ def budget_refusal(e):
 
 @row('bound-targets-768')
 def targets_768(e):
-    """The reader takes 768 targets: a root bootstraps and updates trust from them. (Installing
-    from so large a repository waits on the solver's own bound, which stays where it is.)"""
+    """The reader takes 768 targets: a root made from them installs b255, which updates trust over all
+    768 targets and reads all 256 manifests (init reads only the pinned root); the closure hands the
+    solver b255 and the b000 it requires."""
     b = e.big()
     p = b.publish(TARGET_PACKAGES, 1)
     first = (p.stderr.splitlines() or [''])[0]
@@ -319,7 +320,11 @@ def targets_768(e):
     root = b.fresh('targets-768')
     p = ct.pxg('init', '--root', root, '--repo', b.repo.url, '--pinned-root', b.repo.pinned,
                '--arch', ARCH, '--slot', SLOT, '--now', NOW, timeout=600)
-    ct.ok(p, 'bound-targets-768')
+    ct.ok(p, 'bound-targets-768-init')
+    p = ct.pxg('install', '--root', root, f'b{TARGET_PACKAGES - 1:03d}', '--now', NOW, timeout=600)
+    ct.ok(p, 'bound-targets-768-install')
+    names = sorted(pkg['name'] for pkg in (ct.status(root) or {}).get('packages', []))
+    ct.check(names == ['b000', f'b{TARGET_PACKAGES - 1:03d}'], 'bound-targets-768', f'installed={names}')
 
 
 @row('bound-publish-257-refused')
