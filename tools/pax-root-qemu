@@ -34,7 +34,7 @@ else
     [ "$(sha256sum /images/pax-bf1e38db.iso | cut -d' ' -f1)" = 8b89157e52275debf7de63a5fe93dcd65a5e4b1c3d18f9901338abd968b9a07f ]
     truncate -s 1073741824 /out/installed.img
     printf '%s\n' 'mkdir -p /run' "printf 'model= serial=PM05B-TARGET\\n' > /run/census-targets" \
-      "pax-install --install --ext2-preview --target vda --seed pm05b-image --user pax --games no --allow-list /run/census-targets --confirm 'ERASE /dev/vda 254:0-seq1 1073741824 pm05b-image'" \
+      "pax-install --install --ext2-preview --target vda --seed census-image --user pax --games no --allow-list /run/census-targets --confirm 'ERASE /dev/vda 254:0-seq1 1073741824 census-image'" \
       'echo CENSUS_INSTALL=$?' 'exit 0' > /out/install.keys
     /pax/tools/qemu-halt --accel kvm --firmware bios --serial /out/install.serial --timeout 900 \
       --qemu -m --qemu 4096M --elf /images/kernel/kmain_console.elf \
@@ -86,9 +86,9 @@ dumpe2fs -h /out/root.img > /out/root-superblock.txt 2>&1
 e2fsck -fn /out/root.img > /out/root-before.fsck 2>&1
 debugfs -R 'dump /etc/pax-install/manifest /out/install.manifest' /out/root.img
 debugfs -R 'dump /etc/pax-release /out/pax-release' /out/root.img
-write_file /out/pax-root-probe /bin/pm05b-census
-debugfs -w -R 'set_inode_field /bin/pm05b-census mode 0100755' /out/root.img
-debugfs -R 'dump /bin/pm05b-census /out/injected-probe' /out/root.img
+write_file /out/pax-root-probe /bin/census-probe
+debugfs -w -R 'set_inode_field /bin/census-probe mode 0100755' /out/root.img
+debugfs -R 'dump /bin/census-probe /out/injected-probe' /out/root.img
 cmp /out/pax-root-probe /out/injected-probe
 if [ "${CENSUS_READER:-0}" = 1 ]; then
     write_file /reader/pxg /bin/pxg
@@ -112,7 +112,7 @@ with Path('/out/root.img').open('rb') as i,Path('/out/installed.img').open('r+b'
   if old!=b:o.seek(pos);o.write(b)
   pos+=len(b)
 PY
-printf '%s\n' 'set +o friendly' 'mkdir -p /var/lib' '/bin/pm05b-census /var/lib/pm05b-census' 'echo CENSUS_ABI=$?' > /out/census.keys
+printf '%s\n' 'set +o friendly' 'mkdir -p /var/lib' '/bin/census-probe /var/lib/census-probe' 'echo CENSUS_ABI=$?' > /out/census.keys
 if [ "${CENSUS_READER:-0}" = 1 ]; then
     printf '%s\n' 'sh /usr/share/pxg-census/session.sh' >> /out/census.keys
 fi
