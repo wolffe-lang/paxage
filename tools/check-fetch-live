@@ -62,7 +62,7 @@ def roots():
         data = r.read()
     pem.write_bytes(data)
     blocks = []
-    text = data.decode('ascii')
+    text = data.decode('utf-8')
     begin, end = '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----'
     at = 0
     while True:
