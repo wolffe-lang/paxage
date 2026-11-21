@@ -27,8 +27,8 @@ def run(args,code=0,out=None,err=None,binary=BINARY):
 
 usage='Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo URL --root FILE --state DIR | update --repo URL --state DIR | fetch --repo URL --state DIR --cache DIR --target NAME [--stage DIR] [--tls-roots FILE] [--now UTC]\nRoot: init --root DIR --repo URL --pinned-root FILE --arch A --slot S | install --root DIR SPEC... [--tls-roots FILE] | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR\n'
 for binary in [BINARY,LINK]:
-    run(['version'],out='paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
-    run(['--version'],out='paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
+    run(['version'],out='paxage 0.1.1 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
+    run(['--version'],out='paxage 0.1.1 (pxg; format v1, file trust, pack and stage, linux transactions)\n',err='',binary=binary)
     run(['--help'],out=usage,err='',binary=binary)
     # C2: sync stays refused by name; the root verbs never touch the live root or a missing one.
     run(['sync','--root','/do-not-touch'],6,out='',err='paxage: sync refused: upgrade is the one refresh-and-upgrade operation\n',binary=binary)
