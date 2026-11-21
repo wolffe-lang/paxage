@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tools/rig-profile
 [ "$PXG_INTEROP" = 1 ] || { echo 'FAIL generator-profile'; exit 1; }
-: "${PAXAGE_VECTOR_WORK:?set a new lane-local vector output directory}"
+: "${PAXAGE_VECTOR_WORK:?set a vector output directory that does not exist yet}"
 mkdir -m 700 "$PAXAGE_VECTOR_WORK"
 mkdir -m 700 "$PAXAGE_VECTOR_WORK/tmp" "$PAXAGE_VECTOR_WORK/home"
 image=77fdad6b841abfdb3968ea6137b1edf7248578bdfc4f92e4aab6b2a05f241485
