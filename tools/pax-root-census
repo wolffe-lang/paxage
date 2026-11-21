@@ -3,7 +3,7 @@
 # This does not enable package transactions or qualify crash durability.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
-: "${CENSUS_OUT:?set CENSUS_OUT to a new lane-owned evidence directory}"
+: "${CENSUS_OUT:?set CENSUS_OUT to a new evidence directory owned by the caller}"
 : "${LIGHT_CPUS:?run through the pool light-slot helper}"
 engine=${CENSUS_ENGINE:?set CENSUS_ENGINE to the host container wrapper}
 image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
