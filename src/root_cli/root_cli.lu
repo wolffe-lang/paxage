@@ -117,7 +117,7 @@ fn parse(a: List[str]) -> Opts {
 fn usage(message: str) -> int {
     eprint("paxage: {message}")
     eprint(
-        "Usage: paxage (pxg) init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
+        "Usage: paxage (pxg) init --root DIR --repo URL --pinned-root FILE --arch A --slot S [--now UTC] | install --root DIR SPEC... [--tls-roots FILE] [--now UTC] [--dry-run] | remove --root DIR NAME... [--purge] [--dry-run] | upgrade --root DIR [--tls-roots FILE] [--now UTC] [--dry-run] | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR",
     )
     2
 }
