@@ -1,0 +1,458 @@
+//! paxage's own HTTP/1.1 GET client, over the URL, framing and TLS sources
+//! copied beside it (RFC 9110, RFC 9112). GET only: no authentication, no
+//! redirects, identity coding only, no close-delimited bodies, exact lengths,
+//! and the connection's read deadline on every read. One Connection serves a
+//! whole run; a response that says close, or any failure, closes it, and the
+//! next request dials again. Refusals are short names, never peer bytes; the
+//! transport module maps them to paxage's refusals and decides retries.
+//!
+//! The connect itself has no deadline at this toolchain: std.net.connect waits
+//! as long as the host's own connect does (a name lookup included), and a
+//! failed lookup is the same `io` row as a failed connection.
+
+use std.net
+use std.x.tls.client
+use std.x.crypto.sha2 as sha2
+
+/// An owned connection; tls.lu reads fd, buffer and tls by name.
+pub struct Connection {
+    endpoint: Endpoint,
+    fd: int,
+    buffer: List[byte],
+    cursor: int,
+    tls: List[client.Client],
+    roots: str,
+    unix_now: int,
+    read_ms: int,
+}
+
+/// One response: its status (0 when none arrived), a bounded body or the
+/// streamed body's digest, the body's length, and a refusal ("" when a whole
+/// response arrived, whatever its status).
+pub struct Got { status: int, body: List[byte], length: int, digest: str, refusal: str }
+
+/// Where a body goes: kept in bytes (metadata, fd < 0) or written to fd.
+struct Sink { fd: int, bytes: List[byte], count: int }
+
+struct Started { h: Head, refusal: str }
+
+/// A validated URL's connection, not yet dialled. The URL is checked before
+/// any network: https, or http to a literal loopback address.
+pub fn connection(url: str, roots: str, unix_now: int, read_ms: int) -> Connection ! Errors {
+    Connection {
+        endpoint: endpoint(url)?,
+        fd: -1,
+        buffer: List[byte](),
+        cursor: 0,
+        tls: List[client.Client](),
+        roots,
+        unix_now,
+        read_ms,
+    }
+}
+
+/// A connection that names no endpoint (a local repository's placeholder).
+pub fn idle() -> Connection {
+    Connection {
+        endpoint: Endpoint { scheme: "", host: "", port: 0, authority: "", path: "" },
+        fd: -1,
+        buffer: List[byte](),
+        cursor: 0,
+        tls: List[client.Client](),
+        roots: "",
+        unix_now: 0,
+        read_ms: 0,
+    }
+}
+
+fn append(mut out: List[byte], data: List[byte]) {
+    for b in data { (mut out).push(b) }
+}
+
+/// Close and forget the connection; the next request dials again.
+pub fn close(mut c: Connection) {
+    if c.fd >= 0 {
+        if c.tls.len == 1 {
+            client.close(take copy c.tls[0]) else |_| {}
+        } else {
+            net_close(c.fd) else |_| {}
+        }
+        c.fd = -1
+    }
+    c.tls = List[client.Client]()
+    (mut c.buffer).reset()
+    c.cursor = 0
+}
+
+fn tls_name(text: str) -> str {
+    if text.starts_with("TLS ") {
+        let rest = text[4..]
+        return "tls {rest}"
+    }
+    "tls {text}"
+}
+
+fn head_name(text: str) -> str {
+    if text == "HTTP content encoding" || text == "HTTP transfer coding" { return "http-coding" }
+    "http-framing"
+}
+
+fn dial(mut c: Connection) -> str {
+    let address = if c.endpoint.host == "::1" {
+        "[::1]:{c.endpoint.port}"
+    } else {
+        "{c.endpoint.host}:{c.endpoint.port}"
+    }
+    var socket = net.connect(address) else |e| match e {
+        refused => { return "refused" },
+        _ => { return "connect" },
+    }
+    net.set_deadline(mut socket, c.read_ms) else |_| {
+        net.close(take socket) else |_| {}
+        return "reset"
+    }
+    c.fd = socket.fd
+    (mut c.buffer).reset()
+    c.cursor = 0
+    if c.endpoint.scheme == "https" {
+        let secured = secure(c.fd, c.endpoint.host, c.roots, c.unix_now) else |e| match e {
+            Unsupported(text) => {
+                close(mut c)
+                return tls_name(text)
+            },
+            _ => {
+                close(mut c)
+                return "reset"
+            },
+        }
+        c.tls = [secured]
+    }
+    ""
+}
+
+/// One socket read into the connection's buffer, its temporaries dying with
+/// the read's region (as fill_secure's do): 0 data or close, 1 deadline, 5 io.
+fn fill_plain(mut c: Connection) -> int {
+    var code = 0
+    region scratch {
+        let data = net_read_bytes(c.fd, 65536) else |e| match e {
+            closed => List[byte](),
+            timeout => {
+                code = 1
+                List[byte]()
+            },
+            _ => {
+                code = 5
+                List[byte]()
+            },
+        }
+        for b in data { (mut c.buffer).push(b) }
+    }
+    code
+}
+
+/// At least one unread byte: "" when there is one, "eof" at the peer's close,
+/// or a refusal. The buffer is reset and refilled, never replaced.
+fn refill(mut c: Connection) -> str {
+    if c.cursor < c.buffer.len { return "" }
+    (mut c.buffer).reset()
+    c.cursor = 0
+    var code = 0
+    if c.tls.len == 1 { code = fill_secure(mut c) } else { code = fill_plain(mut c) }
+    if code == 1 { return "stalled" }
+    if code == 2 { return "tls bad_record_mac" }
+    if code == 3 { return "tls decode_error" }
+    if code == 4 { return "tls unexpected_message" }
+    if code == 5 { return "reset" }
+    if c.buffer.len == 0 { return "eof" }
+    ""
+}
+
+fn octet(mut c: Connection) -> int {
+    let b = c.buffer[c.cursor]
+    c.cursor = c.cursor + 1
+    b as int
+}
+
+/// One response's header block through its empty line, at most 64 KiB (the
+/// cap framing.head applies again, with its line and field bounds).
+fn header_block(mut c: Connection, mut out: List[byte]) -> str {
+    (mut out).reset()
+    loop {
+        let r = refill(mut c)
+        if r == "eof" { return "reset" }
+        if r != "" { return r }
+        if out.len >= 65536 { return "http-framing" }
+        (mut out).push(octet(mut c) as byte)
+        let n = out.len
+        if n >= 4 &&
+            out[n - 4] == 13 as byte &&
+            out[n - 3] == 10 as byte &&
+            out[n - 2] == 13 as byte &&
+            out[n - 1] == 10 as byte {
+            return ""
+        }
+    }
+}
+
+/// One CRLF-terminated line of at most 8 KiB, without its CRLF.
+fn crlf_line(mut c: Connection, mut out: List[byte]) -> str {
+    (mut out).reset()
+    loop {
+        let r = refill(mut c)
+        if r == "eof" { return "short" }
+        if r != "" { return r }
+        let b = octet(mut c)
+        if b == 13 {
+            let more = refill(mut c)
+            if more == "eof" { return "short" }
+            if more != "" { return more }
+            if octet(mut c) != 10 { return "http-framing" }
+            return ""
+        }
+        if b == 10 || out.len >= 8192 { return "http-framing" }
+        (mut out).push(b as byte)
+    }
+}
+
+fn send(mut c: Connection, target: str) -> str {
+    for b in target.bytes() {
+        if b as int <= 32 || b as int >= 127 || b == 35 as byte { return "http-framing" }
+    }
+    let text = "GET {target} HTTP/1.1\r\nHost: {c.endpoint.authority}\r\nUser-Agent: paxage/0.1\r\nAccept-Encoding: identity\r\nConnection: keep-alive\r\n\r\n"
+    write_bytes(mut c, text.bytes()) else |e| match e {
+        Unsupported(t) => { return tls_name(t) },
+        _ => { return "reset" },
+    }
+    ""
+}
+
+/// Send GET target, dialling first when needed, and read the final head.
+fn start(mut c: Connection, target: str) -> Started {
+    var s = Started {
+        h: Head {
+            status: 0,
+            length: -1,
+            chunked: false,
+            close: true,
+            content_type: "",
+            location: "",
+            basic: false,
+        },
+        refusal: "",
+    }
+    if c.fd < 0 {
+        s.refusal = dial(mut c)
+        if s.refusal != "" { return s }
+    }
+    s.refusal = send(mut c, target)
+    if s.refusal != "" {
+        close(mut c)
+        return s
+    }
+    var block = List[byte]()
+    var interim = 0
+    loop {
+        s.refusal = header_block(mut c, mut block)
+        if s.refusal != "" {
+            close(mut c)
+            return s
+        }
+        s.h = head(block, 4611686018427387903) else |e| match e {
+            Unsupported(t) => {
+                close(mut c)
+                s.refusal = head_name(t)
+                return s
+            },
+            truncated => {
+                close(mut c)
+                s.refusal = "reset"
+                return s
+            },
+            _ => {
+                close(mut c)
+                s.refusal = "http-framing"
+                return s
+            },
+        }
+        if s.h.status >= 200 { return s }
+        interim += 1
+        if interim > 8 {
+            close(mut c)
+            s.refusal = "http-framing"
+            return s
+        }
+    }
+}
+
+/// Move n buffered bytes to the sink (and through the hash when it is a file).
+fn deliver(
+    mut c: Connection,
+    n: int,
+    mut s: Sink,
+    mut hash: sha2.Sha256,
+    mut buffer: List[byte],
+) -> str {
+    if s.fd < 0 {
+        for i in c.cursor..c.cursor + n { (mut s.bytes).push(c.buffer[i]) }
+        c.cursor = c.cursor + n
+        s.count = s.count + n
+        return ""
+    }
+    (mut buffer).reset()
+    for i in c.cursor..c.cursor + n { (mut buffer).push(c.buffer[i]) }
+    c.cursor = c.cursor + n
+    s.count = s.count + n
+    sha2.update256(mut hash, buffer)
+    fs_write_chunk(s.fd, buffer) else |_| { return "write" }
+    ""
+}
+
+/// Exactly count more body bytes into the sink; a close before them is "short".
+fn exact_bytes(
+    mut c: Connection,
+    count: int,
+    mut s: Sink,
+    mut hash: sha2.Sha256,
+    mut buffer: List[byte],
+) -> str {
+    var left = count
+    while left > 0 {
+        let r = refill(mut c)
+        if r == "eof" { return "short" }
+        if r != "" { return r }
+        let available = c.buffer.len - c.cursor
+        let n = if left < available then left else available
+        let d = deliver(mut c, n, mut s, mut hash, mut buffer)
+        if d != "" { return d }
+        left = left - n
+    }
+    ""
+}
+
+fn too_long(exact: bool) -> str { if exact then "length" else "byte-limit" }
+
+/// A 200 response's body into the sink: at most cap bytes, exactly cap when
+/// exact. Content-Length is judged before any body byte is read; a chunk is
+/// judged before it is read. Trailers are read and ignored.
+fn body(
+    mut c: Connection,
+    h: Head,
+    cap: int,
+    exact: bool,
+    mut s: Sink,
+    mut hash: sha2.Sha256,
+) -> str {
+    var buffer = List[byte]()
+    if !h.chunked {
+        if h.length > cap { return too_long(exact) }
+        if exact && h.length != cap { return "length" }
+        return exact_bytes(mut c, h.length, mut s, mut hash, mut buffer)
+    }
+    var line = List[byte]()
+    var chunks = 0
+    loop {
+        let r = crlf_line(mut c, mut line)
+        if r != "" { return r }
+        let text = str_from_utf8(line) else |_| { return "http-framing" }
+        let size = chunk_size(text, 4611686018427387903) else |_| { return "http-framing" }
+        if size == 0 { break }
+        chunks += 1
+        if chunks > 1000000 { return "http-framing" }
+        if size > cap - s.count { return too_long(exact) }
+        let got = exact_bytes(mut c, size, mut s, mut hash, mut buffer)
+        if got != "" { return got }
+        let end = crlf_line(mut c, mut line)
+        if end != "" { return end }
+        if line.len != 0 { return "http-framing" }
+    }
+    var trailers = 0
+    loop {
+        let r = crlf_line(mut c, mut line)
+        if r != "" { return r }
+        if line.len == 0 { break }
+        trailers += 1
+        if trailers > 256 { return "http-framing" }
+    }
+    if exact && s.count != cap { return "length" }
+    ""
+}
+
+/// A non-200 response's small framed body is read so the connection can serve
+/// the next request; anything else closes it.
+fn discard(mut c: Connection, h: Head) {
+    if h.chunked || h.length < 0 || h.length > 65536 || h.close {
+        close(mut c)
+        return
+    }
+    var s = Sink { fd: -1, bytes: List[byte](), count: 0 }
+    var hash = sha2.new256()
+    var buffer = List[byte]()
+    let r = exact_bytes(mut c, h.length, mut s, mut hash, mut buffer)
+    if r != "" || c.cursor != c.buffer.len { close(mut c) }
+}
+
+fn exchange(
+    mut c: Connection,
+    target: str,
+    cap: int,
+    exact: bool,
+    mut s: Sink,
+    mut hash: sha2.Sha256,
+) -> Got {
+    var g = Got { status: 0, body: List[byte](), length: 0, digest: "", refusal: "" }
+    let st = start(mut c, target)
+    if st.refusal != "" {
+        g.refusal = st.refusal
+        return g
+    }
+    let h = copy st.h
+    g.status = h.status
+    if h.status >= 300 && h.status < 400 {
+        close(mut c)
+        g.refusal = "http-redirect"
+        return g
+    }
+    if h.status != 200 {
+        discard(mut c, h)
+        return g
+    }
+    if !h.chunked && h.length < 0 {
+        close(mut c)
+        g.refusal = "http-framing"
+        return g
+    }
+    let r = body(mut c, h, cap, exact, mut s, mut hash)
+    g.length = s.count
+    if r != "" {
+        close(mut c)
+        g.refusal = r
+        return g
+    }
+    // No pipelining: a byte past this response is never the next response.
+    if c.cursor != c.buffer.len {
+        close(mut c)
+        g.refusal = "http-framing"
+        return g
+    }
+    if h.close { close(mut c) }
+    g
+}
+
+/// GET target into memory: at most cap bytes, exactly cap when exact.
+pub fn request_bytes(mut c: Connection, target: str, cap: int, exact: bool) -> Got {
+    var s = Sink { fd: -1, bytes: List[byte](), count: 0 }
+    var hash = sha2.new256()
+    var g = exchange(mut c, target, cap, exact, mut s, mut hash)
+    g.body = copy s.bytes
+    g
+}
+
+/// GET target streamed into fd through SHA-256, exactly length bytes.
+pub fn request_file(mut c: Connection, target: str, length: int, fd: int) -> Got {
+    var s = Sink { fd, bytes: List[byte](), count: 0 }
+    var hash = sha2.new256()
+    var g = exchange(mut c, target, length, true, mut s, mut hash)
+    g.digest = sha2.to_hex(sha2.final256(take hash))
+    g
+}
