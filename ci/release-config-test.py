@@ -57,6 +57,31 @@ class ReleaseBuild(unittest.TestCase):
             argv = (root / 'compiler.argv').read_text().splitlines()
             self.assertEqual(argv, ['build', '--release', '--deny-warnings', 'src/paxage.lu', '-o', 'target/release/paxage'])
 
+    def test_fetch_toolchain_runs_with_no_tmpdir_set(self):
+        # The shared release workflow runs tools/fetch-toolchain with whatever
+        # environment the runner has, and no TMPDIR. A stand-in curl that fails
+        # at once proves the script got past its scratch directory.
+        (ROOT / 'target').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='fetch no tmpdir ', dir=ROOT / 'target') as tmp:
+            root = Path(tmp) / 'root'
+            (root / 'tools').mkdir(parents=True)
+            for name in ('fetch-toolchain', 'lib-toml.sh', 'lib-fetch.sh'):
+                (root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
+            (root / 'tools/fetch-toolchain').chmod(0o755)
+            (root / 'wolf-toolchain.toml').write_bytes((ROOT / 'wolf-toolchain.toml').read_bytes())
+            bin_dir = Path(tmp) / 'bin'
+            bin_dir.mkdir()
+            curl = bin_dir / 'curl'
+            curl.write_text('#!/bin/sh\necho stand-in-curl-called >&2\nexit 22\n')
+            curl.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if k != 'TMPDIR'}
+            env.update(PATH=f'{bin_dir}:{env["PATH"]}', HOME=str(Path(tmp) / 'home'), SHELL='/bin/sh')
+            result = subprocess.run(['sh', str(root / 'tools/fetch-toolchain')], cwd=root, env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn('TMPDIR', result.stdout)
+            self.assertIn('stand-in-curl-called', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
