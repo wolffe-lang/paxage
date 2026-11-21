@@ -10,13 +10,13 @@ pub struct Directory { name: str, path: str, mode: int, uid: int, gid: int, erro
 
 /// The account registered under name, or error unknown-action.
 pub fn account(name: str) -> Account {
-    if name == "pm04-daemon" {
+    if name == "test-daemon" {
         return Account {
             name,
             uid: 901,
             gid: 901,
             gecos: "paxage test daemon",
-            home: "/var/spool/pm04",
+            home: "/var/spool/test-daemon",
             shell: "/usr/sbin/nologin",
             error: "",
         }
@@ -34,14 +34,14 @@ pub fn account(name: str) -> Account {
 
 /// The directory registered under name, or error unknown-action.
 pub fn directory(name: str) -> Directory {
-    if name == "pm04-spool" {
-        return Directory { name, path: "var/spool/pm04", mode: 488, uid: 901, gid: 901, error: "" }
+    if name == "test-spool" {
+        return Directory { name, path: "var/spool/test-daemon", mode: 488, uid: 901, gid: 901, error: "" }
     }
     Directory { name, path: "", mode: 0, uid: 0, gid: 0, error: "unknown-action directory {name}" }
 }
 
 /// Whether a cache rebuild named name is registered. Caches are recorded pending, never run.
 pub fn cache(name: str) -> str {
-    if name == "pm04-index" { return "" }
+    if name == "test-index" { return "" }
     "unknown-action cache {name}"
 }
