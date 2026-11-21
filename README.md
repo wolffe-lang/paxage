@@ -140,8 +140,8 @@ tools/gauntlet
 The stopping gauntlet prints flat `START` / `END ... exit=N secs=S` steps,
 retains subtest PASS/FAIL names, and runs fmt, build, unit
 properties and CLI fixture e2e. `census` fails if the former name or its short
-command reappears in a tracked file or path outside the records it lists (the lane
-notes and predictions); `names` holds the executables, the `paxage:` prefix, the
+command reappears in a tracked file or path outside the records it lists (the dated
+notes); `names` holds the executables, the `paxage:` prefix, the
 state, cache and reserved config paths, the `.paxage-new` proposal, the intent
 header, the temporaries and `PAXAGE_FAILPOINT`, with no old name as an alias. Units exhaustively enumerate 64 subsets for each
 of 10,000 seeded small graphs, independently comparing the abstract oracle,
