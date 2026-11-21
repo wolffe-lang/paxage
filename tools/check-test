@@ -19,3 +19,5 @@ rm -rf "$PAXAGE_ROOT/src/.lu-cache"
 "$WOLF" build --deny-warnings src/payload_probe.lu -o target/bin/payload-probe
 rm -rf "$PAXAGE_ROOT/src/.lu-cache"
 "$WOLF" build --deny-warnings src/chunk_probe.lu -o target/bin/chunk-probe
+rm -rf "$PAXAGE_ROOT/src/.lu-cache"
+"$WOLF" build --deny-warnings src/solver_probe.lu -o target/bin/solver-probe
