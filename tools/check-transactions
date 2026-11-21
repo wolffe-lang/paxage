@@ -438,7 +438,7 @@ def init_root(r):
 @row('live-root-refused')
 def live_root(r):
     p = pxg('install', '--root', '/', 'alpha', '--now', NOW)
-    refused(p, 'live-root-refused', 1, 'live-root-is-pm05')
+    refused(p, 'live-root-refused', 1, 'live-root-unsupported')
 
 
 @row('lock-persistent-inode')
