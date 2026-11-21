@@ -5,7 +5,7 @@
 One binary, `paxage`; `pxg` is a symbolic link with identical behavior.
 Diagnostics start `paxage:` regardless of invocation name. Usage names both.
 
-- `version`: `paxage 0.1.0 (pxg; format v1, file trust, pack and stage, linux transactions)`.
+- `version`: `paxage 0.1.1 (pxg; format v1, file trust, pack and stage, linux transactions)`.
 - `check-manifest FILE`: strict F2/F3 validation, exact-byte std SHA-256 and
   byte length. This does not authenticate a signer or a payload.
 - `compare V1 V2`: V2 versions, normalized result -1, 0 or 1.
