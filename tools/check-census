@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The census of the old names (pm05a, the rename of 2026-11-09).
+"""The census of the old names (the rename of 2026-11-09).
 
 The package manager was renamed while it was private, before anything had been
 installed anywhere. This row fails when an old name reappears in a tracked file's
