@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""The bound rows: the sizes paxage accepts, each at its limit and one past it.
+
+Every row prints PASS or FAIL by name and every row runs; the step fails at the
+end if any row is red. Fixtures are generated here, deterministically, and
+nothing is committed but this file: a signed test repository of 256 packages
+(768 targets) built by paxage's own test-only writer. The solver snapshot
+generators below (a layered dependency graph with two versions of every
+package, and an adversarial graph only the budget can stop) are what the bound
+measurements run; the solver's own bound keeps its rows in check-e2e.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+ct = load('check_transactions', 'check-transactions')
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/bounds'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+NOW = ct.NOW
+ARCH, SLOT = ct.ARCH, ct.SLOT
+ZERO = ct.ZERO
+
+PROPOSED_SNAPSHOT = 64  # the solver bound proposed; measured, not yet set
+TARGET_PACKAGES = 256  # 768 targets: a manifest, a payload and a buildinfo each
+BUDGET = 1000000  # the budget root_cli hands the solver
+
+ROWS = []
+
+
+def row(name):
+    def wrap(fn):
+        ROWS.append((name, fn))
+        return fn
+    return wrap
+
+
+# ---------------------------------------------------------------- snapshot generators
+
+class Lcg:
+    """A fixed linear congruential generator, so fixtures never depend on Python's random."""
+
+    def __init__(self, seed):
+        self.state = seed & 0xFFFFFFFF
+
+    def below(self, n):
+        self.state = (self.state * 1664525 + 1013904223) & 0xFFFFFFFF
+        return (self.state >> 8) % n
+
+
+def need(name, op='any', version=''):
+    return f'dep {{ name: "{name}", op: "{op}", version: "{version}", arch: "{ARCH}", slot: "{SLOT}" }}'
+
+
+def manifest(name, version, requires=(), conflicts=()):
+    return (f'manifest {{ schema: 1, features: [], name: "{name}", version: "{version}", arch: "{ARCH}", '
+            f'slot: "{SLOT}", license: "GPL-3.0-or-later", '
+            f'sources: [source {{ name: "source", sha256: "{ZERO}", length: 0 }}], buildinfo: "{ZERO}", '
+            f'installed_bytes: 0, installed_inodes: 0, requires: [{", ".join(requires)}], optional: [], '
+            f'provides: [], conflicts: [{", ".join(conflicts)}], replaces: [], files: [], configs: [], '
+            f'actions: [] }}')
+
+
+def ident(name, version):
+    return f'{name}@{ARCH}/{SLOT}={version}'
+
+
+def snapshot_text(packages, installed=(), budget=BUDGET):
+    inst = ', '.join(f'"{i}"' for i in installed)
+    return (f'snapshot {{ schema: 1, features: [], arch: "{ARCH}", slot: "{SLOT}", '
+            f'packages: [{", ".join(packages)}], installed: [{inst}], holds: [], budget: {budget} }}\n')
+
+
+def layered(entries, seed=0x5EED):
+    """A realistic graph of entries/2 names, two versions each (1-1 and 2-1).
+
+    The first eighth are core libraries, the next three eighths libraries, the
+    rest applications; each requires one to four names from the layers below it.
+    Version 2-1 requires 2-1 or later of what it needs (an upgrade moves its
+    dependencies with it); 1-1 takes any version. Returns (manifests, names,
+    applications, installed-1-1 identities)."""
+    names, deps, apps = graph(entries, seed)
+    packages = []
+    for name in names:
+        packages.append(manifest(name, '2-1', [need(d, '>=', '2-1') for d in deps[name]]))
+        packages.append(manifest(name, '1-1', [need(d) for d in deps[name]]))
+    return packages, names, apps, [ident(name, '1-1') for name in names]
+
+
+def graph(entries, seed=0x5EED):
+    """layered()'s names, each name's requirements, and the applications."""
+    assert entries % 2 == 0
+    names = [f'p{i:03d}' for i in range(entries // 2)]
+    n = len(names)
+    core, libs = max(1, n // 8), max(1, n * 3 // 8)
+    rng = Lcg(seed)
+    deps = {}
+    for i, name in enumerate(names):
+        if i == 0:
+            deps[name] = []
+            continue
+        if i < core:
+            pool, count = names[:i], 1
+        elif i < core + libs:
+            pool, count = names[:i], 1 + rng.below(3)
+        else:
+            pool, count = names[:core + libs], 2 + rng.below(3)
+        chosen = []
+        for _ in range(count):
+            pick = pool[rng.below(len(pool))]
+            if pick not in chosen:
+                chosen.append(pick)
+        deps[name] = chosen
+    return names, deps, names[core + libs:]
+
+
+def reached(entries, wants, seed=0x5EED):
+    """The names a fresh install of `wants` must select: their requirements, transitively."""
+    _, deps, _ = graph(entries, seed)
+    out, todo = set(), list(wants)
+    while todo:
+        name = todo.pop()
+        if name not in out:
+            out.add(name)
+            todo.extend(deps[name])
+    return sorted(out)
+
+
+def adversarial(entries):
+    """A graph that fails only at its last obligation, so the search visits every combination.
+
+    One `top` requires k names of two versions each and `last`; `last` requires a name nothing
+    provides. Every assignment of the k names is tried before the search can stop, far past the
+    budget for k near 30."""
+    k = (entries - 2) // 2
+    names = [f'a{i:03d}' for i in range(k)]
+    packages = [manifest('top', '1-1', [need(n) for n in names] + [need('last')])]
+    for name in names:
+        packages.append(manifest(name, '2-1'))
+        packages.append(manifest(name, '1-1'))
+    packages.append(manifest('last', '1-1', [need('nowhere')]))
+    return packages
+
+
+def write_snapshot(directory, text):
+    directory.mkdir(parents=True)
+    (directory / 'snapshot.pxg').write_text(text)
+    return directory
+
+
+def resolve(directory, wants, binary=BIN, timeout=600):
+    args = ['resolve', '--snapshot', directory, '--json']
+    for w in wants:
+        args += ['--want', w]
+    return ct.pxg(*args, binary=binary, timeout=timeout)
+
+
+def plan(p):
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------- repository fixture
+
+class Big:
+    """One signed test repository of TARGET_PACKAGES small packages, built once a run."""
+
+    def __init__(self):
+        self.fixture = ct.fixture_dir(WORK / 'fixture')
+        ct.fixture_dir(self.fixture / 'packages')
+        self.repo = ct.Repo(self.fixture)
+        self.repo.setup()
+        self.built = []
+        for i in range(TARGET_PACKAGES + 1):
+            pkg = ct.simple(f'b{i:03d}', requires=[ct.dep('b000')] if i else [])
+            self.built.append(pkg.build(self.fixture / 'packages'))
+        self.count = 0
+
+    def publish(self, packages, version):
+        args = []
+        for manifest_path, buildinfo in self.built[:packages]:
+            args += ['--manifest', manifest_path, '--buildinfo', buildinfo]
+        return ct.pxg('repo', 'publish', '--repo', self.repo.url, '--keys', self.repo.keys,
+                      '--version', str(version), *args, '--now', NOW, fixture=True, timeout=600)
+
+    def fresh(self, label):
+        self.count += 1
+        d = WORK / 'roots' / f'{self.count:03d}-{label}'
+        d.mkdir(parents=True, mode=0o755)
+        return d
+
+
+class Env:
+    def __init__(self):
+        self.count = 0
+        self._big = None
+
+    def scratch(self, label):
+        self.count += 1
+        return WORK / 'snapshots' / f'{self.count:03d}-{label}'
+
+    def big(self):
+        if self._big is None:
+            self._big = Big()
+        return self._big
+
+
+# ---------------------------------------------------------------- rows
+
+@row('bound-targets-768')
+def targets_768(e):
+    """The reader takes 768 targets: a root bootstraps and updates trust from them. (Installing
+    from so large a repository waits on the solver's own bound, which stays where it is.)"""
+    b = e.big()
+    p = b.publish(TARGET_PACKAGES, 1)
+    first = (p.stderr.splitlines() or [''])[0]
+    ct.check(p.returncode == 0, 'bound-targets-768-publish', f'exit={p.returncode} stderr-first={first!r}')
+    root = b.fresh('targets-768')
+    p = ct.pxg('init', '--root', root, '--repo', b.repo.url, '--pinned-root', b.repo.pinned,
+               '--arch', ARCH, '--slot', SLOT, '--now', NOW, timeout=600)
+    ct.ok(p, 'bound-targets-768')
+
+
+@row('bound-publish-257-refused')
+def publish_257(e):
+    b = e.big()
+    ct.refused(b.publish(TARGET_PACKAGES + 1, 2), 'bound-publish-257-refused', 2, 'paxage: target-limit')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    wanted = set(filter(None, (sys.argv[1] if len(sys.argv) > 1 else '').split(',')))
+    e = Env()
+    for name, fn in ROWS:
+        if wanted and name not in wanted:
+            continue
+        try:
+            fn(e)
+        except ct.RowFailed:
+            continue
+        except SystemExit as exc:
+            try:
+                ct.emit(False, name, f'setup {exc}')
+            except ct.RowFailed:
+                continue
+        except Exception as exc:
+            try:
+                ct.emit(False, name, f'crashed {type(exc).__name__}: ' + ' | '.join(str(exc).splitlines()))
+            except ct.RowFailed:
+                continue
+    if ct.FAILED:
+        print(f'bounds: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS bounds', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
