@@ -35,7 +35,7 @@ for binary in [BINARY,LINK]:
     for verb in ['install','remove','upgrade']:
         names=[] if verb=='upgrade' else ['alpha']
         run([verb,'--root','/do-not-touch',*names],1,out='',err='paxage: root-missing\n',binary=binary)
-        run([verb,'--root','/',*names],1,out='',err='paxage: live-root-is-pm05\n',binary=binary)
+        run([verb,'--root','/',*names],1,out='',err='paxage: live-root-unsupported\n',binary=binary)
         assert not Path('/do-not-touch').exists(), 'C2-no-root-created'
     for verb in ['init','status','verify','rescue','autoremove']:
         run([verb,'--root','/'],code={'init':2}.get(verb,1),binary=binary)
