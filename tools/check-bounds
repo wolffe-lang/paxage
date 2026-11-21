@@ -3,11 +3,12 @@
 
 Every row prints PASS or FAIL by name and every row runs; the step fails at the
 end if any row is red. Fixtures are generated here, deterministically, and
-nothing is committed but this file: a signed test repository of 256 packages
-(768 targets) built by paxage's own test-only writer. The solver snapshot
-generators below (a layered dependency graph with two versions of every
-package, and an adversarial graph only the budget can stop) are what the bound
-measurements run; the solver's own bound keeps its rows in check-e2e.
+nothing is committed but this file: solver snapshots (a layered dependency
+graph with two versions of every package, and an adversarial graph only the
+budget can stop), a signed test repository of 256 packages (768 targets), and
+one of 100 packages whose install closure is a chain of 64, all built by
+paxage's own test-only writer. The generators are also what the bound
+measurements run.
 """
 import importlib.machinery
 import importlib.util
@@ -39,7 +40,7 @@ NOW = ct.NOW
 ARCH, SLOT = ct.ARCH, ct.SLOT
 ZERO = ct.ZERO
 
-PROPOSED_SNAPSHOT = 64  # the solver bound proposed; measured, not yet set
+SNAPSHOT_LIMIT = 64  # the most packages the solver is handed
 TARGET_PACKAGES = 256  # 768 targets: a manifest, a payload and a buildinfo each
 BUDGET = 1000000  # the budget root_cli hands the solver
 
@@ -210,10 +211,43 @@ class Big:
         return d
 
 
+class Chain:
+    """A repository of 100 packages: c00..c63, each requiring the next, and u00..u35, unrelated.
+    Installing c00 reaches exactly the 64 chain packages."""
+
+    def __init__(self):
+        fixture = ct.fixture_dir(WORK / 'chain')
+        ct.fixture_dir(fixture / 'packages')
+        self.repo = ct.Repo(fixture)
+        self.repo.setup()
+        packages = []
+        for i in range(SNAPSHOT_LIMIT):
+            requires = [ct.dep(f'c{i + 1:02d}')] if i < SNAPSHOT_LIMIT - 1 else []
+            packages.append(ct.simple(f'c{i:02d}', requires=requires))
+        for i in range(100 - SNAPSHOT_LIMIT):
+            packages.append(ct.simple(f'u{i:02d}'))
+        self.repo.publish(packages)
+        self.count = 0
+
+    def root(self, label):
+        self.count += 1
+        d = WORK / 'chain-roots' / f'{self.count:03d}-{label}'
+        d.mkdir(parents=True, mode=0o755)
+        p = ct.pxg('init', '--root', d, '--repo', self.repo.url, '--pinned-root', self.repo.pinned,
+                   '--arch', ARCH, '--slot', SLOT, '--now', NOW, timeout=600)
+        return d, p
+
+
 class Env:
     def __init__(self):
         self.count = 0
         self._big = None
+        self._chain = None
+
+    def chain(self):
+        if self._chain is None:
+            self._chain = Chain()
+        return self._chain
 
     def scratch(self, label):
         self.count += 1
@@ -226,6 +260,53 @@ class Env:
 
 
 # ---------------------------------------------------------------- rows
+
+@row('bound-snapshot-64')
+def snapshot_64(e):
+    packages, names, apps, _ = layered(SNAPSHOT_LIMIT)
+    d = write_snapshot(e.scratch('snapshot-64'), snapshot_text(packages))
+    p = resolve(d, apps)
+    data = plan(p)
+    good = p.returncode == 0 and data is not None and data['status'] == 'solved'
+    ct.check(good, 'bound-snapshot-64', '' if good else ct.describe(p))
+    want = [ident(n, '2-1') for n in reached(SNAPSHOT_LIMIT, apps)]
+    ct.check(sorted(data['selected']) == want, 'bound-snapshot-64-plan',
+             f'selected={len(data["selected"])} want={len(want)}')
+    print(f'  bound-snapshot-64: packages={len(packages)} wants={len(apps)} nodes={data["nodes"]}', flush=True)
+
+
+@row('bound-snapshot-64-upgrade')
+def snapshot_64_upgrade(e):
+    packages, names, apps, installed = layered(SNAPSHOT_LIMIT)
+    d = write_snapshot(e.scratch('snapshot-64-upgrade'), snapshot_text(packages, installed))
+    p = resolve(d, apps)
+    data = plan(p)
+    good = p.returncode == 0 and data is not None and data['status'] == 'solved'
+    ct.check(good, 'bound-snapshot-64-upgrade', '' if good else ct.describe(p))
+    ct.check(len(data['removals']) == len(names), 'bound-snapshot-64-upgrade-removals',
+             f'removals={len(data["removals"])}')
+    print(f'  bound-snapshot-64-upgrade: packages={len(packages)} installed={len(installed)} '
+          f'nodes={data["nodes"]}', flush=True)
+
+
+@row('bound-snapshot-65-refused')
+def snapshot_65(e):
+    packages, _, apps, _ = layered(SNAPSHOT_LIMIT)
+    packages.append(manifest('extra', '1-1'))
+    d = write_snapshot(e.scratch('snapshot-65'), snapshot_text(packages))
+    ct.refused(resolve(d, apps), 'bound-snapshot-65-refused', 1, 'snapshot-limit')
+
+
+@row('bound-budget-refusal')
+def budget_refusal(e):
+    """An adversarial 64-package snapshot at the shipped budget refuses by name (the gauntlet caps it at 2 GiB)."""
+    d = write_snapshot(e.scratch('budget-64'), snapshot_text(adversarial(SNAPSHOT_LIMIT), budget=BUDGET))
+    p = resolve(d, ['top'])
+    data = plan(p)
+    good = p.returncode == 4 and data is not None and data['status'] == 'budget-exceeded' and \
+        data['nodes'] == BUDGET
+    ct.check(good, 'bound-budget-refusal', '' if good else ct.describe(p))
+
 
 @row('bound-targets-768')
 def targets_768(e):
@@ -245,6 +326,27 @@ def targets_768(e):
 def publish_257(e):
     b = e.big()
     ct.refused(b.publish(TARGET_PACKAGES + 1, 2), 'bound-publish-257-refused', 2, 'paxage: target-limit')
+
+
+@row('bound-closure-64')
+def closure_64(e):
+    """install hands the solver only the closure: 64 of a 100-package repository, then upgrade at 64; one more
+    package past it refuses snapshot-limit and changes nothing, and the verbs that need no solver still work."""
+    c = e.chain()
+    root, p = c.root('closure')
+    ct.ok(p, 'bound-closure-64-init')
+    p = ct.pxg('install', '--root', root, 'c00', '--now', NOW, timeout=600)
+    ct.ok(p, 'bound-closure-64-install')
+    names = sorted(pkg['name'] for pkg in (ct.status(root) or {}).get('packages', []))
+    ct.check(names == [f'c{i:02d}' for i in range(SNAPSHOT_LIMIT)], 'bound-closure-64', f'installed={len(names)}')
+    ct.ok(ct.pxg('upgrade', '--root', root, '--now', NOW, timeout=600), 'bound-closure-64-upgrade')
+    before = ct.tree_digest(root)
+    p = ct.pxg('install', '--root', root, 'u00', '--now', NOW, timeout=600)
+    ct.refused(p, 'bound-closure-65-refused', 1, 'paxage: snapshot-limit')
+    ct.check(ct.tree_digest(root) == before, 'bound-closure-65-no-writes')
+    ct.ok(ct.pxg('status', '--root', root, '--json'), 'bound-closure-65-status')
+    ct.ok(ct.pxg('verify', '--root', root), 'bound-closure-65-verify')
+    ct.ok(ct.pxg('remove', '--root', root, 'c00', '--dry-run'), 'bound-closure-65-remove')
 
 
 def main():
