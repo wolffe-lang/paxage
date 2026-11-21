@@ -366,7 +366,7 @@ pub fn snapshot(d: literal.Data) -> str {
     if h != "" { return h }
     if !identity(string(d, 0, "arch")) || !identity(string(d, 0, "slot")) { return "bad-identity" }
     let count = literal.children(d, literal.field(d, 0, "packages")).len
-    if count > 24 { return "snapshot-limit" }
+    if count > 64 { return "snapshot-limit" }
     let budget = integer(d, 0, "budget")
     if budget < 1 || budget > 100000000 { return "bad-budget" }
     var ps = List[model.Package]()
