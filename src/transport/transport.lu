@@ -73,7 +73,7 @@ fn canonical(c: http.Connection) -> str {
 /// literal loopback address. Anything else is "unsupported-transport", before
 /// any network.
 pub fn open(url: str, roots: str, now: int, k: Knobs) -> Repo {
-    var r = Repo { name: "", network: false, conn: http.idle(), knobs: k, error: "" }
+    var r = Repo { name: "", network: false, conn: http.idle(), knobs: copy k, error: "" }
     let raw = options.file_path(url)
     if raw != "" {
         let real = fs_realpath(raw) else |_| { "" }
@@ -108,7 +108,7 @@ pub fn open(url: str, roots: str, now: int, k: Knobs) -> Repo {
 /// or a canonical URL.
 pub fn named(name: str, roots: str, now: int, k: Knobs) -> Repo {
     if name.starts_with("/") {
-        return Repo { name, network: false, conn: http.idle(), knobs: k, error: "" }
+        return Repo { name, network: false, conn: http.idle(), knobs: copy k, error: "" }
     }
     open(name, roots, now, k)
 }
@@ -128,7 +128,10 @@ fn verdict(r: Repo, g: http.Got, target: bool) -> Verdict {
             let absent = if target then "target-file" else "not-found"
             return Verdict { error: absent, retry: false }
         }
-        return Verdict { error: "http-status {g.status}", retry: g.status >= 500 || g.status == 429 }
+        return Verdict {
+            error: "http-status {g.status}",
+            retry: g.status >= 500 || g.status == 429,
+        }
     }
     let f = g.refusal
     if f == "connect" { return Verdict { error: "fetch: connect {place}", retry: true } }
@@ -170,7 +173,9 @@ pub fn metadata(mut r: Repo, name: str, cap: int) -> io.Input {
             continue
         }
         out.error = v.error
-        if out.error == "not-found" && name == "metadata/timestamp.json" { out.error = "repository-missing" }
+        if out.error == "not-found" && name == "metadata/timestamp.json" {
+            out.error = "repository-missing"
+        }
         return out
     }
 }
