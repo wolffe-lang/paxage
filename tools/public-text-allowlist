@@ -7,3 +7,4 @@ tools/check-census|work-id|d4b0ad49d3984e6a9a073c37d86a063f87cec88fca828eff52a9e
 tools/check-census|work-id|dbc5ccc3f0f20143688b2f46b2e5f9efd4852ece80338b1f8c767f0472c125b2|names a historical note file; the notes keep their names
 tools/check-census|work-id|4f7b1e35c6bf6bbe1669d64bb24ba6218086d0f16a42cdf606ea650e9cc4eaae|names a historical note file; the notes keep their names
 CHANGELOG.md|work-id|1a9356770ec883c28aa741910c60c2089977813a6c8f8c4cd06a0eefc8d1d82f|the changelog names the two old codes so a script that matches them can be updated
+CHANGELOG.md|work-id|34af75d732a06c6df8fb13fddd3317bc1697c7bbf194f8d615f031476f164588|the changelog names the three old test registry entries so a package that names them can be updated

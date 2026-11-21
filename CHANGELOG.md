@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Rename the compiled test registry's entries to plain names: the account `pm04-daemon` is now `test-daemon`, the directory `pm04-spool` is `test-spool` (path `var/spool/test-daemon`) and the cache `pm04-index` is `test-index`. These are test entries only; a package that names the old ones now refuses `unknown-action`.
+
 ## 0.1.1 — 2026-11-21
 
 - Rename two refusal codes to plain names: `live-root-is-pm05` is now `live-root-unsupported`, and `privileged-staging-is-pm04-pm05` is now `privileged-staging-refused`. Only the error text on stderr changes; exit statuses are unchanged. A script that matches the old text must match the new one.
