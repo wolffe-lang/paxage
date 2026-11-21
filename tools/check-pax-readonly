@@ -89,7 +89,7 @@ def judge(directory, fixtures, platform, reference):
         'no-state-writes': (0, b'', b''),
     }
     for name in ('live-install', 'live-remove', 'live-upgrade'):
-        expected[name] = (1, b'', b'paxage: live-root-is-pm05\n')
+        expected[name] = (1, b'', b'paxage: live-root-unsupported\n')
     for name, want in expected.items():
         row(got[name] == want, 'pax-reader-' + name, '' if got[name] == want else repr(got[name]))
     solver = got['solver']
