@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""A loopback HTTPS (and plain HTTP) repository fixture for the fetch rows.
+
+Black boxes only: Python's http.server and ssl modules serve, and the OpenSSL 3
+command line makes a per-run test PKI. Nothing listens beyond 127.0.0.1, every
+key and certificate lives under the caller's work directory, and the port is
+the kernel's choice. Loaded by tools/check-fetch-https and
+tools/check-fetch-attacks with importlib; it is not a test of its own.
+
+The server answers GET from a document root. A rule keyed by request path can
+make one response misbehave, for its first `times` requests (default: always):
+
+  status N        status N with an empty body
+  redirect        301 to /elsewhere
+  short           the full Content-Length, half the body, then close
+  altered         the right length, one byte changed
+  length+1        a Content-Length one more than the file, and that many bytes
+  big N           a Content-Length of N and N bytes
+  endless         a chunked body that does not end (stops after 64 MiB)
+  stall S         the full Content-Length, half the body, then S seconds silent
+  gzip            Content-Encoding: gzip on the plain bytes
+  close-delimited no length and no chunks; the body ends at close
+  chunked         the file's bytes, chunked
+  hold            wait for release() before answering normally
+  hook            call rule['call'](path) before answering normally
+"""
+import datetime
+import http.server
+import os
+from pathlib import Path
+import shutil
+import socket
+import ssl
+import subprocess
+import threading
+import time
+
+NOW = '2026-11-09T00:00:00Z'
+
+
+def utc(text):
+    return datetime.datetime.strptime(text, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+
+
+def stamp(moment):
+    return moment.strftime('%Y%m%d%H%M%SZ')
+
+
+def openssl_binary():
+    """An OpenSSL 3 command line: PAXAGE_OPENSSL, PATH's, or Homebrew's. LibreSSL is refused."""
+    candidates = [os.environ.get('PAXAGE_OPENSSL', ''), shutil.which('openssl') or '',
+                  '/opt/homebrew/opt/openssl@3/bin/openssl', '/usr/local/opt/openssl@3/bin/openssl']
+    seen = []
+    for c in candidates:
+        if not c or c in seen or not os.path.exists(c):
+            continue
+        seen.append(c)
+        p = subprocess.run([c, 'version'], capture_output=True, text=True)
+        if p.returncode == 0 and p.stdout.startswith('OpenSSL 3'):
+            return c, p.stdout.strip()
+    raise SystemExit(f'FAIL fetch-fixture-openssl no OpenSSL 3 command line among {seen}')
+
+
+CA_CONFIG = """[ ca ]
+default_ca = fixture
+[ fixture ]
+dir = {dir}
+database = {dir}/index.txt
+new_certs_dir = {dir}/issued
+serial = {dir}/serial
+default_md = {md}
+policy = any
+unique_subject = no
+copy_extensions = none
+email_in_dn = no
+[ any ]
+commonName = supplied
+[ ext_ca ]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+"""
+
+LEAF_EXT = """[ ext_leaf ]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+subjectAltName = {names}
+"""
+
+
+class Authority:
+    """One self-signed test CA and the leaves it issues, each with explicit dates."""
+
+    def __init__(self, tool, home, name, curve='P-256', md='sha256', start=None, end=None):
+        self.tool, self.home, self.name, self.curve, self.md = tool, Path(home), name, curve, md
+        self.home.mkdir(parents=True, mode=0o700)
+        (self.home / 'issued').mkdir()
+        (self.home / 'index.txt').write_text('')
+        (self.home / 'serial').write_text('1000\n')
+        self.config = self.home / 'ca.cnf'
+        self.config.write_text(CA_CONFIG.format(dir=self.home, md=md))
+        now = utc(NOW)
+        start = start or now - datetime.timedelta(days=300)
+        end = end or now + datetime.timedelta(days=1500)
+        self.key = self.keypair('ca')
+        csr = self.request('ca', self.key, f'paxage fixture {name}')
+        self.cert = self.home / 'ca.pem'
+        self.run('ca', '-batch', '-config', self.config, '-selfsign', '-keyfile', self.key, '-in', csr,
+                 '-out', self.cert, '-startdate', stamp(start), '-enddate', stamp(end),
+                 '-extensions', 'ext_ca', '-notext', '-md', md)
+        self.der = self.home / 'ca.der'
+        self.run('x509', '-in', self.cert, '-outform', 'DER', '-out', self.der)
+
+    def run(self, *args):
+        p = subprocess.run([self.tool, *map(str, args)], capture_output=True, text=True)
+        if p.returncode != 0:
+            raise SystemExit(f'FAIL fetch-fixture-pki {args[0]} {p.stderr.strip()[-400:]}')
+        return p
+
+    def keypair(self, label, curve=None):
+        key = self.home / f'{label}.key'
+        self.run('genpkey', '-algorithm', 'EC', '-pkeyopt', f'ec_paramgen_curve:{curve or self.curve}', '-out', key)
+        return key
+
+    def request(self, label, key, common):
+        csr = self.home / f'{label}.csr'
+        self.run('req', '-new', '-key', key, '-subj', f'/CN={common}', '-out', csr)
+        return csr
+
+    def leaf(self, label, names, start=None, end=None, curve='P-256'):
+        now = utc(NOW)
+        # Valid from before the earliest test clock (2026-11-02) to after the latest (2030-01-01).
+        start = start or now - datetime.timedelta(days=60)
+        end = end or now + datetime.timedelta(days=1200)
+        key = self.keypair(label, curve)
+        csr = self.request(label, key, names[0].split(':', 1)[1])
+        ext = self.home / f'{label}.ext'
+        ext.write_text(LEAF_EXT.format(names=','.join(names)))
+        cert = self.home / f'{label}.pem'
+        self.run('ca', '-batch', '-config', self.config, '-cert', self.cert, '-keyfile', self.key, '-in', csr,
+                 '-out', cert, '-startdate', stamp(start), '-enddate', stamp(end), '-extfile', ext,
+                 '-extensions', 'ext_leaf', '-notext', '-md', self.md)
+        return cert, key
+
+
+def roots(path, *authorities):
+    """The roots file as PAX ships it: concatenated DER certificates."""
+    Path(path).write_bytes(b''.join(a.der.read_bytes() for a in authorities))
+    return Path(path)
+
+
+class Pki:
+    """Every authority and leaf the rows use, made once per run."""
+
+    def __init__(self, home):
+        self.tool, self.version = openssl_binary()
+        home = Path(home)
+        now = utc(NOW)
+        self.ca = Authority(self.tool, home / 'ca', 'ca')
+        self.other = Authority(self.tool, home / 'other', 'other')
+        self.p521 = Authority(self.tool, home / 'p521', 'p521', curve='P-521', md='sha512')
+        local = ['DNS:localhost', 'IP:127.0.0.1', 'DNS:pxg-fixture.invalid']
+        self.good = self.ca.leaf('good', local)
+        self.wrong_name = self.ca.leaf('wrong-name', ['DNS:other.example'])
+        self.not_yet = self.ca.leaf('not-yet', local, start=now + datetime.timedelta(days=10),
+                                    end=now + datetime.timedelta(days=300))
+        self.expired = self.ca.leaf('expired', local, start=now - datetime.timedelta(days=300),
+                                    end=now - datetime.timedelta(days=1))
+        self.foreign = self.other.leaf('foreign', local)
+        self.weak_issuer = self.p521.leaf('p521-issued', local)
+        self.roots = roots(home / 'roots.der', self.ca)
+        self.roots_p521 = roots(home / 'roots-p521.der', self.ca, self.p521)
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, docroot, context, family=socket.AF_INET, host='127.0.0.1'):
+        self.address_family = family
+        self.docroot = Path(docroot)
+        self.context = context
+        self.rules = {}
+        self.log = []
+        self.tls_errors = []
+        self.released = threading.Event()
+        self.lock = threading.Lock()
+        self.connections = 0
+        super().__init__((host, 0), Handler)
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        with self.lock:
+            self.connections += 1
+        if self.context is not None:
+            sock = self.context.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
+        return sock, addr
+
+    def handle_error(self, request, client_address):
+        # A refused handshake or a client that hung up is a row's business, not a traceback.
+        pass
+
+    def count(self, suffix):
+        with self.lock:
+            return sum(1 for p in self.log if p.endswith(suffix))
+
+    def release(self):
+        self.released.set()
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    server_version = 'fixture'
+    sys_version = ''
+
+    def log_message(self, *args):
+        pass
+
+    def setup(self):
+        super().setup()
+        if self.server.context is not None:
+            try:
+                self.connection.do_handshake()
+            except (ssl.SSLError, OSError) as e:
+                with self.server.lock:
+                    self.server.tls_errors.append(str(e))
+                self.close_connection = True
+                self.rfile = open(os.devnull, 'rb')
+
+    def body_of(self, path):
+        rel = path.lstrip('/')
+        target = (self.server.docroot / rel).resolve()
+        if self.server.docroot.resolve() not in target.parents or not target.is_file():
+            return None
+        return target.read_bytes()
+
+    def send_plain(self, status, body=b'', headers=()):
+        self.send_response(status)
+        sent = {k.lower() for k, _ in headers}
+        for k, v in headers:
+            self.send_header(k, v)
+        if 'content-length' not in sent and 'transfer-encoding' not in sent:
+            self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def do_GET(self):
+        path = self.path
+        with self.server.lock:
+            self.server.log.append(path)
+            n = sum(1 for p in self.server.log if p == path)
+        rule = self.server.rules.get(path)
+        if rule is not None and n > rule.get('times', 10 ** 9):
+            rule = None
+        kind = rule['kind'] if rule else ''
+        if kind == 'hold':
+            self.server.released.wait(rule.get('max', 120))
+            kind = ''
+        if kind == 'hook':
+            rule['call'](path)
+            kind = ''
+        if kind == 'status':
+            return self.send_plain(rule['code'])
+        if kind == 'redirect':
+            return self.send_plain(301, headers=[('Location', '/elsewhere')])
+        if kind == 'big':
+            return self.send_plain(200, b' ' * rule['size'])
+        if kind == 'endless':
+            self.send_response(200)
+            self.send_header('Transfer-Encoding', 'chunked')
+            self.end_headers()
+            chunk = b'400\r\n' + b' ' * 1024 + b'\r\n'
+            try:
+                for _ in range(65536):
+                    self.wfile.write(chunk)
+            except OSError:
+                pass
+            self.close_connection = True
+            return
+        body = self.body_of(path)
+        if body is None:
+            return self.send_plain(404, b'not found\n')
+        if kind == 'short' or kind == 'stall':
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body[:len(body) // 2])
+            self.wfile.flush()
+            if kind == 'stall':
+                time.sleep(rule.get('seconds', 60))
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            return
+        if kind == 'altered':
+            changed = bytearray(body)
+            changed[len(changed) // 2] ^= 0x01
+            return self.send_plain(200, bytes(changed))
+        if kind == 'length+1':
+            return self.send_plain(200, body + b'\0')
+        if kind == 'gzip':
+            return self.send_plain(200, body, headers=[('Content-Encoding', 'gzip')])
+        if kind == 'close-delimited':
+            self.send_response(200)
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+            return
+        if kind == 'chunked':
+            self.send_response(200)
+            self.send_header('Transfer-Encoding', 'chunked')
+            self.end_headers()
+            for at in range(0, len(body), 1000):
+                part = body[at:at + 1000]
+                self.wfile.write(f'{len(part):x}\r\n'.encode() + part + b'\r\n')
+            self.wfile.write(b'0\r\n\r\n')
+            return
+        self.send_plain(200, body)
+
+
+def context(cert, key, groups=None):
+    """A TLS 1.3 server context; groups restricts the key-exchange groups (for the alert row)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.load_cert_chain(str(cert), str(key))
+    if groups:
+        ctx.set_ecdh_curve(groups)
+    return ctx
+
+
+def serve(docroot, cert=None, key=None, groups=None):
+    """Start a fixture on 127.0.0.1; TLS when cert is given. Returns (server, port)."""
+    ctx = context(cert, key, groups) if cert else None
+    server = Server(docroot, ctx)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+def stop(server):
+    server.release()
+    server.shutdown()
+    server.server_close()
+
+
+def closed_port():
+    """A loopback port nothing listens on (bound, then closed)."""
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
