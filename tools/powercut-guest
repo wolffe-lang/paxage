@@ -7,7 +7,7 @@ serial in /sys/block/vd*/serial:
 - pcdata, the recorder's data export;
 - pcmark, the recorder's mark export;
 - pcscratch, a plain disk for the ENOSPC and qualification rows;
-- pcmatrix, a plain disk for pm04a's matrix.
+- pcmatrix, a plain disk for the transaction matrix.
 It prints PASS and FAIL rows with their final names, and GUEST lines that the host
 driver (tools/check-powercut) reads. Phases (job.json):
 - run: the recorded scenarios, the matrix, ENOSPC and qualification;
