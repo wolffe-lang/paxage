@@ -98,7 +98,10 @@ refused; live-root writes still require the separate maintenance/recovery path.
   Arch/RPM/Debian compatibility. Digit runs never use a bounded integer.
 - [SOLVER](docs/SOLVER.md): immutable bounded snapshots, complete backtracking,
   latest compatible choices, independent checker, holds/ABI/optional/replacement
-  policy and budget refusal distinct from exhaustive unsatisfiability.
+  policy and budget refusal distinct from exhaustive unsatisfiability. install and
+  upgrade hand it at most 64 packages: what the request reaches plus everything
+  installed. A root may hold up to 256; past 64 in that closure, install and upgrade
+  refuse `snapshot-limit` while status, verify, remove and autoremove still work.
 - [TRUST](docs/TRUST.md): canonical signed spans, four-role metadata, rotation,
   clock/version floors, atomic generations, verified cache and test-only keys.
 - [TRANSACTIONS](docs/TRANSACTIONS.md): the lock inode, qualification (ext3/ext4
@@ -155,8 +158,9 @@ RSS, and 64 MiB/1 GiB full-reader RSS. Linux also runs digest-pinned GNU tar and
 bsdtar container contrasts and read-only-parent confinement; these are black boxes,
 not verdict oracles. Container tests require podman or Docker. BSD negative-time
 binary numeric fields are expected F6.2 refusals, even with a valid pax override.
-The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest solver fixture has 24 packages;
-its time is reported, not gated. No SKIPs are hidden.
+The unchanged full SHA-2 RSS bound is under 8 MiB growth. The largest committed solver fixture has 24
+packages; its time is reported, not gated. The bound rows resolve 64, and a 64-package search stopped
+by the shipped budget of 1,000,000 nodes keeps a flat peak (capped Linux). No SKIPs are hidden.
 
 Trust tests include strict JSON/schema rows, RFC 8032 and all 151 vendored
 Wycheproof cases, independent OpenSSL-signed attack trees, interrupted-write cuts,
