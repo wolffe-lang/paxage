@@ -4,7 +4,7 @@
 
 `DIR/snapshot.pxg` is an immutable F2 `snapshot { schema: 1, features: [], arch,
 slot, packages, installed, holds, budget }`. packages contains F3 manifest
-literals (maximum 24). installed and holds contain unique package IDs, spelled
+literals (maximum 64). installed and holds contain unique package IDs, spelled
 `name@arch/slot=version`, each referring to exactly one manifest; holds is a
 subset of installed. arch and slot are default request identity, never a host
 probe. budget is positive, at most 100,000,000; default fixtures use 1,000,000.
@@ -32,7 +32,9 @@ Candidates already selected are not selected twice. Conflicting partial choices
 backtrack. Thus the first complete plan uses latest compatible candidates; this
 is not a global version-sum optimization or a minimum-download claim. Optional
 edges never create obligations.
-One recursive search node consumes one budget unit, including the root and leaf. Exceeding
+One recursive search node consumes one budget unit, including the root and leaf. A node
+allocates nothing: the relations between packages are computed once per snapshot, so a
+search's memory does not grow with the nodes it visits (`tools/check-solver-rss`). Exceeding
 budget returns no plan: `budget-exceeded`, exit 4. An exhaustive search with no
 valid leaf returns `unsatisfiable`, exit 3. Neither returns a partial plan.
 
