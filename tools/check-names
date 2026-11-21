@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The names rows (pm05a): paxage, its link pxg and the test-only paxage-failpoint;
+"""The names rows: paxage, its link pxg and the test-only paxage-failpoint;
 the `paxage:` prefix; ROOT/var/lib/paxage, ROOT/var/cache/paxage and the reserved
 ROOT/etc/paxage; the `.paxage-new` proposal, the intent header, the transaction
 temporaries, the db.pxg database file and PAXAGE_FAILPOINT. No old name is an alias.
