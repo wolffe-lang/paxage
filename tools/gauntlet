@@ -95,4 +95,9 @@ if [ "$(uname -s)" = Linux ]; then
 else
   step fetch-attacks python3 -I tools/check-fetch-attacks --bounded
 fi
+if [ "$(uname -s)" = Linux ]; then
+  step bounds prlimit --as=2147483648 python3 -I tools/check-bounds
+else
+  step bounds python3 -I tools/check-bounds
+fi
 echo 'SKIP fetch-live-handshake reason=needs the network; runs only in the record'"'"'s networked step'
