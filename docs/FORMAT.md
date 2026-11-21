@@ -53,10 +53,19 @@ Names, architectures and ABI slots match `[a-z0-9][a-z0-9_+.-]*`, maximum 128
 bytes, excluding `.` and `..`. Licence is a nonempty descriptive string, at most
 4096 bytes. Version follows V1–V2. Invalid identity: `bad-identity`; invalid digest:
 `bad-digest`. Comparator-equal versions in the same snapshot slot reject even
-when spelling differs. Maximum snapshot packages: 24 (`snapshot-limit`); install
-and upgrade hand the solver the trusted packages and the installed ones together,
-under the same limit. An installed generation record holds at most 256 packages
-(`database-invalid snapshot-limit`).
+when spelling differs. Maximum snapshot packages: 64 (`snapshot-limit`).
+
+install and upgrade do not hand the solver every trusted package. They hand it the
+closure: the packages that can meet a request, every installed package and those
+that can stand in for one (another version in its slot, or a package that replaces
+it), and then whatever can meet a requirement of a package already in it. The plan
+is the one the whole set would give. If the closure passes 64 packages, install and
+upgrade refuse `snapshot-limit` and change nothing. An installed generation record
+holds at most 256 packages (`database-invalid snapshot-limit`), so a root can hold
+more packages than one install may hand the solver: on such a root `status`,
+`verify`, `remove`, `autoremove` and `rescue` still work, while install and upgrade
+refuse until the closure is back within 64. Raising 64 is a later change; it needs
+the solver's and the planner's memory measured at the larger size first.
 
 ## F4 — Dependency edges
 

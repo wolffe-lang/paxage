@@ -206,7 +206,8 @@ fixed here. Success: `init ok`.
 - `install --root DIR SPEC... [--tls-roots FILE] [--now UTC] [--dry-run]`: SPEC is C1's
   `NAME[OPVERSION]`. Updates trust (C9), resolves the requested packages with
   every explicit installed package against the trusted targets, stages and
-  applies the plan (X5).
+  applies the plan (X5). The solver is handed only the closure FORMAT F3 defines,
+  at most 64 packages; past that, install and upgrade refuse `snapshot-limit`.
 - `upgrade --root DIR [--tls-roots FILE] [--now UTC] [--dry-run]`: the same, for the whole
   snapshot, with no names.
 - `remove --root DIR NAME... [--purge] [--dry-run]`: removes the named packages'
