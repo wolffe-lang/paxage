@@ -295,7 +295,7 @@ attempt, under the cache lock, so failures never exhaust the part area.
 Only after full verification and sync may it become `objects/sha256/<hex>`.
 Never consume `.part` as verified; reverify existing objects before exposing
 them, since a pathname is not authentication. No unverified prefix is usable.
-Fetch records its logical target identity; pm02 stage receives payload digest
+Fetch records its logical target identity; `stage` receives payload digest
 and length from verified targets metadata and an authenticated manifest.
 Stage still performs its own C6 verification. Staging is not installation.
 
@@ -358,7 +358,7 @@ It can replace any part of the state, including the root. Coherent rollback of
 local trusted storage is therefore not detected: a previously valid `current`
 pointer and its unchanged historical generation still verify. TUF treats the
 client's own trusted metadata as trusted. Production state will be root-owned
-in pm04/pm05; v1 uses a private caller-owned directory without claiming to
+by the transaction layer; v1 uses a private caller-owned directory without claiming to
 protect it from its owner.
 
 Mirror rollback, freeze and mix-and-match remain in scope. T19 refuses
