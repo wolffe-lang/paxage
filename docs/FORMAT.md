@@ -53,7 +53,10 @@ Names, architectures and ABI slots match `[a-z0-9][a-z0-9_+.-]*`, maximum 128
 bytes, excluding `.` and `..`. Licence is a nonempty descriptive string, at most
 4096 bytes. Version follows V1–V2. Invalid identity: `bad-identity`; invalid digest:
 `bad-digest`. Comparator-equal versions in the same snapshot slot reject even
-when spelling differs. Maximum snapshot packages: 24 (`snapshot-limit`).
+when spelling differs. Maximum snapshot packages: 24 (`snapshot-limit`); install
+and upgrade hand the solver the trusted packages and the installed ones together,
+under the same limit. An installed generation record holds at most 256 packages
+(`database-invalid snapshot-limit`).
 
 ## F4 — Dependency edges
 
