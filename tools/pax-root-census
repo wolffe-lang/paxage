@@ -4,7 +4,7 @@
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 : "${CENSUS_OUT:?set CENSUS_OUT to a new evidence directory owned by the caller}"
-: "${LIGHT_CPUS:?run through the pool light-slot helper}"
+: "${LIGHT_CPUS:?set LIGHT_CPUS to the CPU list the probe containers may use}"
 engine=${CENSUS_ENGINE:?set CENSUS_ENGINE to the host container wrapper}
 image=6bab9e961bed5df88a060156f7e9967a8868c255eb396b5f48aa0fb6a9452f23
 case ${1:-} in
