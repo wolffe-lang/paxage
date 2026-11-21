@@ -530,6 +530,49 @@ fn spec_ok(n: model.Need) -> bool {
 
 struct Chosen { pkgs: List[txn.Pkg], code: int, error: str }
 
+/// Can p stand in for the installed q: another version in q's slot, or a package replacing q?
+fn stands_in(p: model.Package, q: model.Package) -> bool {
+    if p.name == q.name && p.arch == q.arch && p.slot == q.slot { return true }
+    for r in p.replaces {
+        let named = q.name == r.name && q.arch == r.arch && q.slot == r.slot
+        if named && constraint(q.version, r) { return true }
+    }
+    false
+}
+
+/// The packages the solver can choose from (FORMAT F3), as indices into all: those that can meet a
+/// want, the installed packages and those that can stand in for one (another version in its slot,
+/// or a package that replaces it), then whatever can meet a requirement of a package already in.
+fn closure(all: List[txn.Pkg], installed: List[txn.Pkg], wants: List[model.Need]) -> List[int] {
+    var inside = List[bool]()
+    for i in 0..all.len {
+        var start = false
+        for w in 0..wants.len { if provides(all[i].model, wants[w]) { start = true } }
+        for q in 0..installed.len {
+            if stands_in(all[i].model, installed[q].model) { start = true }
+        }
+        (mut inside).push(start)
+    }
+    var grew = true
+    while grew {
+        grew = false
+        for i in 0..all.len {
+            if !inside[i] { continue }
+            for r in 0..all[i].model.requires.len {
+                for j in 0..all.len {
+                    if !inside[j] && provides(all[j].model, all[i].model.requires[r]) {
+                        inside[j] = true
+                        grew = true
+                    }
+                }
+            }
+        }
+    }
+    var kept = List[int]()
+    for i in 0..all.len { if inside[i] { (mut kept).push(i) } }
+    kept
+}
+
 fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -> Chosen {
     var out = Chosen { pkgs: List[txn.Pkg](), code: 0, error: "" }
     var all = copy u.pkgs
@@ -543,7 +586,8 @@ fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -
         }
         if !seen { (mut all).push(copy p) }
     }
-    if all.len > 24 {
+    let kept = closure(all, o.pkgs, wants)
+    if kept.len > 64 {
         out.code = 1
         out.error = "snapshot-limit"
         return out
@@ -556,7 +600,7 @@ fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -
         slot: o.g.slot,
         budget: 1000000,
     }
-    for p in all { (mut s.packages).push(copy p.model) }
+    for i in kept { (mut s.packages).push(copy all[i].model) }
     for p in o.pkgs { (mut s.installed).push(model.id(p.model)) }
     let plan = solver.resolve(s, wants)
     if plan.status == "unsatisfiable" {
@@ -576,7 +620,7 @@ fn resolve(o: Open, u: Universe, wants: List[model.Need], explicit: List[str]) -
         return out
     }
     for i in plan.selected {
-        var p = copy all[i]
+        var p = copy all[kept[i]]
         p.reason = "dependency"
         for n in explicit { if n == p.name { p.reason = "explicit" } }
         (mut out.pkgs).push(p)
