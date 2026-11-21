@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Every refusal code the sources name for a privilege or live-root refusal is documented."""
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+code = re.compile(r'"(live-root-[a-z-]+|privileged-[a-z-]+)"')
+found = {}
+for path in sorted((root / 'src').rglob('*.lu')):
+    if path.name.endswith('_test.lu'):
+        continue
+    for match in code.finditer(path.read_text(encoding='utf-8')):
+        found.setdefault(match.group(1), path.relative_to(root).as_posix())
+docs = '\n'.join(p.read_text(encoding='utf-8') for p in sorted((root / 'docs').glob('*.md')))
+failed = False
+for name, where in sorted(found.items()):
+    if f'`{name}`' not in docs:
+        print(f'FAIL docs-code {name} defined in {where} is not documented in docs/')
+        failed = True
+want = {'live-root-unsupported', 'privileged-staging-refused', 'privileged-trust-refused'}
+for name in sorted(want - set(found)):
+    print(f'FAIL docs-code {name} is not defined in src/')
+    failed = True
+if failed:
+    sys.exit(1)
+print('PASS docs-code ' + ' '.join(sorted(found)))

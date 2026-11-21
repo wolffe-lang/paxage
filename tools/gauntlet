@@ -18,6 +18,7 @@ step rig-profile-tests python3 -I tools/test-rig-profile
 step census python3 -I tools/check-census
 step public-text-tests python3 -I tools/test-public-text
 step public-text python3 -I tools/check-public-text
+step docs-codes python3 -I tools/check-docs-codes
 step build tools/build
 step runtime-witness bash tools/check-runtime-witness
 step unit tools/check-test
