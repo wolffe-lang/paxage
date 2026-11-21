@@ -10,11 +10,12 @@ This profile includes the original trust design and its subsequent amendments.
 
 ## T1 — Scope and limits
 
-Only a caller-named `file://` repository, trust directory, cache and staging
-area are supported. Bootstrap requires an independently pinned root supplied
-by the caller, never the repository's unauthenticated root. No live-root
-mutation, privileged operation, HTTP, DNS, redirects, mirror discovery or
-installation exists in this profile. Refusals: `unsupported-transport`,
+Only a caller-named repository (a `file://` directory, or an `https://` base
+under T21), trust directory, cache and staging area are supported. Bootstrap
+requires an independently pinned root supplied by the caller, never the
+repository's unauthenticated root. No live-root mutation, privileged operation,
+redirect, proxy, mirror discovery or installation exists in this profile.
+Refusals: `unsupported-transport`,
 `bootstrap-unpinned`, `offline-recovery-refused`, `unsupported-delegations`.
 `install`, `remove`, `upgrade`, `sync` retain their individual C2 refusals.
 
@@ -194,9 +195,10 @@ absolute name, percent-encoded path interpretation or URL query/fragment;
 refuse `logical-name`. Its digest prefix is derived from authenticated metadata,
 never accepted from an arbitrary mirror filename. Dishonest bytes behind that
 prefix refuse `target-hash`; an absent expected filename refuses `target-file`.
-No repository bytes choose a host outside the
-caller-supplied local directory. Nonregular files and detectable symlinks
-refuse `repository-file`; no network endpoint is followed.
+No repository byte chooses a location outside the
+caller-supplied repository, a local directory or a T21 base URL. In a local
+directory, nonregular files and detectable symlinks refuse `repository-file`;
+over the network no redirect or other endpoint is followed.
 
 ## T11 — Bootstrap and trust state ownership
 
@@ -284,6 +286,8 @@ These defaults await project confirmation; they are not cryptographic facts.
 
 Unverified bytes live separately in `.part`. Stream each entire target through
 std SHA-256 and exact-length checking; refuse `target-length`, `target-hash`.
+A digest's `.part` files left by failed attempts are removed before a new
+attempt, under the cache lock, so failures never exhaust the part area.
 Only after full verification and sync may it become `objects/sha256/<hex>`.
 Never consume `.part` as verified; reverify existing objects before exposing
 them, since a pathname is not authentication. No unverified prefix is usable.
@@ -361,3 +365,49 @@ witness is `mac-replay-2b3af8e.record` in the lane's evidence.
 
 An independent monotonic anchor and its crash protocol remain future work. No ad-hoc anchor is introduced here. T20 is a further ruled
 addition to the original eighteen-clause prediction.
+
+## T21 — Network transport
+
+A repository URL is a literal `file:///` path or an `https://` base; plain
+`http://` is accepted only for a literal loopback address (`127.0.0.1` or
+`[::1]`), for tests. Anything else refuses `unsupported-transport` before any
+network. There are no redirects, proxies, credentials, queries, fragments,
+content codings or insecure mode. The URL is canonicalized before it is bound
+into trust state and the root's database: scheme and host in lower case, the
+default port dropped, exactly one trailing slash. Every path requested is
+derived from that base and authenticated metadata (T10).
+
+TLS is wolf-std's client profile: TLS 1.3 only, `TLS_CHACHA20_POLY1305_SHA256`,
+X25519, a chain validated to a roots file of concatenated DER certificates read
+whole. The default file is `/etc/ssl/certs/ca-roots.der`, the one PAX ships;
+`--tls-roots FILE` names another. No environment variable changes it. Validity
+is judged at the command's one fixed time (T13).
+
+One HTTP/1.1 connection serves a run, with `Accept-Encoding: identity`. Only a
+200 framed by `Content-Length` or chunked carries a body. A redirect refuses
+`http-redirect`, a content or transfer coding `http-coding`, a body delimited
+only by the connection's close or any other framing fault `http-framing`, any
+other status `http-status N`. A length is judged from `Content-Length` before
+any body byte is read: above the metadata ceiling `metadata-byte-limit`, and not
+the authenticated length `metadata-length` or `target-length`. Target bodies
+stream into `.part` through SHA-256 (T16). The `Date` header is never read.
+
+Every read waits at most 30 seconds; silence past that is `fetch: stalled`. A
+connection that cannot be made is `fetch: connect HOST:PORT` (a failed name
+lookup is reported the same way), a refused one `fetch: refused HOST:PORT`, a
+connection lost before a whole response `fetch: reset HOST:PORT`. These, a stall,
+a body cut short, a 5xx and a 429 are retried twice, after 10 and then 30
+seconds. A TLS rejection (`fetch: tls NAME`, NAME being the client's own name
+for it), a length or hash refusal and any other 4xx are never retried.
+
+Absence is only a 404 or 410. For the next root it ends rotation (T12); for any
+other metadata it is the `not-found` a missing local file gives (the timestamp's
+is `repository-missing`); for a target it is `target-file`. Any other failure to
+read a next root stops the update, so a broken connection never hides a
+rotation. A versioned metadata file that vanishes in the middle of an update
+(the repository was republished) restarts the update once from the timestamp.
+
+Every network read happens before a transaction's first durable step: trust
+state advances only with verified metadata (T13, T14), and payloads reach the
+cache, after a free-space check that refuses `cache-space`, before the
+transaction opens.

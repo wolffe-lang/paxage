@@ -143,16 +143,19 @@ Success ends `repo VERB ok`. No command accepts unmarked production signing keys
 
 ## C9 — Bootstrap and update
 
-`bootstrap --repo file:///PATH --root PINNED_FILE --state DIR [--now UTC]`
+`bootstrap --repo URL --root PINNED_FILE --state DIR [--now UTC]`
 
 PINNED_FILE is the caller's independently authenticated root, not a mirror lookup.
 Use a new private state directory. Bootstrap verifies its structure and
 self-threshold but does not claim that a self-signature supplies provenance.
 Existing accepted state is never silently replaced. Success: `bootstrap ok`.
 
-`update --repo file:///PATH --state DIR [--now UTC]`
+`update --repo URL --state DIR [--tls-roots FILE] [--now UTC]`
 
-The state is bound to the canonical local repository path. Update rotates roots
+URL is a literal `file:///PATH` or an `https://` base (TRUST T21); `--tls-roots`
+names the TLS roots file (default `/etc/ssl/certs/ca-roots.der`). The state is
+bound to the repository's canonical name: a local directory's real path, or the
+canonical URL. Update rotates roots
 one version at a time, then verifies timestamp, snapshot and targets, preserving
 each verified step durably. Failures name the step and refusal; incomplete chains
 cannot authorize fetching. Successful repeated updates may reuse unchanged
@@ -160,12 +163,13 @@ metadata but still enforce expiry and the stored clock floor. Success: `update o
 
 Without `--now`, the command prints `clock=system`; it never reads repository time.
 UTC has the exact form `YYYY-MM-DDTHH:MM:SSZ`. Tests always pass it explicitly.
-No HTTP, URL authority, redirects, percent decoding, query or fragment is supported.
+A file URL takes no authority, percent decoding, query or fragment; network
+URLs, their refusals and their retries follow TRUST T21.
 
 ## C10 — Fetch and verified staging
 
-`fetch --repo file:///PATH --state DIR --cache DIR --target LOGICAL_NAME
-[--stage EMPTY_DIR] [--now UTC]`
+`fetch --repo URL --state DIR --cache DIR --target LOGICAL_NAME
+[--stage EMPTY_DIR] [--tls-roots FILE] [--now UTC]`
 
 Recheck the complete current chain before exposing a target. Unverified downloads
 stay in `.part`; whole-object SHA-256 and exact length are checked before promotion
@@ -188,7 +192,7 @@ See TRUST T19 for the distinction between candidate fuzz and committed corruptio
 
 ## C12 — init
 
-`init --root DIR --repo file:///PATH --pinned-root FILE --arch A --slot S [--now UTC]`
+`init --root DIR --repo URL --pinned-root FILE --arch A --slot S [--now UTC]`
 
 DIR must exist on a qualified filesystem (TRANSACTIONS X2) and, for an
 unprivileged caller, belong to the caller. Makes `DIR/var/lib/paxage` (the lock
@@ -199,11 +203,11 @@ fixed here. Success: `init ok`.
 
 ## C13 — install, upgrade, remove, autoremove
 
-- `install --root DIR SPEC... [--now UTC] [--dry-run]`: SPEC is C1's
+- `install --root DIR SPEC... [--tls-roots FILE] [--now UTC] [--dry-run]`: SPEC is C1's
   `NAME[OPVERSION]`. Updates trust (C9), resolves the requested packages with
   every explicit installed package against the trusted targets, stages and
   applies the plan (X5).
-- `upgrade --root DIR [--now UTC] [--dry-run]`: the same, for the whole
+- `upgrade --root DIR [--tls-roots FILE] [--now UTC] [--dry-run]`: the same, for the whole
   snapshot, with no names.
 - `remove --root DIR NAME... [--purge] [--dry-run]`: removes the named packages'
   owned paths (X9); `--purge` also deletes their residual configs.
@@ -240,5 +244,8 @@ undone t<N>`. It refuses, exit 9, with `rescue-unknown-state PATH`,
 
 `target/bin/paxage-failpoint` accepts only the root verbs and reads
 `PAXAGE_FAILPOINT` (X8). It is built for the transaction rows and never installed;
-`paxage` and `pxg` carry no failpoint input.
+`paxage` and `pxg` carry no failpoint input. For the fetch rows it also reads
+`PAXAGE_FETCH_KNOBS` (`waits=MS,MS read=MS free=BYTES clock=UNIX`: the retry waits,
+the read deadline, the free space the preflight sees and a stand-in system clock);
+the shipped executables keep TRUST T21's fixed values.
 
