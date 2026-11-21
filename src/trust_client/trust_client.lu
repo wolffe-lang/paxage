@@ -118,6 +118,7 @@ fn fetch_locked(repo: str, cache_dir: str, s: state.State, o: options.Options) -
     for i in 0..s.targets.entries.len { if s.targets.entries[i].path == logical { index = i } }
     if index < 0 { return "target-not-found" }
     let target = copy s.targets.entries[index]
+    if !meta.known_kind(target.kind) { return "target-kind" }
     let error = cache.fetch(repo, cache_dir, target)
     if error != "" { return error }
     let object = "{cache_dir}/objects/sha256/{target.digest}"

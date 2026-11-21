@@ -131,6 +131,9 @@ pub fn logical(path: str) -> bool {
     true
 }
 
+/// A target kind this client uses (T9); any other kind is retained, never used.
+pub fn known_kind(kind: str) -> bool { kind == "manifest" || kind == "payload" || kind == "buildinfo" }
+
 /// Client byte ceiling for the named top-level role; zero means unsupported.
 pub fn limit(role: str) -> int {
     if role == "timestamp" { return 16384 }
@@ -244,13 +247,18 @@ fn entries(mut m: Meta, signed: int) -> str {
             if e.kind == "manifest" { bit = 1 }
             if e.kind == "payload" { bit = 2; suffix = "payload.tar" }
             if e.kind == "buildinfo" { bit = 4 }
-            if bit == 0 { return "target-kind" }
-            if e.path != "{e.name}-{e.package_version}.{suffix}" { return "target-identity" }
-            let identity = "{e.name}@{e.arch}={e.package_version}"
-            let previous = groups[identity] else 0
-            if previous / bit % 2 == 1 { return "target-incomplete" }
-            groups[identity] = previous + bit
-            if groups.len > 24 { return "target-limit" }
+            if bit == 0 {
+                // T9: a kind this client does not know is kept under the
+                // signature and ignored; it authorizes nothing and is never fetched.
+                if !schema.identity(e.kind) { return "target-kind" }
+            } else {
+                if e.path != "{e.name}-{e.package_version}.{suffix}" { return "target-identity" }
+                let identity = "{e.name}@{e.arch}={e.package_version}"
+                let previous = groups[identity] else 0
+                if previous / bit % 2 == 1 { return "target-incomplete" }
+                groups[identity] = previous + bit
+                if groups.len > 24 { return "target-limit" }
+            }
         } else {
             var expected = "targets.json"
             var cap = 1048576

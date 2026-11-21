@@ -176,7 +176,10 @@ Each logical target binds SHA-256, exact nonnegative length and `custom` fields
 Identity obeys F3, package versions obey V2, and kind must agree with F1's
 suffix. Three targets for a package must agree on identity. Refuse
 `target-identity`, `target-kind`, `target-incomplete`; an empty repository is
-allowed. Keep all additional custom data authenticated, never executable.
+allowed. A target of any other kind spelled as an F3 identity is kept under the
+signature and ignored, so a later repository can add a kind without breaking
+this client: it joins no package, authorizes nothing, and a fetch that names it
+refuses `target-kind`. A kind that is not an identity refuses `target-kind`. Keep all additional custom data authenticated, never executable.
 Same targets version with different whole bytes refuses `same-version-rewrite`.
 Targets rollback knowledge comes from trusted snapshot metadata and resets
 with it under T12, not a permanent independent targets high-water mark.
