@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The power-cut witness (pm04b, prediction-pm04b.txt; docs/TRANSACTIONS.md X11).
+"""The power-cut witness (docs/TRANSACTIONS.md X11).
 
 --host runs the recorder's protocol rows, the synthesizer's rows and the mark
 rows. They need no VM and run on the Mac as well.
