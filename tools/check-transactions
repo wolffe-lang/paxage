@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""X-clause transaction rows over the real CLI (pm04, docs/TRANSACTIONS.md).
+"""X-clause transaction rows over the real CLI (docs/TRANSACTIONS.md).
 
 Every row drives target/bin/paxage (or the test-only paxage-failpoint) against a
 synthetic root under target/transactions; nothing outside that directory is
@@ -33,7 +33,7 @@ PRIVILEGED = os.geteuid() == 0
 
 def fixture_identity():
     """The unprivileged identity that publishes the fixture repository in a root take
-    (pm03 refuses test-only signing as root; root runs only the root verbs). It is the
+    (trust refuses test-only signing as root; root runs only the root verbs). It is the
     checkout's owner, who can always reach the checkout: a GitHub runner keeps it under a
     0750 home that nobody else may search, so a fixed uid like 65534 cannot exec the
     binary there. A root-owned checkout (the container take's copy) falls back to sudo's
