@@ -1,0 +1,51 @@
+HTTPS transport prediction (2026-11-21)
+
+Baseline: trunk c9357a96 (tag v0.1.0). Pins: wolf 0.2.40, lupin 0.1.62, std
+be1d10fa. Copied HTTP sources: den at fbfe0852 (src/http/url.lu, framing.lu,
+tls.lu).
+
+At the baseline every repository URL other than a literal file:/// URL is
+refused `unsupported-transport` before any byte leaves the process. So every
+new fetch row that names an https:// or loopback http:// repository is red at
+the baseline with that refusal, and each is green after the transport with the
+result its row states. Three new rows are red at the baseline for other
+reasons: the part reaper (the 65th failed attempt on one digest refuses
+`cache-part-limit`, because each failed attempt keeps its `.part` slot), the
+unknown target kind (refused `target-kind`), and the copies row (the copied
+files do not exist yet). The durability row is red at the baseline because the
+fixture server never sees the request the row requires before it compares the
+root's digest.
+
+The copies: url.lu and framing.lu compile unchanged at the pins under
+--deny-warnings. tls.lu compiles unchanged beside a driver in the same module
+that defines Connection (fd, buffer, tls) and append, which it borrows from
+den's client.lu. It is then patched, as one named patch, so the caller supplies
+the roots file and the run's single clock reading, and its refusals name no
+other program. Falsified by any compile error with the pinned compiler.
+
+TLS refusals, through std's client and the loopback fixture: a leaf from a CA
+outside the roots gives `tls issuer_mismatch`; a certificate for another name
+`tls name_mismatch`; a certificate not yet valid at the run's clock
+`tls not_yet_valid`; an expired one `tls expired`; a server that refuses the
+client's only group answers with an alert, which the client names
+`tls handshake_failure`; a P-521 issuer `tls unsupported_alg`. The alert row is
+the one most likely to read otherwise (an `io` or `closed` if the server drops
+the connection without an alert).
+
+A failed name lookup and a failed connection are the same `io` row at this pin,
+so both refuse `fetch: connect HOST:PORT`; a closed port refuses
+`fetch: refused HOST:PORT`. A name in /etc/hosts resolves, and `localhost`
+falls back from ::1 to 127.0.0.1 when the server listens on IPv4 only.
+
+The 41 independent attack cases: 40 give their file:// refusal word for word
+over https. The FIFO case has no HTTP form; its HTTP analogue (an endless
+timestamp body) refuses `metadata-byte-limit`.
+
+The live handshake (networked step only): TLS 1.3 with
+TLS_CHACHA20_POLY1305_SHA256 and X25519 against lupp.us, a P-256 leaf under a
+P-384 intermediate and root, anchored at ISRG Root X2 in PAX's root file, and a
+plain 404 for /pax/metadata/0.root.json. Falsified if std refuses any link or
+the chain has changed since 2026-11-18.
+
+No transaction code changes, so the power-cut witness is not rerun for this
+change; the file list of the diff is the evidence.
