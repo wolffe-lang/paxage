@@ -235,7 +235,10 @@ new fully verified durable root/state, never a mixed invalid state.
 Record one fixed `now` at entry (TUF §5.1), from explicit `--now` UTC or the
 system clock. Without `--now`, output explicitly says `clock=system`. Tests
 always supply `--now`. Never use repository time. If now precedes the durable
-floor refuse `clock-before-floor`; expiry failures name their role.
+floor refuse `clock-before-floor`; expiry failures name their role. A system
+clock earlier than this build of paxage (a floor compiled in, raised at each
+release) refuses `clock-before-build`, naming the clock's reading and how to set
+it; an explicit `--now`, a test option, is never judged against that floor.
 Update root, timestamp, snapshot, then targets. Persist only a step that has
 completed every applicable verification; failures identify the step and leave
 all earlier fully verified state usable for a subsequent update. No target
