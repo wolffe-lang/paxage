@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""fetch-live-handshake: paxage's HTTPS transport against lupp.us, validated
+against PAX's own root file. Networked, so never part of the default gate (the
+gauntlet prints a named SKIP); a record runs it in its networked step.
+
+It stages the roots file the way PAX builds /etc/ssl/certs/ca-roots.der: curl's
+extract of Mozilla's store, fetched by name and refused unless both its PEM and
+its concatenated DER have the digests PAX pins. It bootstraps a state from a
+test root for https://lupp.us/pax/, where no repository is published, and runs
+one update with the system clock: the TLS 1.3 handshake must complete under
+those roots, and the server's plain 404s for metadata/2.root.json and
+metadata/timestamp.json must read as absence, so the update ends
+`timestamp: repository-missing` on one connection. OpenSSL's s_client, offering
+only the client's profile against the same roots, prints the transcript
+(protocol, suite, group, chain) as evidence; it is a black box, not a verdict.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import ssl
+import subprocess
+import sys
+import urllib.request
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/fetch-live'
+HOST = 'lupp.us'
+REPO = f'https://{HOST}/pax/'
+# PAX's roots pin: curl's extract of Mozilla's store, 2026-10-20, 118 certificates.
+ROOTS_URL = 'https://curl.se/ca/cacert-2026-10-20.pem'
+PEM_SHA256 = '796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe'
+DER_SHA256 = '7a713f238d42397d0360c7f8523d45bedee6824f583372d6afd96a129ea5c1f1'
+COUNT = 118
+
+FAILED = []
+
+
+def emit(ok, row, detail=''):
+    print(f'PASS {row}' if ok else f'FAIL {row}' + (f' {detail}' if detail else ''), flush=True)
+    if not ok:
+        FAILED.append(row)
+    return ok
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(ROOT / 'tools' / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def roots():
+    pem = WORK / 'cacert.pem'
+    with urllib.request.urlopen(ROOTS_URL, timeout=60) as r:
+        data = r.read()
+    pem.write_bytes(data)
+    blocks = []
+    text = data.decode('ascii')
+    begin, end = '-----BEGIN CERTIFICATE-----', '-----END CERTIFICATE-----'
+    at = 0
+    while True:
+        i = text.find(begin, at)
+        if i < 0:
+            break
+        j = text.index(end, i) + len(end)
+        blocks.append(ssl.PEM_cert_to_DER_cert(text[i:j]))
+        at = j
+    der = b''.join(blocks)
+    out = WORK / 'ca-roots.der'
+    out.write_bytes(der)
+    good = (hashlib.sha256(data).hexdigest() == PEM_SHA256 and hashlib.sha256(der).hexdigest() == DER_SHA256
+            and len(blocks) == COUNT)
+    emit(good, 'fetch-live-roots', f'pem={hashlib.sha256(data).hexdigest()} der={hashlib.sha256(der).hexdigest()} '
+                                   f'count={len(blocks)}')
+    return (pem, out) if good else (None, None)
+
+
+def run(*args):
+    return subprocess.run([str(BIN), *map(str, args)], capture_output=True, text=True, timeout=300)
+
+
+def transcript(pem):
+    fx = load('fetch_fixture', 'fetch-fixture')
+    tool, version = fx.openssl_binary()
+    p = subprocess.run([tool, 's_client', '-connect', f'{HOST}:443', '-servername', HOST, '-tls1_3',
+                        '-ciphersuites', 'TLS_CHACHA20_POLY1305_SHA256', '-groups', 'X25519', '-CAfile', str(pem),
+                        '-verify_return_error', '-brief'], stdin=subprocess.DEVNULL, capture_output=True,
+                       text=True, timeout=60)
+    print(f'INFO live: {version}', flush=True)
+    for line in (p.stdout + p.stderr).splitlines():
+        if line.strip():
+            print(f'INFO live: {line.strip()}', flush=True)
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o700)
+    pem, der = roots()
+    if der is None:
+        return 1
+    state = WORK / 'state'
+    p = run('bootstrap', '--repo', REPO, '--root', ROOT / 'tests/trust/independent/pinned-root.json', '--state', state)
+    if not emit(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['bootstrap ok'], 'fetch-live-bootstrap',
+                f'exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}'):
+        return 1
+    p = run('update', '--repo', REPO, '--state', state, '--tls-roots', der)
+    emit(p.returncode == 1 and 'timestamp: repository-missing' in p.stderr and 'clock=system' in p.stdout,
+         'fetch-live-handshake', f'exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    transcript(pem)
+    if FAILED:
+        print(f'fetch-live: {len(FAILED)} red rows', flush=True)
+        return 1
+    print('PASS fetch-live', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
