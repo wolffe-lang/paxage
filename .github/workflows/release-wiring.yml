@@ -17,11 +17,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: wolffe-lang/homebrew-wolf
-          ref: 45f3bd27f8e26a54af5eced64c759396bdf1f850
+          ref: 183a4e18e63bb1f21cd41a74ff63cb848bc89094
           path: release-infrastructure
           persist-credentials: false
       - name: same complete gate and immutable caller pin
-        run: python3 -I release-infrastructure/tools/release-adapter --root . --check-pin 45f3bd27f8e26a54af5eced64c759396bdf1f850
+        run: python3 -I release-infrastructure/tools/release-adapter --root . --check-pin 183a4e18e63bb1f21cd41a74ff63cb848bc89094
       - name: release command bootstrap and alias
         run: python3 -B -I ci/release-config-test.py
       - name: workflow syntax
