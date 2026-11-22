@@ -57,7 +57,7 @@ def main():
     row(alias.is_symlink() and alias.resolve() == production.resolve(), 'pax-static-short-link')
     if good:
         version = subprocess.run([str(production), 'version'], capture_output=True, text=True, timeout=30)
-        row(version.returncode == 0 and version.stdout.startswith('paxage 0.1.1 (pxg;'),
+        row(version.returncode == 0 and version.stdout.startswith('paxage 0.1.2 (pxg;'),
             'pax-static-version', version.stderr.strip())
         env = dict(os.environ, PAXAGE_FAILPOINT='trace')
         compare = subprocess.run([str(alias), 'compare', '1~rc-1', '1-1'], env=env,
