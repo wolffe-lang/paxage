@@ -35,7 +35,14 @@ pub fn account(name: str) -> Account {
 /// The directory registered under name, or error unknown-action.
 pub fn directory(name: str) -> Directory {
     if name == "test-spool" {
-        return Directory { name, path: "var/spool/test-daemon", mode: 488, uid: 901, gid: 901, error: "" }
+        return Directory {
+            name,
+            path: "var/spool/test-daemon",
+            mode: 488,
+            uid: 901,
+            gid: 901,
+            error: "",
+        }
     }
     Directory { name, path: "", mode: 0, uid: 0, gid: 0, error: "unknown-action directory {name}" }
 }
