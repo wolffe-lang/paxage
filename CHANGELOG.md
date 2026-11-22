@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 — 2026-11-22
 
+- Experimental preview, as 0.1.1. No change to the program: the release workflow's smoke job can now read the draft it checks.
 - Rename the compiled test registry's entries to plain names: the account `pm04-daemon` is now `test-daemon`, the directory `pm04-spool` is `test-spool` (path `var/spool/test-daemon`) and the cache `pm04-index` is `test-index`. These are test entries only; a package that names the old ones now refuses `unknown-action`.
 
 ## 0.1.1 — 2026-11-21
