@@ -163,6 +163,21 @@ def rows():
     stamp = (d / 'metadata/timestamp.json').read_bytes()
     check(stamp == old_timestamp and verify(d, root1, 'eio').returncode == 0, 'failpoint-eio-old-state-verifies')
 
+    # an identical file already on disk is not trusted by its name: the file given is verified against the root first
+    d = WORK / 'doc-damaged'
+    shutil.copytree(base, d)
+    damaged = out / '2.targets.damaged.json'
+    raw = bytearray(t2j.read_bytes()) if t2j.exists() else bytearray(b'{}')
+    at = raw.find(b'"sig":"') + len(b'"sig":"')
+    raw[at] = ord('0') if raw[at] != ord('0') else ord('1')
+    damaged.write_bytes(bytes(raw))
+    shutil.copyfile(damaged, d / 'metadata/2.targets.json')
+    for obj in (scratch / 'targets').iterdir():
+        if not (d / 'targets' / obj.name).exists():
+            shutil.copyfile(obj, d / 'targets' / obj.name)
+    refused(commit(d, damaged), 'failpoint-identical-but-unverified-refused', 1, 'signature-threshold')
+    check((d / 'metadata/2.targets.json').read_bytes() == damaged.read_bytes(), 'failpoint-identical-but-unverified-untouched')
+
     # committing identical bytes again is a no-op; different bytes under the same name still refuse
     again = commit(scratch, t2j)
     ok(again, 'failpoint-identical-again-is-a-noop', last='repo commit ok')
