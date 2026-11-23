@@ -15,8 +15,10 @@ waits are fixed, and fetch-http-503-retry runs it at those waits.
 import importlib.machinery
 import importlib.util
 import os
+import platform
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -689,6 +691,57 @@ def unknown_kind(e):
 
 
 # ---------------------------------------------------------------- refusals that stay
+
+def black_hole(port):
+    """A loopback listener on port whose accept queue is full: the next connect is never answered."""
+    hole = socket.socket()
+    hole.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    hole.bind(('127.0.0.1', port))
+    hole.listen(0)
+    fillers = []
+    for _ in range(8):
+        c = socket.socket()
+        c.setblocking(False)
+        try:
+            c.connect(('127.0.0.1', port))
+        except BlockingIOError:
+            pass
+        except OSError:
+            pass
+        fillers.append(c)
+    return hole, fillers
+
+
+@row('fetch-connect-deadline')
+def connect_deadline(e):
+    if platform.system() != 'Linux':
+        # Only Linux drops a SYN when the accept queue is full; macOS completes the handshake anyway, so the
+        # connect succeeds there and the row would read a TLS timeout instead.
+        print('SKIP fetch-connect-deadline reason=needs a Linux accept queue that drops SYNs', flush=True)
+        return
+    server, url = e.serve('hole')
+    root = ready_root(e, url, 'fetch-connect-deadline', binary=FPBIN)
+    if root is None:
+        return
+    port = server.server_address[1]
+    fx.stop(server)
+    e.servers.remove(server)
+    hole, fillers = black_hole(port)
+    try:
+        started = time.monotonic()
+        try:
+            p = pxg('install', '--root', root, 'alpha', '--now', NOW, '--tls-roots', e.pki.roots, binary=FPBIN,
+                    env={'PAXAGE_FETCH_KNOBS': 'waits=0,0 read=1500 connect=1000'}, timeout=25)
+            took = time.monotonic() - started
+            ct.refused(p, 'fetch-connect-deadline', 1, 'fetch: connect-timeout localhost:')
+            ct.check(took < 15, 'fetch-connect-deadline-bounded', f'seconds={took:.1f}')
+        except subprocess.TimeoutExpired:
+            ct.emit(False, 'fetch-connect-deadline', 'hung: no answer within 25 s of a 1 s connect deadline')
+    finally:
+        for c in fillers:
+            c.close()
+        hole.close()
+
 
 @row('fetch-scheme-refused')
 def scheme_refused(e):
