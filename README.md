@@ -2,15 +2,17 @@
 
 **Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.2.0 implementation
 validates formats, orders versions, plans dependencies, packs canonical payloads,
-and publishes test-only signed file repositories. It also has the `repo` verbs for a signing ceremony done outside paxage (it writes the bytes to sign and attaches signatures, and never handles a private key) and for publishing, with host scripts under `publish/`. It bootstraps, updates and fetches
-from local repositories, or over HTTPS, through a bounded TUF profile. Install, upgrade and removal
-use crash-safe transactions on journalled Linux filesystems under test, with a rescue
-entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
+and publishes signed file repositories. Signing happens outside paxage: the `repo draft-*` verbs write the
+bytes to sign, a signer such as OpenSSL 3 makes the signature, and `repo attach` checks it and adds it; paxage never
+loads or handles a production private key, and the keys `repo keygen` makes are marked `test-only`. `repo commit`,
+`repo verify` and `repo index` publish and read a repository, and the scripts under `publish/` set up a machine
+that serves one. paxage bootstraps, updates and fetches from local repositories, or over HTTPS, through a bounded
+TUF profile. Install, upgrade and removal use crash-safe transactions on journalled Linux filesystems under test,
+with a rescue entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
 transactions are not enabled. The live root `/` remains refused until PAX's boot
-recovery. The HTTPS transport is experimental: it is tested only against local
-test repositories, and no public repository is published. `sync` is refused:
-`upgrade` is the refresh-and-upgrade operation. Signing keys must be marked `test-only`;
-production signing remains out of scope. The std pin includes bounded SHA-2 and
+recovery. The HTTPS transport is experimental: it is tested against local test repositories and a live handshake,
+and no public repository is published yet. `sync` is refused:
+`upgrade` is the refresh-and-upgrade operation. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
@@ -43,8 +45,10 @@ they do not replace a trusted download channel or constitute signed releases.
 Homebrew and AUR recipes are prepared separately after published hashes are
 known; preparation does not imply that either package is already available.
 
-This release is experimental: file transport only, test-only signing, no
-production signing, network transport or PAX root transactions. Do not use it
+This release is experimental. It has the HTTPS transport and the signing-ceremony and publishing verbs, but no public
+repository is published yet, and the HTTPS transport has been exercised only against local test repositories and a live
+TLS handshake. Signatures are made outside paxage, which handles no production private key. It makes no live-root writes and has no
+PAX root transactions. Do not use it
 as a production system package manager. Both `paxage` and `pxg` are included.
 
 
