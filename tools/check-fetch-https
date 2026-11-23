@@ -705,13 +705,13 @@ def user_agent(e):
 @row('fetch-http-429-retry')
 def http_429_retry(e):
     server, url = e.serve('retry429')
-    state, p = bootstrap(e, url, 'fetch-http-429-retry')
-    if not ct.ok(p, 'fetch-http-429-retry-bootstrap', last='bootstrap ok'):
+    root = ready_root(e, url, 'fetch-http-429-retry', binary=FPBIN)
+    if root is None:
         return
     path = '/retry429/metadata/timestamp.json'
     server.rules[path] = {'kind': 'status', 'code': 429, 'times': 2}
-    q = update(url, state, e.pki.roots, binary=FPBIN, env=FAST)
-    ct.ok(q, 'fetch-http-429-retry', last='update ok')
+    p = install(root, e.pki.roots, 'alpha', binary=FPBIN, env=FAST)
+    ct.ok(p, 'fetch-http-429-retry', last='install ok generation=1')
     ct.check(server.count(path) == 3, 'fetch-http-429-retry-three-requests', f'requests={server.count(path)}')
 
 
