@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""The status text must not deny what the program does.
+
+The program's own usage text is the single source: it lists the verbs and options the build has. From it this tool
+derives which capabilities exist (the signing-ceremony verbs; the HTTPS transport, shown by `--tls-roots` on `fetch`),
+then reads the places that say what the release is and is not: the top paragraph and the closing status paragraph of
+README.md, the index line for the trust verbs in docs/CLI.md, and the newest entry of CHANGELOG.md. A phrase that denies
+a capability the build has (`file transport only`, `no production signing`, `production signing remains out of scope`,
+`network transport or ...`) is red, and so is a README that does not name those capabilities at all.
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / 'target/bin/paxage'
+FAILED = []
+
+DENIALS = {
+    'https': [r'file(?::/{0,2})? transport only', r'no network transport', r'network transport or', r'no network fetch'],
+    'external-signing': [r'no production signing', r'production signing remains out of scope',
+                         r'production signing[^.]{0,40}out of scope', r'test-only signing(?! keys)'],
+}
+
+
+def row(name, good, detail=''):
+    if not good:
+        FAILED.append(name)
+    print(f'{"PASS" if good else "FAIL"} {name}{"" if good else " " + detail}', flush=True)
+
+
+def capabilities():
+    usage = subprocess.run([str(BIN)], capture_output=True, text=True).stderr
+    caps = set()
+    if 'repo draft-root' in usage and 'repo attach' in usage and 'repo commit' in usage:
+        caps.add('external-signing')
+    for line in re.split(r'\||\n', usage):
+        if line.strip().startswith('fetch --repo') and '--tls-roots' in line:
+            caps.add('https')
+    return caps
+
+
+def paragraphs(text):
+    return [p.replace('\n', ' ') for p in re.split(r'\n\s*\n', text)]
+
+
+def status_text():
+    readme = (ROOT / 'README.md').read_text()
+    paras = paragraphs(readme)
+    top = next(p for p in paras if p.startswith('**Experimental.**'))
+    closing = next(p for p in paras if p.startswith('This release is experimental'))
+    cli = next(l for l in (ROOT / 'docs/CLI.md').read_text().splitlines() if l.startswith('- `repo`, `bootstrap`'))
+    log = (ROOT / 'CHANGELOG.md').read_text()
+    first = log.split('\n## ')[1]
+    return {'README top paragraph': top, 'README closing paragraph': closing, 'docs/CLI.md index line': cli,
+            'newest CHANGELOG entry': first}, closing
+
+
+def main():
+    caps = capabilities()
+    row('status-capabilities-derived-from-usage', caps == {'https', 'external-signing'}, f'derived {sorted(caps)}')
+    texts, closing = status_text()
+    for cap in sorted(caps):
+        for where, text in texts.items():
+            hits = [m.group(0) for pat in DENIALS[cap] for m in re.finditer(pat, text, re.I)]
+            row(f'status-{cap}-not-denied-in-{where.replace(" ", "-").replace("/", "-")}', not hits,
+                f'{where} says {hits}')
+    row('status-readme-names-https', 'https' in closing.lower(), 'the closing paragraph does not name HTTPS')
+    row('status-readme-names-signing-ceremony', 'ceremony' in closing.lower() or 'external' in closing.lower(),
+        'the closing paragraph does not name the signing ceremony or external signing')
+    if FAILED:
+        print(f'status: {len(FAILED)} red rows: {" ".join(FAILED)}', flush=True)
+        return 1
+    print('PASS status', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
