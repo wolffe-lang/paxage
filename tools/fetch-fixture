@@ -94,8 +94,9 @@ subjectAltName = {names}
 class Authority:
     """One self-signed test CA and the leaves it issues, each with explicit dates."""
 
-    def __init__(self, tool, home, name, curve='P-256', md='sha256', start=None, end=None):
+    def __init__(self, tool, home, name, curve='P-256', md='sha256', start=None, end=None, parent=None):
         self.tool, self.home, self.name, self.curve, self.md = tool, Path(home), name, curve, md
+        self.parent = parent
         self.home.mkdir(parents=True, mode=0o700)
         (self.home / 'issued').mkdir()
         (self.home / 'index.txt').write_text('')
@@ -108,11 +109,27 @@ class Authority:
         self.key = self.keypair('ca')
         csr = self.request('ca', self.key, f'paxage fixture {name}')
         self.cert = self.home / 'ca.pem'
-        self.run('ca', '-batch', '-config', self.config, '-selfsign', '-keyfile', self.key, '-in', csr,
-                 '-out', self.cert, '-startdate', stamp(start), '-enddate', stamp(end),
-                 '-extensions', 'ext_ca', '-notext', '-md', md)
+        if parent is None:
+            self.run('ca', '-batch', '-config', self.config, '-selfsign', '-keyfile', self.key, '-in', csr,
+                     '-out', self.cert, '-startdate', stamp(start), '-enddate', stamp(end),
+                     '-extensions', 'ext_ca', '-notext', '-md', md)
+        else:
+            self.run('ca', '-batch', '-config', parent.config, '-cert', parent.cert, '-keyfile', parent.key,
+                     '-in', csr, '-out', self.cert, '-startdate', stamp(start), '-enddate', stamp(end),
+                     '-extensions', 'ext_ca', '-notext', '-md', parent.md)
         self.der = self.home / 'ca.der'
         self.run('x509', '-in', self.cert, '-outform', 'DER', '-out', self.der)
+
+    def cross(self, other, label):
+        """This authority's own key and subject, certified by other: a cross-signed copy of it."""
+        csr = self.request(label, self.key, f'paxage fixture {self.name}')
+        start = utc(NOW) - datetime.timedelta(days=300)
+        end = utc(NOW) + datetime.timedelta(days=1500)
+        out = self.home / f'{label}.pem'
+        self.run('ca', '-batch', '-config', other.config, '-cert', other.cert, '-keyfile', other.key,
+                 '-in', csr, '-out', out, '-startdate', stamp(start), '-enddate', stamp(end),
+                 '-extensions', 'ext_ca', '-notext', '-md', other.md)
+        return out
 
     def run(self, *args):
         p = subprocess.run([self.tool, *map(str, args)], capture_output=True, text=True)
@@ -172,6 +189,20 @@ class Pki:
         self.foreign = self.other.leaf('foreign', local)
         self.weak_issuer = self.p521.leaf('p521-issued', local)
         self.roots = roots(home / 'roots.der', self.ca)
+        # A public host's chain shape: leaf, intermediate, an intermediate root, then the anchor again,
+        # cross-signed by a second root. P-384 links under an ECDSA P-256 leaf.
+        self.anchor = Authority(self.tool, home / 'anchor', 'anchor', curve='P-384', md='sha384')
+        self.second = Authority(self.tool, home / 'second', 'second', curve='P-384', md='sha384')
+        self.middle = Authority(self.tool, home / 'middle', 'middle', curve='P-384', md='sha384', parent=self.anchor)
+        self.issuing = Authority(self.tool, home / 'issuing', 'issuing', curve='P-384', md='sha384',
+                                 parent=self.middle)
+        cross = self.anchor.cross(self.second, 'anchor-cross')
+        leaf_cert, leaf_key = self.issuing.leaf('xleaf', local)
+        bundle = home / 'chain.pem'
+        bundle.write_bytes(b''.join(Path(c).read_bytes() for c in
+                                    (leaf_cert, self.issuing.cert, self.middle.cert, cross)))
+        self.chain = (bundle, leaf_key)
+        self.roots_chain = roots(home / 'roots-chain.der', self.anchor, self.second)
         self.roots_p521 = roots(home / 'roots-p521.der', self.ca, self.p521)
 
 
@@ -185,6 +216,8 @@ class Server(http.server.ThreadingHTTPServer):
         self.context = context
         self.rules = {}
         self.log = []
+        self.heads = []
+        self.close_each = False
         self.tls_errors = []
         self.released = threading.Event()
         self.lock = threading.Lock()
@@ -242,6 +275,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sent = {k.lower() for k, _ in headers}
         for k, v in headers:
             self.send_header(k, v)
+        if self.server.close_each and 'connection' not in sent:
+            self.send_header('Connection', 'close')
+            self.close_connection = True
         if 'content-length' not in sent and 'transfer-encoding' not in sent:
             self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -252,6 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path
         with self.server.lock:
             self.server.log.append(path)
+            self.server.heads.append(dict((k.lower(), v) for k, v in self.headers.items()))
             n = sum(1 for p in self.server.log if p == path)
         rule = self.server.rules.get(path)
         if rule is not None and n > rule.get('times', 10 ** 9):
