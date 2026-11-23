@@ -1,0 +1,132 @@
+#!/bin/bash
+# install [--check] [--deploy-key FILE] [--binary FILE] [--enable-timers]
+#
+# Sets up the publishing side of a paxage repository on one machine. Run with --check first: it changes nothing and
+# says, for every step, what already exists (`have:`) and what it would do (`would:`). Run again without --check, as
+# root, to do it; every step is skipped when it is already in place, so a second run changes nothing.
+#
+# What it changes on the system, as root (each line is one step, in this order):
+#   1. creates the user pxgpub (useradd -m -s /bin/bash), if absent; it gets no password
+#   2. creates /home/pxgpub/keys (mode 0700) and /home/pxgpub/.ssh (mode 0700), /var/lib/pxgpub (mode 0750), owned by pxgpub
+#   3. creates the repository directory /var/www/pkg.lupp.us/site/pax with metadata/ and targets/ (mode 0755), owned by pxgpub
+#   4. copies pxg-publish, pxg-resign (mode 0755) and pxg-settings (mode 0644) into /usr/local/libexec
+#   5. writes /etc/pxg-publish.env with commented defaults, only if the file does not exist
+#   6. with --deploy-key FILE, appends one line to /home/pxgpub/.ssh/authorized_keys that lets that key run pxg-publish and
+#      nothing else (restrict,command="/usr/local/libexec/pxg-publish"), if the same line is not already there
+#   7. with --binary FILE, copies the paxage binary to /usr/local/bin/pxg (mode 0755)
+#   8. copies four systemd units (two services, two timers) into /etc/systemd/system and runs systemctl daemon-reload
+#   9. with --enable-timers, enables and starts the two timers; without it they stay off
+#  10. where SELinux is in use, runs restorecon -R on the repository directory, /home/pxgpub and /var/lib/pxgpub, and
+#      prints the label of every top-level file in the repository directory
+# It generates, reads and moves no signing key: /home/pxgpub/keys is created empty for the owner's key ceremony.
+# Steps 1, 8, 9 and 10 touch the system and are marked "verified by the owner's run": nothing here can prove them.
+#
+# For the checks that run this script without root: PXG_INSTALL_ROOT puts every path under that directory and
+# PXG_INSTALL_NOSYSTEM=1 skips the steps that need a real system (user, ownership, systemd, SELinux).
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+check=0
+deploy_key=""
+binary=""
+enable=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --check) check=1 ;;
+    --deploy-key) deploy_key=${2:?--deploy-key FILE}; shift ;;
+    --binary) binary=${2:?--binary FILE}; shift ;;
+    --enable-timers) enable=1 ;;
+    *) echo "install: unknown option $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+P=${PXG_INSTALL_ROOT:-}
+nosys=${PXG_INSTALL_NOSYSTEM:-0}
+user=pxgpub
+docroot=/var/www/pkg.lupp.us/site/pax
+if [ "$check" = 0 ] && [ "$nosys" = 0 ] && [ "$(id -u)" != 0 ]; then
+  echo "install: must run as root (run it with --check first)" >&2
+  exit 2
+fi
+
+have() { echo "have: $1"; }
+act() {  # DESCRIPTION COMMAND...
+  local what=$1
+  shift
+  if [ "$check" = 1 ]; then echo "would: $what"; else echo "do: $what"; "$@"; fi
+}
+system_act() {  # like act, skipped entirely when there is no real system
+  if [ "$nosys" = 1 ]; then echo "skip: $1 (no system changes)"; return 0; fi
+  act "$@"
+}
+
+ensure_dir() {  # PATH MODE
+  local path=$P$1
+  if [ -d "$path" ]; then have "directory $1"; else act "create directory $1 (mode $2)" mkdir -p "$path"; fi
+  if [ "$check" = 0 ]; then chmod "$2" "$path"; fi
+}
+ensure_file() {  # SOURCE DEST MODE
+  local dest=$P$2
+  if [ -f "$dest" ] && cmp -s "$1" "$dest"; then have "file $2"; else
+    if [ "$check" = 0 ]; then mkdir -p "$(dirname "$dest")"; fi
+    act "install $2 (mode $3)" cp "$1" "$dest"
+  fi
+  if [ "$check" = 0 ] && [ -f "$dest" ]; then chmod "$3" "$dest"; fi
+}
+
+# 1. the user
+if [ "$nosys" = 1 ]; then echo "skip: user $user (no system changes)"
+elif id "$user" >/dev/null 2>&1; then have "user $user"
+else act "create user $user" useradd -m -s /bin/bash "$user"; fi
+
+# 2 and 3. directories
+for entry in "/home/$user:0755" "/home/$user/keys:0700" "/home/$user/.ssh:0700" "/var/lib/$user:0750"; do
+  ensure_dir "${entry%:*}" "${entry#*:}"
+done
+for sub in "" /metadata /targets; do ensure_dir "$docroot$sub" 0755; done
+if [ "$check" = 0 ]; then
+  [ "$nosys" = 1 ] || chown -R "$user:$user" "/home/$user" "/var/lib/$user" "$docroot"
+fi
+
+# 4 and 5. the scripts and the settings
+for f in pxg-publish pxg-resign; do ensure_file "$here/$f" "/usr/local/libexec/$f" 0755; done
+ensure_file "$here/pxg-settings" /usr/local/libexec/pxg-settings 0644
+if [ -f "$P/etc/pxg-publish.env" ]; then have "file /etc/pxg-publish.env"
+else
+  ensure_dir /etc 0755
+  act "write /etc/pxg-publish.env (commented defaults)" sh -c "printf '%s\n' '# Settings for pxg-publish and pxg-resign; see pxg-settings for every name.' '#DOCROOT=$docroot' '#KEYS=/home/$user/keys' '#STATE=/var/lib/$user' > '$P/etc/pxg-publish.env'"
+fi
+
+# 6. the deploy key
+if [ -n "$deploy_key" ]; then
+  line="restrict,command=\"/usr/local/libexec/pxg-publish\" $(cat "$deploy_key")"
+  auth=$P/home/$user/.ssh/authorized_keys
+  if [ -f "$auth" ] && grep -qxF "$line" "$auth"; then have "deploy key in authorized_keys"
+  else act "add the deploy key to authorized_keys (restricted to pxg-publish)" sh -c "printf '%s\n' '$line' >> '$auth'"; fi
+  if [ "$check" = 0 ]; then chmod 600 "$auth"; fi
+else
+  echo "note: no --deploy-key given; no ssh key is authorized"
+fi
+
+# 7. the binary
+if [ -n "$binary" ]; then ensure_file "$binary" /usr/local/bin/pxg 0755
+elif [ -x "$P/usr/local/bin/pxg" ]; then have "file /usr/local/bin/pxg"
+else echo "note: /usr/local/bin/pxg is missing; pass --binary FILE or place the paxage binary there"; fi
+
+# 8 and 9. the units
+for unit in pxg-resign-timestamp.service pxg-resign-timestamp.timer pxg-resign-snapshot.service pxg-resign-snapshot.timer; do
+  ensure_file "$here/$unit" "/etc/systemd/system/$unit" 0644
+done
+system_act "systemctl daemon-reload" systemctl daemon-reload
+if [ "$enable" = 1 ]; then
+  system_act "enable and start the two timers" systemctl enable --now pxg-resign-timestamp.timer pxg-resign-snapshot.timer
+else
+  echo "note: the timers stay off; pass --enable-timers to start them"
+fi
+
+# 10. labels
+if command -v restorecon >/dev/null 2>&1 && [ "$nosys" = 0 ]; then
+  system_act "relabel the repository, the publish user's home and its state (restorecon -R)" restorecon -R "$docroot" "/home/$user" "/var/lib/$user"
+  [ "$check" = 1 ] || ls -Zd "$docroot" "$docroot"/* | sed 's/^/label /'
+else
+  echo "skip: SELinux labels (no restorecon here)"
+fi
