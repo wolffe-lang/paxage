@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Exercise tools/check-glibc-floor on synthetic binaries: above the floor refuses, at it passes, none passes."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOL = ROOT / 'tools/check-glibc-floor'
+
+
+def run(content, *extra):
+    with tempfile.TemporaryDirectory(dir=ROOT / 'target') as tmp:
+        path = Path(tmp) / 'bin'
+        path.write_bytes(content)
+        return subprocess.run([sys.executable, '-I', str(TOOL), str(path), *extra], capture_output=True, text=True)
+
+
+(ROOT / 'target').mkdir(exist_ok=True)
+elf = b'\x7fELF' + b'\0' * 12
+cases = [
+    ('at-floor', elf + b'GLIBC_2.2.5\0GLIBC_2.34\0', (), 0, 'PASS glibc-floor max=2.34 floor=2.34'),
+    ('above', elf + b'GLIBC_2.34\0GLIBC_2.38\0', (), 1, 'FAIL glibc-floor GLIBC_2.38 is above the floor 2.34'),
+    ('above-custom-floor', elf + b'GLIBC_2.34\0', ('--floor', '2.30'), 1, 'FAIL glibc-floor GLIBC_2.34 is above the floor 2.30'),
+    ('three-part', elf + b'GLIBC_2.2.5\0', (), 0, 'PASS glibc-floor max=2.2.5 floor=2.34'),
+    ('none', elf + b'no versions here', (), 0, 'PASS glibc-floor no versioned glibc symbols'),
+    ('not-elf', b'GLIBC_2.38 but not a binary', (), 1, 'FAIL glibc-floor not an ELF file'),
+]
+failed = False
+for name, content, extra, code, line in cases:
+    p = run(content, *extra)
+    good = p.returncode == code and line in p.stdout
+    print(('PASS ' if good else 'FAIL ') + f'glibc-floor-{name}' + ('' if good else f' exit={p.returncode} {p.stdout!r}'))
+    failed |= not good
+if failed:
+    sys.exit(1)
+print('PASS glibc-floor-tests')
