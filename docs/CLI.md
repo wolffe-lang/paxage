@@ -181,6 +181,13 @@ attached, then placed.
   signed list names into the cache, so a short or altered object refuses `target-hash` or `target-length`.
   `file://` and `https://` repositories both work; the state and cache directories are scratch ones.
 
+`repo index --repo file:///DOCROOT --out DIR [--base /PATH/] [--now UTC]` writes the repository's web pages: a
+front page listing every package with its versions and one page per package with each file's kind, length,
+SHA-256 and download link under BASE (default `/pax/`). It reads the repository the way a client does, from
+the newest root through the timestamp, snapshot and targets, and writes nothing unless every file verifies and the
+timestamp has not expired (`expired-timestamp`). Pages are plain HTML with no scripts and are created, never
+overwritten (`immutable-rewrite`); the client never reads them.
+
 In the ceremony the public keys are those of the labelled media (ROOT-A, ROOT-B, ROOT-C for the
 three root keys, TARGETS-1 for the targets key) and the online keys of the publish user
 `pxgpub`; the signing command is `openssl pkeyutl -sign -rawin -inkey KEY -in FILE -out SIG`.
