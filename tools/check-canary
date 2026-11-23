@@ -9,7 +9,8 @@ canary the scheduled workflow runs. It is red when any of these holds:
   - `repo verify` of the whole repository against the pinned root fails;
   - the absence rows of tools/check-fetch-live fail (an absent file must be a plain 404 and must not be cached).
 The pinned root is ci/canary-root.json. Until the repository's root is published and committed there, the live run
-prints a named SKIP and exits 0.
+prints a warning annotation and a named SKIP and exits 0, but only until SKIP_UNTIL: after that date a missing root is
+red, and someone has to decide.
 """
 import datetime
 import importlib.machinery
@@ -29,6 +30,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PIN = ROOT / 'ci/canary-root.json'
 MIN_TIMESTAMP_HOURS = 12
 MIN_CERT_DAYS = 14
+# The day the first publication is expected; a canary with no pinned root is a gate that is dark, so it may be dark
+# only until then.
+SKIP_UNTIL = datetime.date(2027, 1, 31)
 FAILED = []
 
 
@@ -44,6 +48,14 @@ def judge_timestamp(expires, now):
 def judge_cert(not_after, now):
     left = (not_after - now).total_seconds() / 86400
     return None if left >= MIN_CERT_DAYS else f'certificate has {left:.1f} days left, under {MIN_CERT_DAYS}'
+
+
+def judge_verify(returncode):
+    return None if returncode == 0 else f'repo verify exited {returncode}'
+
+
+def judge_skip(today):
+    return None if today <= SKIP_UNTIL else f'no pinned root after {SKIP_UNTIL}'
 
 
 def emit(ok, row, detail=''):
@@ -62,12 +74,24 @@ def self_test():
     emit(judge_cert(now + datetime.timedelta(days=14), now) is None, 'canary-cert-fourteen-days')
     emit(judge_cert(now + datetime.timedelta(days=13, hours=23), now) is not None, 'canary-cert-just-under')
     emit(judge_cert(now - datetime.timedelta(days=1), now) is not None, 'canary-cert-expired')
+    emit(judge_verify(0) is None, 'canary-verify-passes')
+    emit(judge_verify(1) is not None, 'canary-verify-failure-is-red')
+    emit(judge_verify(-9) is not None, 'canary-verify-killed-is-red')
+    emit(judge_skip(SKIP_UNTIL) is None, 'canary-skip-allowed-on-the-day')
+    emit(judge_skip(SKIP_UNTIL + datetime.timedelta(days=1)) is not None, 'canary-skip-refused-after-the-day')
     return 1 if FAILED else 0
 
 
 def live():
     if not PIN.exists():
-        print('SKIP canary-live reason=ci/canary-root.json is not committed: the repository root is not published yet')
+        reason = 'ci/canary-root.json is not committed: the repository root is not published yet'
+        late = judge_skip(datetime.datetime.now(datetime.timezone.utc).date())
+        if late:
+            print(f'::error title=canary has no pinned root::{reason}; {late}', flush=True)
+            emit(False, 'canary-skip-expired', f'{reason}; {late}')
+            return 1
+        print(f'::warning title=canary is not checking anything::{reason}; allowed until {SKIP_UNTIL}', flush=True)
+        print(f'SKIP canary-live reason={reason}')
         return 0
     spec = importlib.util.spec_from_loader('fetch_live', importlib.machinery.SourceFileLoader(
         'fetch_live', str(ROOT / 'tools/check-fetch-live')))
@@ -102,7 +126,8 @@ def live():
     bin_ = fl.BIN
     p = subprocess.run([str(bin_), 'repo', 'verify', '--repo', fl.REPO, '--root', str(PIN), '--state', str(work / 'state'),
                         '--cache', str(work / 'cache'), '--tls-roots', str(der)], capture_output=True, text=True, timeout=600)
-    emit(p.returncode == 0, 'canary-repo-verify', f'exit={p.returncode} stdout={p.stdout[-300:]!r} stderr={p.stderr[-300:]!r}')
+    problem = judge_verify(p.returncode)
+    emit(problem is None, 'canary-repo-verify', f'{problem} exit={p.returncode} stdout={p.stdout[-300:]!r} stderr={p.stderr[-300:]!r}')
     problems = fl.absence_headers(fl.HOST, context=ctx)
     emit(not problems, 'canary-absence-headers', '; '.join(problems))
     if FAILED:
