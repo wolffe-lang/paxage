@@ -3,7 +3,7 @@
 
 It runs as the publish user, never as root (paxage refuses trust operations as root). The caller has already run
 publish/install as root, which is the only step that needs it: it creates the user, the directories under /var/www
-and /home, and the files in /usr/local and /etc. This tool then does what the owner's ceremony and publishing do, with
+and /home, and the files in /usr/local and /etc. This tool then does what the key ceremony and publishing do, with
 keys made here and thrown away with the machine:
 
   1. makes seven OpenSSL keys (three root, targets, snapshot, timestamp) and writes root 1 with two of the three root
