@@ -25,6 +25,8 @@ cases = [
     ('three-part', elf + b'GLIBC_2.2.5\0', (), 0, 'PASS glibc-floor max=2.2.5 floor=2.34'),
     ('none', elf + b'no versions here', (), 0, 'PASS glibc-floor no versioned glibc symbols'),
     ('not-elf', b'GLIBC_2.38 but not a binary', (), 1, 'FAIL glibc-floor not an ELF file'),
+    ('skip-other', b'\xcf\xfa\xed\xfe a Mach-O file', ('--skip-other',), 0, 'SKIP glibc-floor not an ELF file'),
+    ('skip-other-elf', elf + b'GLIBC_2.38\0', ('--skip-other',), 1, 'FAIL glibc-floor GLIBC_2.38 is above the floor 2.34'),
 ]
 failed = False
 for name, content, extra, code, line in cases:
