@@ -9,6 +9,8 @@ pub struct Options {
     values: Map[str, str],
     manifests: List[str],
     buildinfos: List[str],
+    root_keys: List[str],
+    signatures: List[str],
     error: str,
 }
 
@@ -21,6 +23,8 @@ pub fn parse(args: List[str], start: int) -> Options {
         values: Map[str, str](),
         manifests: List[str](),
         buildinfos: List[str](),
+        root_keys: List[str](),
+        signatures: List[str](),
         error: "",
     }
     var i = start
@@ -50,12 +54,26 @@ pub fn parse(args: List[str], start: int) -> Options {
             "--tls-roots",
             "--public",
             "--file",
+            "--expires",
+            "--root-threshold",
+            "--targets-key",
+            "--snapshot-key",
+            "--timestamp-key",
+            "--signed",
+            "--previous",
+            "--out",
+            "--root-key",
+            "--signature",
         ] {
             if name == allowed { known = true }
         }
         if !known { o.error = "unknown-option"; return o }
         if value == "" { o.error = "empty-option-value"; return o }
-        if name == "--manifest" {
+        if name == "--root-key" {
+            (mut o.root_keys).push(value)
+        } else if name == "--signature" {
+            (mut o.signatures).push(value)
+        } else if name == "--manifest" {
             (mut o.manifests).push(value)
         } else if name == "--buildinfo" {
             (mut o.buildinfos).push(value)
@@ -63,6 +81,7 @@ pub fn parse(args: List[str], start: int) -> Options {
             if flag_value(o, name) != "" { o.error = "duplicate-option"; return o }
             o.values[name] = value
         }
+        if o.root_keys.len > 16 || o.signatures.len > 16 { o.error = "key-limit"; return o }
         if o.manifests.len > 256 || o.buildinfos.len > 256 { o.error = "target-limit"; return o }
         i += 2
     }

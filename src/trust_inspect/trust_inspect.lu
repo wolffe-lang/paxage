@@ -47,16 +47,21 @@ fn pem_der(text: str) -> List[byte] {
     base64.decode(body) else |_| { return List[byte]() }
 }
 
-/// Print an Ed25519 public key's id and hex, or name why it is not one.
-pub fn key_id(path: str) -> str {
+/// An Ed25519 public key read from an OpenSSL PEM or DER file, as 64 hex characters, or a named refusal.
+pub struct PublicKey { public: str, error: str }
+
+fn refuse(error: str) -> PublicKey { PublicKey { public: "", error } }
+
+/// Read one Ed25519 public key (SubjectPublicKeyInfo, PEM or DER). Public material only.
+pub fn read_public(path: str) -> PublicKey {
     let input = io.read(path, 4096)
-    if input.error != "" { return input.error }
+    if input.error != "" { return refuse(input.error) }
     var der = copy input.bytes
     if der.len > 0 && der[0] == 45 as byte {
         let text = str_from_utf8(input.bytes) else ""
         der = pem_der(text)
     }
-    if der.len < 4 || der[0] != 48 as byte { return "key-malformed" }
+    if der.len < 4 || der[0] != 48 as byte { return refuse("key-malformed") }
     var header = 2
     var total = 0
     let first = der[1] as int
@@ -67,21 +72,25 @@ pub fn key_id(path: str) -> str {
         total = 3 + der[2] as int
     } else if first == 130 && der.len >= 5 {
         header = 4
-        total = 4 + der[2] as int * 256 + der[3] as int
+        total = 4 + (der[2] as int) * 256 + der[3] as int
     } else {
-        return "key-malformed"
+        return refuse("key-malformed")
     }
-    if total != der.len { return "key-malformed" }
+    if total != der.len { return refuse("key-malformed") }
     // The algorithm identifier must at least look like one: a SEQUENCE holding an OID.
-    if der.len < header + 4 || der[header] != 48 as byte { return "key-malformed" }
+    if der.len < header + 4 || der[header] != 48 as byte { return refuse("key-malformed") }
     let alg = der[header + 1] as int
-    if alg >= 128 || header + 2 + alg > der.len || der[header + 2] != 6 as byte {
-        return "key-malformed"
-    }
-    if der.len != SPKI_LEN || !prefix_matches(der) { return "key-not-ed25519" }
-    let public = hex.encode(der[12..44])
-    print("key-id {meta.digest(writer.key_object(public).bytes())}")
-    print("public {public}")
+    if alg >= 128 || header + 2 + alg > der.len || der[header + 2] != 6 as byte { return refuse("key-malformed") }
+    if der.len != SPKI_LEN || !prefix_matches(der) { return refuse("key-not-ed25519") }
+    PublicKey { public: hex.encode(der[12..44]), error: "" }
+}
+
+/// Print an Ed25519 public key's id and hex, or name why it is not one.
+pub fn key_id(path: str) -> str {
+    let key = read_public(path)
+    if key.error != "" { return key.error }
+    print("key-id {meta.digest(writer.key_object(key.public).bytes())}")
+    print("public {key.public}")
     ""
 }
 
