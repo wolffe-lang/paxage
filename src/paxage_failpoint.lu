@@ -15,7 +15,10 @@ fn main() -> int {
         if o.error != "" { eprint("paxage: {o.error}"); return 2 }
         let spec = env_get("PAXAGE_FAILPOINT") else |_| { "" }
         let f = failpoint.parse(spec, "")
-        if !failpoint.valid(spec, f) { eprint("paxage-failpoint: bad PAXAGE_FAILPOINT {spec}"); return 2 }
+        if !failpoint.valid(spec, f) {
+            eprint("paxage-failpoint: bad PAXAGE_FAILPOINT {spec}")
+            return 2
+        }
         let now = trust_options.now(o)
         let error = trust_repo.run_with("commit", o, now, f)
         if error != "" { eprint("paxage: {error}"); return 1 }
