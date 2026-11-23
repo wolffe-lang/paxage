@@ -88,7 +88,10 @@ pub fn parse(args: List[str], start: int) -> Options {
             if flag_value(o, name) != "" { o.error = "duplicate-option"; return o }
             o.values[name] = value
         }
-        if o.root_keys.len > 16 || o.signatures.len > 16 || o.adds.len > 64 { o.error = "key-limit"; return o }
+        if o.root_keys.len > 16 || o.signatures.len > 16 || o.adds.len > 64 {
+            o.error = "key-limit"
+            return o
+        }
         if o.manifests.len > 256 || o.buildinfos.len > 256 { o.error = "target-limit"; return o }
         i += 2
     }
