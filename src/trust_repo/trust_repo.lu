@@ -10,6 +10,7 @@ use trust_cache as cache
 use literal
 use schema
 use std.hex as hex
+use std.x.crypto.curve25519 as curve
 
 /// Loaded test-only signing material, never accepted without its marker and mode.
 pub struct Keys { values: List[writer.Signing], error: str }
@@ -131,6 +132,54 @@ fn add_file(repo: str, source: str, e: meta.Entry) -> str {
     cache.copy_verified(source, path, e)
 }
 
+/// Staged target entries, or the refusal that stopped the staging.
+pub struct Staged { entries: List[meta.Entry], error: str }
+
+/// Copy each manifest, its payload and its buildinfo create-only into repo/targets, and list their entries.
+fn stage_entries(repo: str, o: options.Options) -> Staged {
+    var entries = List[meta.Entry]()
+    for i in 0..o.manifests.len {
+        let source = o.manifests[i]
+        let input = io.read(source, 1048576)
+        if input.error != "" { return Staged { entries: List[meta.Entry](), error: input.error } }
+        let d = literal.parse(input.bytes)
+        if d.error != "" { return Staged { entries: List[meta.Entry](), error: d.error } }
+        let error = schema.manifest(d, 0)
+        if error != "" { return Staged { entries: List[meta.Entry](), error } }
+        let name = schema.string(d, 0, "name")
+        let version = schema.string(d, 0, "version")
+        let arch = schema.string(d, 0, "arch")
+        if !source.ends_with(".manifest") { return Staged { entries: List[meta.Entry](), error: "target-kind" } }
+        let payload = source[0..source.len - 9] + ".payload.tar"
+        let paths = [source, payload, o.buildinfos[i]]
+        let kinds = ["manifest", "payload", "buildinfo"]
+        let suffixes = ["manifest", "payload.tar", "buildinfo"]
+        for j in 0..3 {
+            let path = paths[j]
+            let measured = cache.measure(path, 17179869184)
+            if measured.error != "" { return Staged { entries: List[meta.Entry](), error: measured.error } }
+            if j == 2 && measured.digest != schema.string(d, 0, "buildinfo") {
+                return Staged { entries: List[meta.Entry](), error: "buildinfo-hash" }
+            }
+            let e = meta.Entry {
+                path: "{name}-{version}.{suffixes[j]}",
+                digest: measured.digest,
+                length: measured.length,
+                version: 0,
+                name: copy name,
+                package_version: copy version,
+                arch: copy arch,
+                kind: kinds[j],
+            }
+            if !meta.logical(e.path) { return Staged { entries: List[meta.Entry](), error: "logical-name" } }
+            let copied = add_file(repo, path, e)
+            if copied != "" { return Staged { entries: List[meta.Entry](), error: copied } }
+            (mut entries).push(e)
+        }
+    }
+    Staged { entries, error: "" }
+}
+
 fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
     let v = options.integer(options.flag_value(o, "--version"))
     if v < 1 { return "metadata-version" }
@@ -146,46 +195,9 @@ fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
     let root = meta.parse(root_input.bytes, "root")
     if root.error != "" || meta.verify(root, root, "root") != "" { return "publish-root" }
     if root.expires <= now { return "expired-root" }
-    var entries = List[meta.Entry]()
-    for i in 0..o.manifests.len {
-        let source = o.manifests[i]
-        let input = io.read(source, 1048576)
-        if input.error != "" { return input.error }
-        let d = literal.parse(input.bytes)
-        if d.error != "" { return d.error }
-        let error = schema.manifest(d, 0)
-        if error != "" { return error }
-        let name = schema.string(d, 0, "name")
-        let version = schema.string(d, 0, "version")
-        let arch = schema.string(d, 0, "arch")
-        if !source.ends_with(".manifest") { return "target-kind" }
-        let payload = source[0..source.len - 9] + ".payload.tar"
-        let paths = [source, payload, o.buildinfos[i]]
-        let kinds = ["manifest", "payload", "buildinfo"]
-        let suffixes = ["manifest", "payload.tar", "buildinfo"]
-        for j in 0..3 {
-            let path = paths[j]
-            let measured = cache.measure(path, 17179869184)
-            if measured.error != "" { return measured.error }
-            if j == 2 && measured.digest != schema.string(d, 0, "buildinfo") {
-                return "buildinfo-hash"
-            }
-            let e = meta.Entry {
-                path: "{name}-{version}.{suffixes[j]}",
-                digest: measured.digest,
-                length: measured.length,
-                version: 0,
-                name: copy name,
-                package_version: copy version,
-                arch: copy arch,
-                kind: kinds[j],
-            }
-            if !meta.logical(e.path) { return "logical-name" }
-            let copied = add_file(repo, path, e)
-            if copied != "" { return copied }
-            (mut entries).push(e)
-        }
-    }
+    let staged = stage_entries(repo, o)
+    if staged.error != "" { return staged.error }
+    let entries = copy staged.entries
     fs_sync_dir("{repo}/targets") else |_| { return "state-dir-sync" }
     let targets_text = writer.targets(
         entries,
@@ -256,9 +268,199 @@ fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
     io.replace("{repo}/metadata", "timestamp.json", "timestamp.{v}.next", timestamp_bytes)
 }
 
+/// `signed` bytes wrapped in an envelope with no signatures, so one parser reads both.
+fn wrap(signed: List[byte]) -> List[byte] {
+    var out = "{{\"signatures\":[],\"signed\":".bytes()
+    for b in signed { (mut out).push(b) }
+    (mut out).push(125 as byte)
+    out
+}
+
+fn parse_any(bytes: List[byte]) -> meta.Meta {
+    var m = meta.absent("root")
+    for role in ["root", "timestamp", "snapshot", "targets"] {
+        m = meta.parse(bytes, role)
+        if m.error != "role-type" { return m }
+    }
+    m
+}
+
+fn public_of(o: options.Options, flag: str) -> inspect.PublicKey {
+    let path = options.flag_value(o, flag)
+    if path == "" { return inspect.PublicKey { public: "", error: "role-keys" } }
+    inspect.read_public(path)
+}
+
+/// Write the bytes a root's signers will sign, from public keys alone. Prints the roles and the digest.
+fn draft_root(o: options.Options, now: int) -> str {
+    let version = options.integer(options.flag_value(o, "--version"))
+    if version < 1 { return "root-version" }
+    let expires = meta.utc(options.flag_value(o, "--expires"))
+    if expires < 0 { return "metadata-time" }
+    var roots = List[str]()
+    for path in o.root_keys {
+        let key = inspect.read_public(path)
+        if key.error != "" { return key.error }
+        (mut roots).push(key.public)
+    }
+    let threshold = options.integer(options.flag_value(o, "--root-threshold"))
+    if threshold < 1 { return "threshold" }
+    let targets = public_of(o, "--targets-key")
+    if targets.error != "" { return targets.error }
+    let snapshot = public_of(o, "--snapshot-key")
+    if snapshot.error != "" { return snapshot.error }
+    let timestamp = public_of(o, "--timestamp-key")
+    if timestamp.error != "" { return timestamp.error }
+    let out = options.flag_value(o, "--out")
+    if out == "" { return "missing-option-value" }
+    let signed = writer.root_signed(version, expires, roots, threshold, targets.public, snapshot.public, timestamp.public)
+    if signed == "" { return "metadata-encoding" }
+    let bytes = signed.bytes()
+    let m = meta.parse(wrap(bytes), "root")
+    if m.error != "" { return m.error }
+    if m.expires <= now { return "expired-root" }
+    var added = List[str]()
+    var removed = List[str]()
+    let previous_path = options.flag_value(o, "--previous")
+    if previous_path != "" {
+        let input = io.read(previous_path, 65536)
+        if input.error != "" { return input.error }
+        let previous = meta.parse(input.bytes, "root")
+        if previous.error != "" { return previous.error }
+        if m.version != previous.version + 1 { return "root-version" }
+        for key in m.keys {
+            var known = false
+            for old in previous.keys { if old.id == key.id { known = true } }
+            if !known { (mut added).push(copy key.id) }
+        }
+        for old in previous.keys {
+            var kept = false
+            for key in m.keys { if old.id == key.id { kept = true } }
+            if !kept { (mut removed).push(copy old.id) }
+        }
+    }
+    let error = io.create(out, bytes)
+    if error != "" { return error }
+    print("version {m.version}")
+    print("expires {writer.date(m.expires)}")
+    for r in m.roles {
+        var ids = ""
+        for id in r.keys { ids = "{ids} {id}" }
+        print("role {r.name} threshold {r.threshold}{ids}")
+    }
+    for id in added { print("added {id}") }
+    for id in removed { print("removed {id}") }
+    print("sha256 {meta.digest(bytes)}")
+    print("length {bytes.len}")
+    ""
+}
+
+/// Attach detached Ed25519 signatures to signed bytes, after checking each against the key it claims.
+fn attach(o: options.Options) -> str {
+    let signed_in = io.read(options.flag_value(o, "--signed"), 1048576)
+    if signed_in.error != "" { return signed_in.error }
+    let m = parse_any(wrap(signed_in.bytes))
+    if m.error != "" { return m.error }
+    var defining = copy m
+    if m.role != "root" {
+        let root_path = options.flag_value(o, "--root")
+        if root_path == "" { return "root-required" }
+        let input = io.read(root_path, 65536)
+        if input.error != "" { return input.error }
+        defining = meta.parse(input.bytes, "root")
+        if defining.error != "" { return defining.error }
+    }
+    var previous = meta.absent("root")
+    var has_previous = false
+    let previous_path = options.flag_value(o, "--previous")
+    if previous_path != "" {
+        let input = io.read(previous_path, 65536)
+        if input.error != "" { return input.error }
+        previous = meta.parse(input.bytes, "root")
+        if previous.error != "" { return previous.error }
+        has_previous = true
+    }
+    let ri = meta.role_index(defining, m.role)
+    if ri < 0 { return "role-keys" }
+    var pi = -1
+    if has_previous { pi = meta.role_index(previous, "root") }
+    let pairs = copy o.signatures
+    if pairs.len == 0 { return "threshold-not-met" }
+    var ids = List[str]()
+    var sigs = List[str]()
+    var by_new = 0
+    var by_old = 0
+    for pair in pairs {
+        let eq = pair.find("=") else { return "key-malformed" }
+        let key = inspect.read_public(pair[0..eq])
+        if key.error != "" { return key.error }
+        let id = meta.digest(writer.key_object(key.public).bytes())
+        for seen in ids { if seen == id { return "duplicate-signature" } }
+        let raw = io.read(pair[eq + 1..], 65)
+        if raw.error == "metadata-byte-limit" || raw.error == "" && raw.bytes.len != 64 { return "signature-length" }
+        if raw.error != "" { return raw.error }
+        var in_new = false
+        for expected in defining.roles[ri].keys { if expected == id { in_new = true } }
+        var in_old = false
+        if pi >= 0 { for expected in previous.roles[pi].keys { if expected == id { in_old = true } } }
+        if !in_new && !in_old { return "unknown-signer" }
+        let public = hex.decode(key.public) else List[byte]()
+        if !curve.verify_strict(public, signed_in.bytes, raw.bytes) { return "bad-signature" }
+        if in_new { by_new += 1 }
+        if in_old { by_old += 1 }
+        (mut ids).push(id)
+        (mut sigs).push(hex.encode(raw.bytes))
+    }
+    if by_new < defining.roles[ri].threshold { return "threshold-not-met" }
+    if pi >= 0 && by_old < previous.roles[pi].threshold { return "previous-threshold-not-met" }
+    let out = options.flag_value(o, "--out")
+    if out == "" { return "missing-option-value" }
+    let envelope = writer.attached(str_from_utf8(signed_in.bytes) else "", ids, sigs)
+    let bytes = envelope.bytes()
+    let check = meta.parse(bytes, m.role)
+    if check.error != "" { return check.error }
+    var verdict = ""
+    if m.role == "root" { verdict = meta.verify(check, check, "root") } else { verdict = meta.verify(check, defining, m.role) }
+    if verdict != "" { return verdict }
+    let error = io.create(out, bytes)
+    if error != "" { return error }
+    print("role {m.role}")
+    print("signatures {ids.len}")
+    print("sha256 {meta.digest(bytes)}")
+    ""
+}
+
+/// Stage a batch's objects create-only and write the targets bytes its signer will sign.
+fn draft_targets(repo: str, o: options.Options, now: int) -> str {
+    let version = options.integer(options.flag_value(o, "--version"))
+    if version < 1 { return "metadata-version" }
+    let expires = meta.utc(options.flag_value(o, "--expires"))
+    if expires < 0 { return "metadata-time" }
+    if o.manifests.len != o.buildinfos.len || o.manifests.len == 0 { return "target-incomplete" }
+    let out = options.flag_value(o, "--out")
+    if out == "" { return "missing-option-value" }
+    let staged = stage_entries(repo, o)
+    if staged.error != "" { return staged.error }
+    fs_sync_dir("{repo}/targets") else |_| { return "state-dir-sync" }
+    let signed = writer.targets_signed(staged.entries, version, expires)
+    if signed == "" { return "metadata-encoding" }
+    let bytes = signed.bytes()
+    let m = meta.parse(wrap(bytes), "targets")
+    if m.error != "" { return m.error }
+    let error = io.create(out, bytes)
+    if error != "" { return error }
+    for e in m.entries { print("target {e.name} {e.package_version} {e.kind} {e.length} {e.digest}") }
+    print("version {m.version}")
+    print("expires {writer.date(m.expires)}")
+    print("sha256 {meta.digest(bytes)}")
+    ""
+}
+
 /// Run one test-only repository operation, with an exclusive publisher lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
     if verb == "keygen" { return keygen(options.flag_value(o, "--keys")) }
+    if verb == "draft-root" { return draft_root(o, now) }
+    if verb == "attach" { return attach(o) }
     if verb == "key-id" { return inspect.key_id(options.flag_value(o, "--public")) }
     if verb == "inspect" {
         return inspect.inspect(
@@ -279,7 +481,9 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
         result = cache.directory("{repo}/{child}")
         if result != "" { break }
     }
-    if result == "" {
+    if result == "" && verb == "draft-targets" {
+        result = draft_targets(repo, o, now)
+    } else if result == "" {
         let keys = load_keys(options.flag_value(o, "--keys"))
         result = keys.error
         if result == "" {
