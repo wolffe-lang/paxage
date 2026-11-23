@@ -173,7 +173,7 @@ def rows():
     data[at] = ord('0') if data[at] != ord('0') else ord('1')
     (broken / 'metadata/1.targets.json').write_bytes(bytes(data))
     p = index(broken, WORK / 'pages-broken')
-    check(p.returncode == 1 and 'paxage: ' in p.stderr, 'index-unverified-refused', ct.describe(p))
+    refused(p, 'index-unverified-refused', 1, 'signature-threshold')
     check(not (WORK / 'pages-broken/index.html').exists(), 'index-unverified-writes-nothing')
 
     # an expired repository is not presented as current
