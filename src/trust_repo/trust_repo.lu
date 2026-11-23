@@ -7,6 +7,9 @@ use trust_json as json
 use trust_io as io
 use trust_inspect as inspect
 use trust_cache as cache
+use trust_client as client
+use trust_store as store
+use transport
 use literal
 use schema
 use std.hex as hex
@@ -480,11 +483,238 @@ fn draft_targets(repo: str, o: options.Options, now: int) -> str {
     ""
 }
 
+/// The newest root in a docroot's metadata directory, or an absent root saying why.
+fn latest_root(repo: str) -> meta.Meta {
+    var best = meta.absent("root")
+    best.error = "not-found"
+    for v in 1..1000 {
+        let input = io.read("{repo}/metadata/{v}.root.json", 65536)
+        if input.error != "" { break }
+        best = meta.parse(input.bytes, "root")
+    }
+    best
+}
+
+fn docroot(o: options.Options) -> str {
+    let raw = options.file_path(options.flag_value(o, "--repo"))
+    if raw == "" { return "" }
+    fs_realpath(raw) else ""
+}
+
+/// The bytes a snapshot or timestamp signer will sign: a reference to the newest file of the role below it.
+fn draft_reference(role: str, o: options.Options, now: int) -> str {
+    let repo = docroot(o)
+    if repo == "" { return "unsupported-transport" }
+    let version = options.integer(options.flag_value(o, "--version"))
+    if version < 1 { return "metadata-version" }
+    var below = "targets"
+    var flag = "--targets-version"
+    var file = "targets.json"
+    if role == "timestamp" {
+        below = "snapshot"
+        flag = "--snapshot-version"
+        file = "snapshot.json"
+    }
+    let below_version = options.integer(options.flag_value(o, flag))
+    if below_version < 1 { return "metadata-version" }
+    let expires = meta.utc(options.flag_value(o, "--expires"))
+    if expires < 0 { return "metadata-time" }
+    let out = options.flag_value(o, "--out")
+    if out == "" { return "missing-option-value" }
+    let root = latest_root(repo)
+    if root.error != "" { return root.error }
+    let input = io.read("{repo}/metadata/{below_version}.{below}.json", 1048576 + 65536)
+    if input.error != "" { return input.error }
+    let m = meta.parse(input.bytes, below)
+    if m.error != "" { return m.error }
+    if m.version != below_version { return "metadata-version" }
+    let auth = meta.verify(m, root, below)
+    if auth != "" { return auth }
+    let ref = meta.Entry {
+        path: file,
+        digest: meta.digest(input.bytes),
+        length: input.bytes.len,
+        version: below_version,
+        name: "",
+        package_version: "",
+        arch: "",
+        kind: "",
+    }
+    let signed = writer.reference_signed(role, version, expires, ref)
+    if signed == "" { return "metadata-encoding" }
+    let bytes = signed.bytes()
+    let d = meta.parse(wrap(bytes), role)
+    if d.error != "" { return d.error }
+    if d.expires <= now { return "expired-{role}" }
+    let error = io.create(out, bytes)
+    if error != "" { return error }
+    print("references {file} {below_version} {ref.length} {ref.digest}")
+    print("version {version}")
+    print("expires {writer.date(d.expires)}")
+    print("sha256 {meta.digest(bytes)}")
+    print("length {bytes.len}")
+    ""
+}
+
+/// One envelope read for a commit.
+struct Item { bytes: List[byte], m: meta.Meta }
+
+fn ordered(items: List[Item], role: str) -> List[int] {
+    var order = List[int]()
+    for i in 0..items.len { if items[i].m.role == role { (mut order).push(i) } }
+    for i in 0..order.len {
+        for j in i + 1..order.len {
+            if items[order[j]].m.version < items[order[i]].m.version {
+                let old = order[i]
+                order[i] = order[j]
+                order[j] = old
+            }
+        }
+    }
+    order
+}
+
+fn referenced(repo: str, items: List[Item], role: str, e: meta.Entry) -> str {
+    // The file a reference names is either committed together with it or already in the docroot.
+    var bytes = List[byte]()
+    var found = false
+    for i in 0..items.len {
+        if items[i].m.role == role && items[i].m.version == e.version {
+            bytes = copy items[i].bytes
+            found = true
+        }
+    }
+    if !found {
+        let input = io.read("{repo}/metadata/{e.version}.{role}.json", 1048576 + 65536)
+        if input.error != "" { return "commit-dangling" }
+        bytes = copy input.bytes
+    }
+    if bytes.len != e.length || meta.digest(bytes) != e.digest { return "commit-dangling" }
+    ""
+}
+
+/// Place verified metadata into a docroot: roots, targets and snapshots create-only, then the timestamp replaced last.
+/// Every file is checked before the first is written.
+fn commit(repo: str, o: options.Options, now: int) -> str {
+    if o.adds.len == 0 { return "commit-empty" }
+    var items = List[Item]()
+    for path in o.adds {
+        let input = io.read(path, 1048576 + 65536)
+        if input.error != "" { return input.error }
+        let m = parse_any(input.bytes)
+        if m.error != "" { return m.error }
+        (mut items).push(Item { bytes: copy input.bytes, m: copy m })
+    }
+    var current = latest_root(repo)
+    for i in ordered(items, "root") {
+        let m = copy items[i].m
+        let self_check = meta.verify(m, m, "root")
+        if self_check != "" { return self_check }
+        if current.error == "" {
+            if m.version != current.version + 1 { return "root-version" }
+            let previous = meta.verify(m, current, "root")
+            if previous != "" { return previous }
+        } else if m.version != 1 {
+            return "root-version"
+        }
+        if fs_exists("{repo}/metadata/{m.version}.root.json") { return "immutable-rewrite" }
+        current = copy m
+    }
+    if current.error != "" { return current.error }
+    for role in ["targets", "snapshot"] {
+        for i in ordered(items, role) {
+            let m = copy items[i].m
+            let auth = meta.verify(m, current, role)
+            if auth != "" { return auth }
+            if fs_exists("{repo}/metadata/{m.version}.{role}.json") { return "immutable-rewrite" }
+            if role == "targets" {
+                for e in m.entries {
+                    let path = "{repo}/targets/{e.digest}.{e.path}"
+                    let measured = cache.measure(path, e.length)
+                    if measured.error != "" || measured.length != e.length || measured.digest != e.digest {
+                        return "commit-dangling"
+                    }
+                }
+            } else {
+                let linked = referenced(repo, items, "targets", m.entries[0])
+                if linked != "" { return linked }
+            }
+        }
+    }
+    let stamps = ordered(items, "timestamp")
+    if stamps.len > 1 { return "publish-version" }
+    var stamp = meta.absent("timestamp")
+    if stamps.len == 1 {
+        stamp = copy items[stamps[0]].m
+        let auth = meta.verify(stamp, current, "timestamp")
+        if auth != "" { return auth }
+        if stamp.expires <= now { return "expired-timestamp" }
+        let linked = referenced(repo, items, "snapshot", stamp.entries[0])
+        if linked != "" { return linked }
+        let old = io.read("{repo}/metadata/timestamp.json", 16384)
+        if old.error == "" {
+            let previous = meta.parse(old.bytes, "timestamp")
+            if previous.error == "" && meta.verify(previous, current, "timestamp") == "" && previous.version >= stamp.version {
+                return "publish-version"
+            }
+        } else if old.error != "not-found" {
+            return old.error
+        }
+    }
+    for role in ["root", "targets", "snapshot"] {
+        for i in ordered(items, role) {
+            let written = write_metadata(repo, str_from_utf8(items[i].bytes) else "", role, items[i].m.version)
+            if written != "" { return written }
+        }
+    }
+    if stamps.len == 1 {
+        let error = io.replace(
+            "{repo}/metadata",
+            "timestamp.json",
+            "timestamp.{stamp.version}.next",
+            items[stamps[0]].bytes,
+        )
+        if error != "" { return error }
+    }
+    fs_sync_dir("{repo}/metadata") else |_| { return "state-dir-sync" }
+    print("committed {items.len}")
+    ""
+}
+
+/// The whole repository through the client's own code: bootstrap from the pinned root, update, then read every
+/// target it names into a scratch cache. State and cache are directories the caller names for this check.
+fn verify_all(o: options.Options, now: int) -> str {
+    let k = transport.shipped()
+    var error = client.run("bootstrap", o, now, k)
+    if error != "" { return error }
+    error = client.run("update", o, now, k)
+    if error != "" { return error }
+    let state_dir = options.flag_value(o, "--state")
+    let cache_dir = options.flag_value(o, "--cache")
+    let url = options.flag_value(o, "--repo")
+    let loaded = store.load(state_dir)
+    if loaded.error != "" { return loaded.error }
+    var count = 0
+    for e in loaded.value.targets.entries {
+        if !meta.known_kind(e.kind) { continue }
+        let one = options.parse(["--repo", copy url, "--state", copy state_dir, "--cache", copy cache_dir, "--target", copy e.path], 0)
+        if one.error != "" { return one.error }
+        error = client.run("fetch", one, now, k)
+        if error != "" { return error }
+        count += 1
+    }
+    print("verified targets {count}")
+    ""
+}
+
 /// Run one test-only repository operation, with an exclusive publisher lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
     if verb == "keygen" { return keygen(options.flag_value(o, "--keys")) }
     if verb == "draft-root" { return draft_root(o, now) }
     if verb == "attach" { return attach(o) }
+    if verb == "draft-snapshot" { return draft_reference("snapshot", o, now) }
+    if verb == "draft-timestamp" { return draft_reference("timestamp", o, now) }
+    if verb == "verify" { return verify_all(o, now) }
     if verb == "key-id" { return inspect.key_id(options.flag_value(o, "--public")) }
     if verb == "inspect" {
         return inspect.inspect(
@@ -507,6 +737,8 @@ pub fn run(verb: str, o: options.Options, now: int) -> str {
     }
     if result == "" && verb == "draft-targets" {
         result = draft_targets(repo, o, now)
+    } else if result == "" && verb == "commit" {
+        result = commit(repo, o, now)
     } else if result == "" {
         let keys = load_keys(options.flag_value(o, "--keys"))
         result = keys.error
