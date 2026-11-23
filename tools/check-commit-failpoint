@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""A publisher killed between two writes: the docroot is the old state or a state the client verifies.
+
+`repo commit` is run through the test-only paxage-failpoint binary, armed to crash after each write in turn (after the
+first versioned file, after the second, just before the timestamp is replaced, and just after). After every crash the
+rows read the docroot as a client would: the timestamp is the old one until the replace has happened, `repo verify`
+passes at once over everything that is there, and running the same commit again finishes the publication. An error
+injected in the middle (eio) is refused by name and leaves the same state. Keys are throwaway OpenSSL keys.
+"""
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import shutil
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+oc = load('openssl_ceremony', 'check-openssl-ceremony')
+ct = oc.ct
+BIN = ROOT / 'target/bin/paxage'
+FPBIN = ROOT / 'target/bin/paxage-failpoint'
+WORK = ROOT / 'target/commit-failpoint'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+oc.BIN, oc.WORK = BIN, WORK
+NOW = ct.NOW
+EXPIRES = oc.EXPIRES
+check, refused, ok, pxg = oc.check, oc.refused, oc.ok, oc.pxg
+
+
+def signed(key, data, out, root):
+    if not Path(data).exists():
+        Path(data).write_bytes(b'the draft verb wrote nothing')
+    return oc.attach(data, [(key, key.sign(data))], out, root=root)
+
+
+def commit(docroot, *files, binary=BIN, env=None):
+    args = ['repo', 'commit', '--repo', docroot.as_uri(), '--now', NOW]
+    for f in files:
+        args += ['--add', f]
+    return ct.pxg(*map(str, args), binary=binary, env=env)
+
+
+def verify(docroot, root, label):
+    return pxg('repo', 'verify', '--repo', docroot.as_uri(), '--root', root, '--state', WORK / f'vs-{label}',
+               '--cache', WORK / f'vc-{label}', '--now', NOW)
+
+
+def rows():
+    names = ('r1', 'r2', 'r3', 'tg', 'sn', 'ts')
+    k = {n: oc.Key(n) for n in names}
+    r1, r2, r3, tg, sn, ts = (k[n] for n in names)
+    out = WORK / 'out'
+    out.mkdir()
+    base = WORK / 'base'
+    base.mkdir()
+    # a first publication, version 1, with the ordinary binary
+    s = out / '1.root.signed'
+    pxg(*oc.root_args(1, [r1, r2, r3], tg, sn, ts, 2, s))
+    root1 = out / '1.root.json'
+    oc.attach(s, [(r1, r1.sign(s)), (r2, r2.sign(s))], root1) if s.exists() else None
+    commit(base, root1)
+    alpha = ct.simple('alpha').build(WORK / 'packages')
+    beta = ct.simple('beta').build(WORK / 'packages')
+    t1 = out / '1.targets.signed'
+    pxg('repo', 'draft-targets', '--repo', base.as_uri(), '--version', 1, '--expires', EXPIRES, '--manifest', alpha[0],
+        '--buildinfo', alpha[1], '--out', t1)
+    t1j = out / '1.targets.json'
+    signed(tg, t1, t1j, root1)
+    commit(base, t1j)
+    s1 = out / '1.snapshot.signed'
+    pxg('repo', 'draft-snapshot', '--repo', base.as_uri(), '--version', 1, '--targets-version', 1, '--expires', EXPIRES,
+        '--out', s1)
+    s1j = out / '1.snapshot.json'
+    signed(sn, s1, s1j, root1)
+    commit(base, s1j)
+    m1 = out / '1.timestamp.signed'
+    pxg('repo', 'draft-timestamp', '--repo', base.as_uri(), '--version', 1, '--snapshot-version', 1, '--expires',
+        EXPIRES, '--out', m1)
+    m1j = out / '1.timestamp.json'
+    signed(ts, m1, m1j, root1)
+    p = commit(base, m1j)
+    ok(p, 'failpoint-base-published', last='repo commit ok')
+    old_timestamp = (base / 'metadata/timestamp.json').read_bytes() if (base / 'metadata/timestamp.json').exists() else b''
+    check(verify(base, root1, 'base').returncode == 0, 'failpoint-base-verifies')
+
+    # a second batch (alpha and beta), prepared whole in a scratch docroot so its three files exist
+    scratch = WORK / 'scratch'
+    shutil.copytree(base, scratch)
+    t2 = out / '2.targets.signed'
+    pxg('repo', 'draft-targets', '--repo', scratch.as_uri(), '--version', 2, '--expires', EXPIRES, '--manifest',
+        alpha[0], '--buildinfo', alpha[1], '--manifest', beta[0], '--buildinfo', beta[1], '--out', t2)
+    t2j = out / '2.targets.json'
+    signed(tg, t2, t2j, root1)
+    commit(scratch, t2j)
+    s2 = out / '2.snapshot.signed'
+    pxg('repo', 'draft-snapshot', '--repo', scratch.as_uri(), '--version', 2, '--targets-version', 2, '--expires',
+        EXPIRES, '--out', s2)
+    s2j = out / '2.snapshot.json'
+    signed(sn, s2, s2j, root1)
+    commit(scratch, s2j)
+    m2 = out / '2.timestamp.signed'
+    pxg('repo', 'draft-timestamp', '--repo', scratch.as_uri(), '--version', 2, '--snapshot-version', 2, '--expires',
+        EXPIRES, '--out', m2)
+    m2j = out / '2.timestamp.json'
+    signed(ts, m2, m2j, root1)
+    new_timestamp = m2j.read_bytes() if m2j.exists() else b'?'
+
+    batch = (t2j, s2j, m2j)
+    cases = [  # (point, versioned files that exist afterwards, timestamp already replaced)
+        ('commit:1', {'2.targets.json'}, False),
+        ('commit:2', {'2.targets.json', '2.snapshot.json'}, False),
+        ('commit:timestamp', {'2.targets.json', '2.snapshot.json'}, False),
+        ('commit:done', {'2.targets.json', '2.snapshot.json'}, True),
+    ]
+    for point, versioned, replaced in cases:
+        label = point.replace(':', '-')
+        d = WORK / f'doc-{label}'
+        shutil.copytree(base, d)
+        for obj in (scratch / 'targets').iterdir():  # objects first, as the publisher's own staging step leaves them
+            if not (d / 'targets' / obj.name).exists():
+                shutil.copyfile(obj, d / 'targets' / obj.name)
+        p = commit(d, *batch, binary=FPBIN, env={'PAXAGE_FAILPOINT': f'{point}:crash'})
+        check(p.returncode != 0 and f'CRASH {point}' in p.stderr, f'failpoint-{label}-crashes', ct.describe(p))
+        meta = d / 'metadata'
+        present = {f.name for f in meta.iterdir()} if meta.is_dir() else set()
+        expect = {'1.root.json', '1.targets.json', '1.snapshot.json', 'timestamp.json'} | versioned
+        check(present == expect, f'failpoint-{label}-files', f'present={sorted(present)}')
+        stamp = (meta / 'timestamp.json').read_bytes() if (meta / 'timestamp.json').exists() else b''
+        check(stamp == (new_timestamp if replaced else old_timestamp), f'failpoint-{label}-timestamp')
+        v = verify(d, root1, label)
+        want = 'verified targets 6' if replaced else 'verified targets 3'
+        check(v.returncode == 0 and want in v.stdout.splitlines(), f'failpoint-{label}-client-verifies', ct.describe(v))
+        if not replaced:
+            again = commit(d, *batch)
+            ok(again, f'failpoint-{label}-rerun-finishes', last='repo commit ok')
+            final = (meta / 'timestamp.json').read_bytes() if (meta / 'timestamp.json').exists() else b''
+            check(final == new_timestamp, f'failpoint-{label}-rerun-timestamp')
+            v = verify(d, root1, label + '-after')
+            check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(),
+                  f'failpoint-{label}-rerun-verifies', ct.describe(v))
+
+    # an injected write error is refused by name and changes nothing more than the crash did
+    d = WORK / 'doc-eio'
+    shutil.copytree(base, d)
+    for obj in (scratch / 'targets').iterdir():
+        if not (d / 'targets' / obj.name).exists():
+            shutil.copyfile(obj, d / 'targets' / obj.name)
+    p = commit(d, *batch, binary=FPBIN, env={'PAXAGE_FAILPOINT': 'commit:2:eio'})
+    refused(p, 'failpoint-eio-named', 1, 'io')
+    stamp = (d / 'metadata/timestamp.json').read_bytes()
+    check(stamp == old_timestamp and verify(d, root1, 'eio').returncode == 0, 'failpoint-eio-old-state-verifies')
+
+    # committing identical bytes again is a no-op; different bytes under the same name still refuse
+    again = commit(scratch, t2j)
+    ok(again, 'failpoint-identical-again-is-a-noop', last='repo commit ok')
+    other = out / '2.targets.other.signed'
+    pxg('repo', 'draft-targets', '--repo', scratch.as_uri(), '--version', 2, '--expires', '2027-12-24T00:00:00Z',
+        '--manifest', alpha[0], '--buildinfo', alpha[1], '--manifest', beta[0], '--buildinfo', beta[1], '--out', other)
+    otherj = out / '2.targets.other.json'
+    signed(tg, other, otherj, root1)
+    refused(commit(scratch, otherj), 'failpoint-different-bytes-refused', 1, 'immutable-rewrite')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    oc.TOOL, version = fx.openssl_binary()
+    print(f'commit-failpoint: {version}', flush=True)
+    try:
+        rows()
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'commit-failpoint: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS commit-failpoint', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
