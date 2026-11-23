@@ -170,10 +170,16 @@ pub fn attached(signed: str, ids: List[str], sigs: List[str]) -> str {
     "{{\"signatures\":[{signatures}],\"signed\":{signed}}}"
 }
 
+/// The canonical signed bytes of a timestamp or snapshot with an exact whole-file binding, nothing signed.
+pub fn reference_signed(role: str, version: int, expires: int, ref: meta.Entry) -> str {
+    if role != "timestamp" && role != "snapshot" || version < 1 || date(expires) == "" { return "" }
+    "{{\"_type\":\"{role}\",\"expires\":\"{date(expires)}\",\"meta\":{{\"{ref.path}\":{{\"hashes\":{{\"sha256\":\"{ref.digest}\"}},\"length\":{ref.length},\"version\":{ref.version}}}}},\"spec_version\":\"1.0.37\",\"version\":{version}}}"
+}
+
 /// Build a timestamp or snapshot with an exact whole-file metadata binding.
 pub fn reference(role: str, version: int, expires: int, ref: meta.Entry, signer: Signing) -> str {
-    if role != "timestamp" && role != "snapshot" || version < 1 || date(expires) == "" { return "" }
-    let signed = "{{\"_type\":\"{role}\",\"expires\":\"{date(expires)}\",\"meta\":{{\"{ref.path}\":{{\"hashes\":{{\"sha256\":\"{ref.digest}\"}},\"length\":{ref.length},\"version\":{ref.version}}}}},\"spec_version\":\"1.0.37\",\"version\":{version}}}"
+    let signed = reference_signed(role, version, expires, ref)
+    if signed == "" { return "" }
     envelope(signed, [signer])
 }
 
