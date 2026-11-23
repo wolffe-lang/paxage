@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""The host scripts under publish/, run for real against a directory with throwaway keys.
+
+pxg-publish takes a signed batch on standard input as the publish user's ssh command would, pxg-resign writes the next
+timestamp or snapshot, and install sets things up (here under a scratch prefix, with the system steps off). The rows
+check what changes and, as much, what must not: a wrong command, a name outside the two allowed, a link, too many
+bytes, a second upload at once, an object that differs, a missing or readable key. Each refusal leaves the repository
+as it was; a failed publication can be run again. The signer is OpenSSL, the reader is paxage's own verify.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+PUBLISH = ROOT / 'publish'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+oc = load('openssl_ceremony', 'check-openssl-ceremony')
+ct = oc.ct
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/publish-scripts'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+oc.BIN, oc.WORK = BIN, WORK
+NOW = ct.NOW
+EXPIRES = '2099-01-01T00:00:00Z'
+oc.EXPIRES = EXPIRES
+check, refused, ok, pxg = oc.check, oc.refused, oc.ok, oc.pxg
+
+
+def tree(path):
+    """A digest of every file name, mode and content under path: what 'unchanged' means."""
+    h = hashlib.sha256()
+    path = Path(path)
+    if not path.exists():
+        return 'absent'
+    for f in sorted(path.rglob('*')):
+        h.update(str(f.relative_to(path)).encode())
+        if f.is_file():
+            h.update(str(f.stat().st_mode & 0o777).encode() + f.read_bytes())
+    return h.hexdigest()
+
+
+def run(script, *args, env=None, stdin=None, timeout=120):
+    full = dict(os.environ)
+    full.update(env or {})
+    return subprocess.run(['bash', str(PUBLISH / script), *args], input=stdin, capture_output=True, env=full,
+                          timeout=timeout)
+
+
+def text(p):
+    return (p.stdout + p.stderr).decode(errors='replace')
+
+
+def tar_bytes(members):
+    """members: (name, bytes) for files, (name, None, linkname) for a symlink."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w') as t:
+        for m in members:
+            info = tarfile.TarInfo(m[0])
+            if len(m) == 3:
+                info.type = tarfile.SYMTYPE
+                info.linkname = m[2]
+                t.addfile(info)
+            else:
+                info.size = len(m[1])
+                t.addfile(info, io.BytesIO(m[1]))
+    return buf.getvalue()
+
+
+def rows():
+    names = ('r1', 'r2', 'r3', 'tg', 'sn', 'ts')
+    k = {n: oc.Key(n) for n in names}
+    r1, r2, r3, tg, sn, ts = (k[n] for n in names)
+    out = WORK / 'out'
+    out.mkdir()
+    docroot = WORK / 'docroot' / 'pax'
+    docroot.mkdir(parents=True)
+    state = WORK / 'state'
+    state.mkdir()
+    keys = WORK / 'online-keys'
+    keys.mkdir()
+    for role, key in (('snapshot', sn), ('timestamp', ts)):
+        shutil.copyfile(key.priv, keys / f'{role}.key')
+        shutil.copyfile(key.pub, keys / f'{role}.pub.pem')
+        os.chmod(keys / f'{role}.key', 0o600)
+    env = {'PXG': str(BIN), 'OPENSSL': oc.TOOL, 'DOCROOT': str(docroot), 'STATE': str(state), 'KEYS': str(keys),
+           'PXG_SETTINGS': str(WORK / 'no-such-settings'), 'SSH_ORIGINAL_COMMAND': 'publish'}
+
+    # the repository's root, as the ceremony leaves it
+    s = out / '1.root.signed'
+    pxg(*oc.root_args(1, [r1, r2, r3], tg, sn, ts, 2, s))
+    root1 = out / '1.root.json'
+    oc.attach(s, [(r1, r1.sign(s)), (r2, r2.sign(s))], root1)
+    ok(pxg('repo', 'commit', '--repo', docroot.as_uri(), '--add', root1), 'scripts-setup-root', last='repo commit ok')
+
+    def batch(version, packages, label):
+        stage = WORK / f'stage-{label}'
+        stage.mkdir()
+        args = ['repo', 'draft-targets', '--repo', stage.as_uri(), '--version', version, '--expires', EXPIRES]
+        for m, b in packages:
+            args += ['--manifest', m, '--buildinfo', b]
+        signed = out / f'{label}.targets.signed'
+        pxg(*args, '--out', signed)
+        if not signed.exists():
+            signed.write_bytes(b'the draft verb wrote nothing')
+        final = out / f'{label}.targets.json'
+        oc.attach(signed, [(tg, tg.sign(signed))], final, root=root1)
+        members = []
+        if final.exists():
+            members.append((f'metadata/{version}.targets.json', final.read_bytes()))
+        for f in sorted((stage / 'targets').glob('*')):
+            members.append((f'targets/{f.name}', f.read_bytes()))
+        return tar_bytes(members)
+
+    alpha = ct.simple('alpha').build(WORK / 'packages')
+    beta = ct.simple('beta').build(WORK / 'packages')
+    batch1 = batch(1, [alpha], 'b1')
+    batch2 = batch(2, [alpha, beta], 'b2')
+
+    def verify(label):
+        return pxg('repo', 'verify', '--repo', docroot.as_uri(), '--root', root1, '--state', WORK / f'vs-{label}',
+                   '--cache', WORK / f'vc-{label}', '--now', NOW)
+
+    before = tree(docroot)
+    # --- refusals that change nothing
+    for label, command in (('wrong-command', 'ls'), ('empty-command', ''), ('publish-with-argument', 'publish now')):
+        p = run('pxg-publish', env=dict(env, SSH_ORIGINAL_COMMAND=command), stdin=batch1)
+        check(p.returncode == 1 and 'only' in text(p) and tree(docroot) == before, f'scripts-publish-{label}', text(p))
+    p = run('pxg-publish', env={k2: v for k2, v in env.items() if k2 != 'SSH_ORIGINAL_COMMAND'}, stdin=batch1)
+    check(p.returncode == 1 and tree(docroot) == before, 'scripts-publish-no-command', text(p))
+    digest = 'a' * 64
+    for label, members, needle in (
+            ('traversal', [('../evil', b'x'), ('metadata/1.targets.json', b'{}')], 'upload-member-name'),
+            ('absolute', [('/etc/evil', b'x')], 'upload-member-name'),
+            ('other-name', [('metadata/1.targets.json', b'{}'), ('readme.txt', b'x')], 'upload-member-name'),
+            ('symlink', [('metadata/1.targets.json', b'{}'), (f'targets/{digest}.payload.tar', None, '/etc/passwd')],
+             'upload-member-type'),
+            ('no-targets-file', [(f'targets/{digest}.payload.tar', b'x')], 'upload-needs-one-targets-file'),
+            ('two-targets-files', [('metadata/1.targets.json', b'{}'), ('metadata/2.targets.json', b'{}')],
+             'upload-needs-one-targets-file')):
+        p = run('pxg-publish', env=env, stdin=tar_bytes(members))
+        check(p.returncode == 1 and needle in text(p) and tree(docroot) == before and not (WORK / 'evil').exists(),
+              f'scripts-publish-{label}', text(p))
+    p = run('pxg-publish', env=dict(env, UPLOAD_MAX_BYTES='1000'), stdin=batch1)
+    check(p.returncode == 1 and 'upload-too-large' in text(p) and tree(docroot) == before, 'scripts-publish-too-large',
+          text(p))
+    p = run('pxg-publish', env=env, stdin=b'not a tar archive at all')
+    check(p.returncode == 1 and 'upload-unreadable' in text(p) and tree(docroot) == before, 'scripts-publish-not-a-tar',
+          text(p))
+
+    # --- locks: a live holder blocks, a dead one is cleared
+    holder = subprocess.Popen(['sleep', '30'])
+    lock = state / 'publish.lock'
+    lock.mkdir()
+    (lock / 'pid').write_text(str(holder.pid))
+    p = run('pxg-publish', env=env, stdin=batch1)
+    check(p.returncode == 7 and 'locked' in text(p) and tree(docroot) == before, 'scripts-publish-locked', text(p))
+    holder.kill()
+    holder.wait()
+    # a stale holder (its process is gone) does not block
+
+    # --- the first publication
+    p = run('pxg-publish', env=env, stdin=batch1)
+    check(p.returncode == 0 and text(p).strip().endswith('published targets 1 snapshot 1'), 'scripts-publish',
+          text(p))
+    v = verify('one')
+    check(v.returncode == 0 and 'verified targets 3' in v.stdout.splitlines(), 'scripts-publish-verifies', ct.describe(v))
+    check(not lock.exists(), 'scripts-publish-releases-the-lock')
+    check(not list(state.glob('upload.*')), 'scripts-publish-leaves-no-scratch')
+
+    # --- a second batch with a key problem changes nothing public beyond the committed targets, and can be run again
+    stamp1 = (docroot / 'metadata/timestamp.json').read_bytes()
+    os.chmod(keys / 'snapshot.key', 0o644)
+    p = run('pxg-publish', env=env, stdin=batch2)
+    check(p.returncode == 1 and 'key-mode' in text(p), 'scripts-publish-readable-key', text(p))
+    check((docroot / 'metadata/timestamp.json').read_bytes() == stamp1, 'scripts-publish-readable-key-keeps-timestamp')
+    v = verify('two')
+    check(v.returncode == 0 and 'verified targets 3' in v.stdout.splitlines(), 'scripts-publish-failed-still-verifies',
+          ct.describe(v))
+    os.chmod(keys / 'snapshot.key', 0o600)
+    saved = (keys / 'snapshot.key').read_bytes()
+    (keys / 'snapshot.key').unlink()
+    p = run('pxg-publish', env=env, stdin=batch2)
+    check(p.returncode == 1 and 'key-missing' in text(p), 'scripts-publish-missing-key', text(p))
+    check((docroot / 'metadata/timestamp.json').read_bytes() == stamp1, 'scripts-publish-missing-key-keeps-timestamp')
+    (keys / 'snapshot.key').write_bytes(saved)
+    os.chmod(keys / 'snapshot.key', 0o600)
+    p = run('pxg-publish', env=env, stdin=batch2)
+    check(p.returncode == 0 and text(p).strip().endswith('published targets 2 snapshot 2'), 'scripts-publish-again',
+          text(p))
+    v = verify('three')
+    check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'scripts-publish-again-verifies',
+          ct.describe(v))
+
+    # --- an object that differs from the one already there
+    some = sorted((docroot / 'targets').glob('*'))[0]
+    members = [('metadata/9.targets.json', b'{}'), (f'targets/{some.name}', b'different bytes')]
+    p = run('pxg-publish', env=env, stdin=tar_bytes(members))
+    check(p.returncode == 1 and 'object-differs' in text(p), 'scripts-publish-object-differs', text(p))
+    check(some.read_bytes() != b'different bytes', 'scripts-publish-object-differs-untouched')
+
+    # --- the daily and weekly re-signs
+    p = run('pxg-resign', 'timestamp', env=env)
+    check(p.returncode == 0 and 'resigned timestamp 2' in text(p), 'scripts-resign-timestamp', text(p))
+    p = run('pxg-resign', 'snapshot', env=env)
+    check(p.returncode == 0 and 'resigned snapshot 3' in text(p) and 'resigned timestamp 3' in text(p),
+          'scripts-resign-snapshot', text(p))
+    v = verify('four')
+    check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'scripts-resign-verifies', ct.describe(v))
+    p = run('pxg-resign', 'other', env=env)
+    check(p.returncode != 0 and 'usage' in text(p), 'scripts-resign-usage', text(p))
+    os.chmod(keys / 'timestamp.key', 0o640)
+    before2 = tree(docroot)
+    p = run('pxg-resign', 'timestamp', env=env)
+    check(p.returncode == 1 and 'key-mode' in text(p) and tree(docroot) == before2, 'scripts-resign-readable-key',
+          text(p))
+    os.chmod(keys / 'timestamp.key', 0o600)
+
+    # --- install, under a scratch prefix with the system steps off
+    prefix = WORK / 'prefix'
+    prefix.mkdir()
+    ienv = dict(PXG_INSTALL_ROOT=str(prefix), PXG_INSTALL_NOSYSTEM='1')
+    deploy = WORK / 'deploy.pub'
+    deploy.write_text('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTheRowsOnlyXXXXXXXXXXXXXXXXXXXXXX test\n')
+    p = run('install', '--check', '--deploy-key', str(deploy), env=ienv)
+    lines = text(p).splitlines()
+    check(p.returncode == 0 and any(l.startswith('would: install /usr/local/libexec/pxg-publish') for l in lines)
+          and any('would: add the deploy key' in l for l in lines) and not any(l.startswith('do:') for l in lines),
+          'scripts-install-check-says-what-it-would-do', text(p))
+    check(not any(prefix.iterdir()), 'scripts-install-check-changes-nothing')
+    p = run('install', '--deploy-key', str(deploy), '--enable-timers', env=ienv)
+    check(p.returncode == 0 and 'do: install /usr/local/libexec/pxg-publish' in text(p), 'scripts-install-runs', text(p))
+    for rel, mode in (('usr/local/libexec/pxg-publish', 0o755), ('usr/local/libexec/pxg-resign', 0o755),
+                      ('usr/local/libexec/pxg-settings', 0o644), ('etc/pxg-publish.env', None),
+                      ('etc/systemd/system/pxg-resign-timestamp.timer', 0o644),
+                      ('etc/systemd/system/pxg-resign-snapshot.service', 0o644), ('home/pxgpub/keys', 0o700),
+                      ('home/pxgpub/.ssh/authorized_keys', 0o600), ('var/www/pkg.lupp.us/site/pax/targets', 0o755)):
+        path = prefix / rel
+        good = path.exists() and (mode is None or (path.stat().st_mode & 0o777) == mode)
+        check(good, f'scripts-install-has-{rel.replace("/", "-")}', f'{rel} {oct(path.stat().st_mode) if path.exists() else "absent"}')
+    auth = (prefix / 'home/pxgpub/.ssh/authorized_keys').read_text() if (prefix / 'home/pxgpub/.ssh/authorized_keys').exists() else ''
+    check(auth.startswith('restrict,command="/usr/local/libexec/pxg-publish" ssh-ed25519 ') and auth.count('\n') == 1,
+          'scripts-install-restricts-the-key', auth)
+    check(not list((prefix / 'home/pxgpub/keys').iterdir()), 'scripts-install-creates-no-key')
+    snapshot_tree = tree(prefix)
+    p = run('install', '--deploy-key', str(deploy), env=ienv)
+    check(p.returncode == 0 and not any(l.startswith('do:') for l in text(p).splitlines()) and tree(prefix) == snapshot_tree,
+          'scripts-install-again-changes-nothing', text(p))
+    p = run('install', '--check', '--deploy-key', str(deploy), env=ienv)
+    check(p.returncode == 0 and not any(l.startswith('would:') for l in text(p).splitlines()), 'scripts-install-check-after-has-nothing-to-do',
+          text(p))
+    if os.geteuid() != 0:
+        p = run('install', env={})
+        check(p.returncode == 2 and 'must run as root' in text(p), 'scripts-install-refuses-without-root', text(p))
+    p = run('install', '--nonsense', env=ienv)
+    check(p.returncode == 2, 'scripts-install-unknown-option', text(p))
+
+    # --- what each script says it changes, and the units
+    for script, needle in (('pxg-publish', 'What it changes:'), ('pxg-resign', 'What it changes:'),
+                           ('install', 'What it changes on the system')):
+        head = '\n'.join((PUBLISH / script).read_text().splitlines()[:30])
+        check(needle in head and head.lstrip().startswith('#!'), f'scripts-{script}-says-what-it-changes')
+    for unit in ('timestamp', 'snapshot'):
+        service = (PUBLISH / f'pxg-resign-{unit}.service').read_text()
+        timer = (PUBLISH / f'pxg-resign-{unit}.timer').read_text()
+        check('User=pxgpub' in service and f'ExecStart=/usr/local/libexec/pxg-resign {unit}' in service
+              and 'Type=oneshot' in service, f'scripts-unit-{unit}-service')
+        check('OnCalendar=' in timer and 'Persistent=true' in timer and 'WantedBy=timers.target' in timer,
+              f'scripts-unit-{unit}-timer')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    oc.TOOL, version = fx.openssl_binary()
+    print(f'publish-scripts: {version}', flush=True)
+    try:
+        rows()
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'publish-scripts: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS publish-scripts', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
