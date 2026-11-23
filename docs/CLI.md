@@ -141,6 +141,21 @@ and metadata are present and synced. A failed publish can leave unreferenced
 immutable files, but must not publish a timestamp that refers to incomplete data.
 Success ends `repo VERB ok`. No command accepts unmarked production signing keys.
 
+`repo key-id --public FILE` reads an Ed25519 public key in OpenSSL's PEM or DER form and prints
+`key-id HEX` and `public HEX` (the 32 key bytes), then `repo key-id ok`. It reads no clock and no
+private material. A key of another type refuses `key-not-ed25519`; a file that is not one whole
+public key, including trailing bytes and an empty file, refuses `key-malformed`.
+
+`repo inspect --file FILE [--root ROOT] [--now UTC]` summarizes a metadata file, or the bare
+`signed` bytes about to be signed, without writing anything. It prints the role, version, expiry
+with the days left (negative once expired), the SHA-256 and length of the file, for a root each
+role's threshold and key ids, for targets one `entry NAME VERSION KIND LENGTH SHA256` line per
+target, the signature count, and with `--root` (a root is checked against itself without one) a
+verdict per signature: `valid`, `invalid` or `unknown-key`, then `threshold K valid V met` or
+`not-met`. It reports and does not judge: a missing signature, an invalid one or an expired file
+still exits 0. A file that is not canonical metadata refuses by name, for example
+`non-canonical-signed`, and an unreadable one `not-found`.
+
 Trust directories belong to an unprivileged caller. At euid 0 every command that
 takes one refuses `privileged-trust-refused`: the key directories of `repo
 keygen`, `repo init`, `repo rotate` and `repo publish`, the repository directories
