@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""check-glibc-floor BINARY [--floor X.Y]: the newest glibc symbol version a Linux binary asks for, against a floor.
+
+The Linux release archive is a dynamic build that must run on the oldest host that serves the repository
+(AlmaLinux 9, glibc 2.34). A build image that asks for a newer symbol version would fail there at start, so the
+newest GLIBC_x.y in the file must not exceed the floor. A static or non-glibc binary names none and passes.
+"""
+import re
+import sys
+from pathlib import Path
+
+
+def version(text):
+    return tuple(int(part) for part in text.split('.'))
+
+
+def main(argv):
+    floor = '2.34'
+    args = argv[1:]
+    if '--floor' in args:
+        i = args.index('--floor')
+        floor = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 1:
+        print('usage: check-glibc-floor BINARY [--floor X.Y]')
+        return 2
+    data = Path(args[0]).read_bytes()
+    if not data.startswith(b'\x7fELF'):
+        print('FAIL glibc-floor not an ELF file')
+        return 1
+    found = sorted({m.decode() for m in re.findall(rb'GLIBC_([0-9]+(?:\.[0-9]+)+)', data)}, key=version)
+    if not found:
+        print('PASS glibc-floor no versioned glibc symbols')
+        return 0
+    newest = found[-1]
+    if version(newest) > version(floor):
+        print(f'FAIL glibc-floor GLIBC_{newest} is above the floor {floor}')
+        return 1
+    print(f'PASS glibc-floor max={newest} floor={floor}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
