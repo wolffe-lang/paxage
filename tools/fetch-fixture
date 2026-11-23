@@ -219,6 +219,7 @@ class Server(http.server.ThreadingHTTPServer):
         self.log = []
         self.heads = []
         self.close_each = False
+        self.not_found_headers = []
         self.tls_errors = []
         self.released = threading.Event()
         self.lock = threading.Lock()
@@ -321,7 +322,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         body = self.body_of(path)
         if body is None:
-            return self.send_plain(404, b'not found\n')
+            return self.send_plain(404, b'not found\n', headers=list(self.server.not_found_headers))
         if kind == 'short' or kind == 'stall':
             self.send_response(200)
             self.send_header('Content-Length', str(len(body)))
