@@ -272,6 +272,12 @@ def rows():
     if os.geteuid() != 0:
         p = run('install', env={})
         check(p.returncode == 2 and 'must run as root' in text(p), 'scripts-install-refuses-without-root', text(p))
+    # where there is no systemctl (a container, or a machine without systemd) the unit steps say so and go on
+    p = run('install', '--check', '--enable-timers', env={'PXG_INSTALL_ROOT': str(prefix)})
+    lines = text(p).splitlines()
+    check(p.returncode == 0 and 'skip: systemctl daemon-reload (systemctl is not present)' in lines
+          and not any(l.startswith('do:') for l in lines) and any(l.startswith('would: create user') for l in lines),
+          'scripts-install-skips-systemd-where-absent', text(p))
     p = run('install', '--nonsense', env=ienv)
     check(p.returncode == 2, 'scripts-install-unknown-option', text(p))
 
