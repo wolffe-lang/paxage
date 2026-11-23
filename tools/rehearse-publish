@@ -133,20 +133,21 @@ def rows():
     check(not (STATE / 'publish.lock').exists() and not list(STATE.glob('upload.*')) and not list(STATE.glob('resign.*')),
           'rehearse-no-lock-or-scratch-left')
 
-    v = pxg('repo', 'verify', '--repo', DOCROOT.as_uri(), '--root', root1, '--state', WORK / 'vs', '--cache', WORK / 'vc',
-            '--now', ct.NOW)
+    v = pxg('repo', 'verify', '--repo', DOCROOT.as_uri(), '--root', root1, '--state', WORK / 'vs', '--cache', WORK / 'vc')
     check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'rehearse-client-verify', ct.describe(v))
 
+    # A client on a fresh machine has no --now: every client step reads the system clock, as the bootstrap does. (A
+    # bootstrap on the system clock and an update on an earlier fixed time refuse clock-before-floor, as T13 says.)
     state, cache = WORK / 'cs', WORK / 'cc'
     ok(pxg('bootstrap', '--repo', DOCROOT.as_uri(), '--root', root1, '--state', state), 'rehearse-client-bootstrap',
        last='bootstrap ok')
-    u = pxg('update', '--repo', DOCROOT.as_uri(), '--state', state, '--now', ct.NOW)
+    u = pxg('update', '--repo', DOCROOT.as_uri(), '--state', state)
     check(u.returncode == 0, 'rehearse-client-update', ct.describe(u))
     newest = max(int(p.name.split('.')[0]) for p in (DOCROOT / 'metadata').glob('*.targets.json'))
     listed = json.loads((DOCROOT / 'metadata' / f'{newest}.targets.json').read_text())['signed']['targets']
     check(len(listed) >= 6, 'rehearse-targets-listed', str(sorted(listed)))
     for name in sorted(listed):
-        f = pxg('fetch', '--repo', DOCROOT.as_uri(), '--state', state, '--cache', cache, '--target', name, '--now', ct.NOW)
+        f = pxg('fetch', '--repo', DOCROOT.as_uri(), '--state', state, '--cache', cache, '--target', name)
         check(f.returncode == 0 and f.stdout.splitlines()[-1:] == ['fetch ok'], f'rehearse-client-fetch-{name}', ct.describe(f))
 
     # the same scripts refuse what they should, on the installed copy
