@@ -150,6 +150,14 @@ def rows():
         f = pxg('fetch', '--repo', DOCROOT.as_uri(), '--state', state, '--cache', cache, '--target', name)
         check(f.returncode == 0 and f.stdout.splitlines()[-1:] == ['fetch ok'], f'rehearse-client-fetch-{name}', ct.describe(f))
 
+    # A clock rolled back after the client has seen the repository is refused by name, and the refusal changes nothing:
+    # the same update on the system clock still succeeds.
+    back = pxg('update', '--repo', DOCROOT.as_uri(), '--state', state, '--now', ct.NOW)
+    check(back.returncode == 1 and back.stderr.strip() == 'paxage: clock-before-floor' and not back.stdout.strip(),
+          'rehearse-client-rolled-back-clock-refused', ct.describe(back))
+    again = pxg('update', '--repo', DOCROOT.as_uri(), '--state', state)
+    check(again.returncode == 0, 'rehearse-client-update-after-refusal', ct.describe(again))
+
     # the same scripts refuse what they should, on the installed copy
     before = sorted(str(p) for p in DOCROOT.rglob('*'))
     env = dict(os.environ, SSH_ORIGINAL_COMMAND='ls')
