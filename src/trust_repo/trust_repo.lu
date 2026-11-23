@@ -756,7 +756,9 @@ fn verify_all(o: options.Options, now: int) -> str {
 }
 
 /// Run one test-only repository operation, with an exclusive publisher lock.
-pub fn run(verb: str, o: options.Options, now: int) -> str { run_with(verb, o, now, failpoint.none()) }
+pub fn run(verb: str, o: options.Options, now: int) -> str {
+    run_with(verb, o, now, failpoint.none())
+}
 
 /// The same, with a named transition armed (the test-only executable's commit).
 pub fn run_with(verb: str, o: options.Options, now: int, f: failpoint.Fail) -> str {
