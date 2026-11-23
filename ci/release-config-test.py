@@ -57,6 +57,41 @@ class ReleaseBuild(unittest.TestCase):
             argv = (root / 'compiler.argv').read_text().splitlines()
             self.assertEqual(argv, ['build', '--release', '--deny-warnings', 'src/paxage.lu', '-o', 'target/release/paxage'])
 
+    def release_build(self, binary_bytes):
+        """Run the release build line with a stand-in compiler that writes binary_bytes; returns the result."""
+        config = json.loads((ROOT / '.github/release.json').read_text())
+        (ROOT / 'target').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='release floor ', dir=ROOT / 'target') as tmp:
+            root = Path(tmp)
+            for name in ('tools', '.wolf-bin', 'home', 'tmp'):
+                (root / name).mkdir()
+            (root / 'tools/lib-toolchain.sh').write_text('WOLF="$PAXAGE_ROOT/.wolf-bin/wolf"\nexport WOLF\n')
+            (root / 'tools/check-glibc-floor').write_bytes((ROOT / 'tools/check-glibc-floor').read_bytes())
+            (root / 'payload.bin').write_bytes(binary_bytes)
+            compiler = root / '.wolf-bin/wolf'
+            compiler.write_text(
+                '#!/bin/sh\nset -eu\nout=\nwhile [ "$#" -gt 0 ]; do\n'
+                '  if [ "$1" = -o ]; then shift; out=$1; fi\n  shift\ndone\n'
+                'cp payload.bin "$out"\nchmod 755 "$out"\n')
+            compiler.chmod(0o755)
+            env = dict(os.environ, HOME=str(root / 'home'), TMPDIR=str(root / 'tmp'), SHELL='/bin/sh')
+            env.pop('PAXAGE_ROOT', None)
+            env.pop('WOLF', None)
+            return subprocess.run(config['build'], cwd=root, env=env, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def test_release_build_checks_the_glibc_floor(self):
+        elf = b'\x7fELF' + b'\0' * 12
+        ok = self.release_build(elf + b'GLIBC_2.34\0')
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        self.assertIn('PASS glibc-floor max=2.34', ok.stdout)
+        high = self.release_build(elf + b'GLIBC_2.38\0')
+        self.assertNotEqual(high.returncode, 0, high.stdout)
+        self.assertIn('FAIL glibc-floor GLIBC_2.38 is above the floor 2.34', high.stdout)
+        other = self.release_build(b'\xcf\xfa\xed\xfe not an ELF binary')
+        self.assertEqual(other.returncode, 0, other.stdout)
+        self.assertIn('SKIP glibc-floor not an ELF file', other.stdout)
+
     def test_fetch_toolchain_runs_with_no_tmpdir_set(self):
         # The shared release workflow runs tools/fetch-toolchain with whatever
         # environment the runner has, and no TMPDIR. A stand-in curl that fails
