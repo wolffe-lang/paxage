@@ -203,6 +203,7 @@ class Pki:
                                     (leaf_cert, self.issuing.cert, self.middle.cert, cross)))
         self.chain = (bundle, leaf_key)
         self.roots_chain = roots(home / 'roots-chain.der', self.anchor, self.second)
+        self.roots_second = roots(home / 'roots-second.der', self.second)
         self.roots_p521 = roots(home / 'roots-p521.der', self.ca, self.p521)
 
 

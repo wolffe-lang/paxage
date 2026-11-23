@@ -750,6 +750,15 @@ def tls_cross_signed(e):
              'fetch-tls-cross-signed-chain-reached')
 
 
+@row('fetch-tls-cross-signed-via-presented')
+def tls_cross_signed_presented(e):
+    # Only the second root is trusted: the path must run through the cross-signed copy the server presents.
+    server, url = e.serve('xpresented', cert='chain')
+    state = trusted(e, url, 'fetch-tls-cross-signed-via-presented', e.pki.roots_second)
+    ct.check(state is not None and server.count('/xpresented/metadata/timestamp.json') >= 1,
+             'fetch-tls-cross-signed-via-presented-reached')
+
+
 @row('fetch-tls-cross-signed-no-anchor')
 def tls_cross_signed_no_anchor(e):
     tls_row(e, 'fetch-tls-cross-signed-no-anchor', 'xnone', 'chain', 'fetch: tls issuer_mismatch',
