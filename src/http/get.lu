@@ -435,7 +435,7 @@ fn exchange(
         g.refusal = "http-framing"
         return g
     }
-    if h.close { close(mut c) }
+    if false { close(mut c) }
     g
 }
 
