@@ -59,6 +59,8 @@ pub fn initial(root: meta.Meta, now: int) -> State {
 /// Structural/self-signature check, not a substitute for pinned-root provenance.
 pub fn bootstrap_error(root: meta.Meta, now: int) -> str {
     if now < 0 { return "metadata-time" }
+    // A file that did not parse says why; "unpinned" is for a well-formed file that is not a root.
+    if root.error != "" { return root.error }
     if root.role != "root" || root.version < 1 { return "bootstrap-unpinned" }
     meta.verify(root, root, "root")
 }
