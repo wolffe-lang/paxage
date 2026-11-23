@@ -141,6 +141,30 @@ and metadata are present and synced. A failed publish can leave unreferenced
 immutable files, but must not publish a timestamp that refers to incomplete data.
 Success ends `repo VERB ok`. No command accepts unmarked production signing keys.
 
+For production metadata paxage writes bytes and attaches signatures; it signs nothing:
+
+- `repo draft-root --version N --expires UTC --root-key PUB... --root-threshold K --targets-key PUB
+  --snapshot-key PUB --timestamp-key PUB [--previous ROOT] --out FILE` writes the canonical signed
+  bytes of a root from public keys (PEM or DER; one `--root-key` per root key, at most 16 keys in
+  all). It prints the version, expiry, each role's threshold and key ids, with `--previous` the
+  keys `added` and `removed` against the previous root (and a version that is not exactly one more
+  refuses `root-version`), then the SHA-256 and length of the bytes. A key shared between roles
+  refuses `role-keys`, a threshold of 0 or above the keys `threshold`.
+- `repo attach --signed FILE --signature PUB=SIGFILE... [--root ROOT] [--previous ROOT] --out FILE`
+  verifies each detached 64-byte signature over exactly the signed bytes and writes the envelope.
+  Metadata other than a root needs `--root` (`root-required`). Refusals are `unknown-signer`,
+  `bad-signature`, `signature-length`, `duplicate-signature`, `threshold-not-met` and, for a
+  rotation with `--previous`, `previous-threshold-not-met`. Nothing is written on a refusal.
+- `repo draft-targets --repo file:///STAGE --version N --expires UTC --manifest FILE... --buildinfo
+  FILE... --out FILE` copies each manifest, payload and buildinfo create-only into STAGE and writes
+  the canonical signed targets bytes, one `target NAME VERSION KIND LENGTH SHA256` line per file. A
+  manifest without its buildinfo refuses `target-incomplete`.
+
+In the ceremony the public keys are those of the labelled media (ROOT-A, ROOT-B, ROOT-C for the
+three root keys, TARGETS-1 for the targets key) and the online keys of the publish user
+`pxgpub`; the signing command is `openssl pkeyutl -sign -rawin -inkey KEY -in FILE -out SIG`.
+Outputs are create-only: an existing output refuses `immutable-rewrite`.
+
 `repo key-id --public FILE` reads an Ed25519 public key in OpenSSL's PEM or DER form and prints
 `key-id HEX` and `public HEX` (the 32 key bytes), then `repo key-id ok`. It reads no clock and no
 private material. A key of another type refuses `key-not-ed25519`; a file that is not one whole

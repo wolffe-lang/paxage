@@ -286,6 +286,21 @@ are harmless, not authorization. Default validity windows are timestamp 48 h,
 snapshot 14 d, targets 90 d, root 365 d, overridable explicitly per call.
 These defaults await project confirmation; they are not cryptographic facts.
 
+Production metadata is signed outside paxage. paxage never loads a production
+private key and never signs it: it writes the exact bytes to be signed
+(`repo draft-root`, `repo draft-targets`), an external signer such as the
+OpenSSL 3 command line makes a detached 64-byte Ed25519 signature over those
+bytes alone, and `repo attach` verifies each signature with the same strict
+check a client uses before it writes the envelope. The signature must be by a
+key the defining root lists for the role (`unknown-signer` otherwise), must
+verify over the signed bytes (`bad-signature`), must be exactly 64 bytes
+(`signature-length`), may appear once per key (`duplicate-signature`), and the
+role's threshold must be met (`threshold-not-met`). A new root is checked
+against its own threshold and, when the previous root is named, against the
+previous root's too (`previous-threshold-not-met`). Every output is
+create-only. Signing keys and their handling are outside this document; the
+verbs read public keys only.
+
 ## T16 — Cache and staging
 
 Unverified bytes live separately in `.part`. Stream each entire target through
