@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""canary: the published repository at https://pkg.lupp.us/pax/ as a client sees it, judged from outside.
+
+`check-canary --self-test` judges fixed inputs with no network (the gauntlet runs it). `check-canary` is the live
+canary the scheduled workflow runs. It is red when any of these holds:
+  - the timestamp has less than 12 hours left (the re-sign timer has stopped or failed);
+  - the server certificate has less than 14 days left;
+  - the TLS chain no longer completes under PAX's roots with the std client (an `update` ends in a TLS refusal);
+  - `repo verify` of the whole repository against the pinned root fails;
+  - the absence rows of tools/check-fetch-live fail (an absent file must be a plain 404 and must not be cached).
+The pinned root is ci/canary-root.json. Until the repository's root is published and committed there, the live run
+prints a named SKIP and exits 0.
+"""
+import datetime
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import urllib.request
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parent.parent
+PIN = ROOT / 'ci/canary-root.json'
+MIN_TIMESTAMP_HOURS = 12
+MIN_CERT_DAYS = 14
+FAILED = []
+
+
+def parse(text):
+    return datetime.datetime.strptime(text, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+
+
+def judge_timestamp(expires, now):
+    left = (parse(expires) - now).total_seconds() / 3600
+    return None if left >= MIN_TIMESTAMP_HOURS else f'timestamp has {left:.1f} h left, under {MIN_TIMESTAMP_HOURS}'
+
+
+def judge_cert(not_after, now):
+    left = (not_after - now).total_seconds() / 86400
+    return None if left >= MIN_CERT_DAYS else f'certificate has {left:.1f} days left, under {MIN_CERT_DAYS}'
+
+
+def emit(ok, row, detail=''):
+    if not ok:
+        FAILED.append(row)
+    print(f'{"PASS" if ok else "FAIL"} {row}{"" if ok else " " + detail}', flush=True)
+    return ok
+
+
+def self_test():
+    now = datetime.datetime(2026, 12, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    emit(judge_timestamp('2026-12-03T12:00:00Z', now) is None, 'canary-timestamp-fresh')
+    emit(judge_timestamp('2026-12-02T00:00:00Z', now) is None, 'canary-timestamp-exactly-twelve-hours')
+    emit(judge_timestamp('2026-12-01T23:59:59Z', now) is not None, 'canary-timestamp-just-under')
+    emit(judge_timestamp('2026-11-30T00:00:00Z', now) is not None, 'canary-timestamp-expired')
+    emit(judge_cert(now + datetime.timedelta(days=14), now) is None, 'canary-cert-fourteen-days')
+    emit(judge_cert(now + datetime.timedelta(days=13, hours=23), now) is not None, 'canary-cert-just-under')
+    emit(judge_cert(now - datetime.timedelta(days=1), now) is not None, 'canary-cert-expired')
+    return 1 if FAILED else 0
+
+
+def live():
+    if not PIN.exists():
+        print('SKIP canary-live reason=ci/canary-root.json is not committed: the repository root is not published yet')
+        return 0
+    spec = importlib.util.spec_from_loader('fetch_live', importlib.machinery.SourceFileLoader(
+        'fetch_live', str(ROOT / 'tools/check-fetch-live')))
+    fl = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fl)
+    work = ROOT / 'target/canary'
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True, mode=0o700)
+    fl.WORK = work
+    pem, der = fl.roots()
+    if der is None:
+        return 1
+    ctx = ssl.create_default_context(cafile=str(pem))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        with socket.create_connection((fl.HOST, 443), timeout=30) as raw, ctx.wrap_socket(raw, server_hostname=fl.HOST) as s:
+            not_after = datetime.datetime.fromtimestamp(ssl.cert_time_to_seconds(s.getpeercert()['notAfter']),
+                                                        datetime.timezone.utc)
+        problem = judge_cert(not_after, now)
+        emit(problem is None, 'canary-certificate', problem or '')
+    except OSError as e:
+        emit(False, 'canary-certificate', f'handshake failed: {e}')
+    try:
+        with urllib.request.urlopen(urllib.request.Request(fl.REPO + 'metadata/timestamp.json'), timeout=30,
+                                    context=ctx) as r:
+            expires = json.load(r)['signed']['expires']
+        problem = judge_timestamp(expires, now)
+        emit(problem is None, 'canary-timestamp', problem or '')
+    except (OSError, ValueError, KeyError) as e:
+        emit(False, 'canary-timestamp', f'unreadable: {e}')
+    bin_ = fl.BIN
+    p = subprocess.run([str(bin_), 'repo', 'verify', '--repo', fl.REPO, '--root', str(PIN), '--state', str(work / 'state'),
+                        '--cache', str(work / 'cache'), '--tls-roots', str(der)], capture_output=True, text=True, timeout=600)
+    emit(p.returncode == 0, 'canary-repo-verify', f'exit={p.returncode} stdout={p.stdout[-300:]!r} stderr={p.stderr[-300:]!r}')
+    problems = fl.absence_headers(fl.HOST, context=ctx)
+    emit(not problems, 'canary-absence-headers', '; '.join(problems))
+    if FAILED:
+        print(f'canary: {len(FAILED)} red rows: {" ".join(FAILED)}', flush=True)
+        return 1
+    print('PASS canary', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(self_test() if sys.argv[1:] == ['--self-test'] else live())
