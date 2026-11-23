@@ -732,12 +732,16 @@ def connection_close_redial(e):
         return
     server.close_each = True
     before = len(server.log)
+    started = time.monotonic()
     p = install(root, e.pki.roots, 'beta')
+    took = time.monotonic() - started
     if not ct.ok(p, 'fetch-connection-close-redial', last='install ok generation=1'):
         return
     asked = len(server.log) - before
     ct.check(asked >= 8 and server.connections >= asked, 'fetch-connection-close-redial-dialled-each',
              f'requests={asked} connections={server.connections}')
+    # A client that reused the closed connection would fail, wait out the shipped 10 s pause and redial.
+    ct.check(took < 8, 'fetch-connection-close-redial-no-retry', f'seconds={took:.1f}')
 
 
 @row('fetch-tls-cross-signed-chain')
