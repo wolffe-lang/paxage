@@ -149,7 +149,9 @@ fn stage_entries(repo: str, o: options.Options) -> Staged {
         let name = schema.string(d, 0, "name")
         let version = schema.string(d, 0, "version")
         let arch = schema.string(d, 0, "arch")
-        if !source.ends_with(".manifest") { return Staged { entries: List[meta.Entry](), error: "target-kind" } }
+        if !source.ends_with(".manifest") {
+            return Staged { entries: List[meta.Entry](), error: "target-kind" }
+        }
         let payload = source[0..source.len - 9] + ".payload.tar"
         let paths = [source, payload, o.buildinfos[i]]
         let kinds = ["manifest", "payload", "buildinfo"]
@@ -157,7 +159,9 @@ fn stage_entries(repo: str, o: options.Options) -> Staged {
         for j in 0..3 {
             let path = paths[j]
             let measured = cache.measure(path, 17179869184)
-            if measured.error != "" { return Staged { entries: List[meta.Entry](), error: measured.error } }
+            if measured.error != "" {
+                return Staged { entries: List[meta.Entry](), error: measured.error }
+            }
             if j == 2 && measured.digest != schema.string(d, 0, "buildinfo") {
                 return Staged { entries: List[meta.Entry](), error: "buildinfo-hash" }
             }
@@ -171,7 +175,9 @@ fn stage_entries(repo: str, o: options.Options) -> Staged {
                 arch: copy arch,
                 kind: kinds[j],
             }
-            if !meta.logical(e.path) { return Staged { entries: List[meta.Entry](), error: "logical-name" } }
+            if !meta.logical(e.path) {
+                return Staged { entries: List[meta.Entry](), error: "logical-name" }
+            }
             let copied = add_file(repo, path, e)
             if copied != "" { return Staged { entries: List[meta.Entry](), error: copied } }
             (mut entries).push(e)
@@ -313,7 +319,15 @@ fn draft_root(o: options.Options, now: int) -> str {
     if timestamp.error != "" { return timestamp.error }
     let out = options.flag_value(o, "--out")
     if out == "" { return "missing-option-value" }
-    let signed = writer.root_signed(version, expires, roots, threshold, targets.public, snapshot.public, timestamp.public)
+    let signed = writer.root_signed(
+        version,
+        expires,
+        roots,
+        threshold,
+        targets.public,
+        snapshot.public,
+        timestamp.public,
+    )
     if signed == "" { return "metadata-encoding" }
     let bytes = signed.bytes()
     let m = meta.parse(wrap(bytes), "root")
@@ -397,12 +411,16 @@ fn attach(o: options.Options) -> str {
         let id = meta.digest(writer.key_object(key.public).bytes())
         for seen in ids { if seen == id { return "duplicate-signature" } }
         let raw = io.read(pair[eq + 1..], 65)
-        if raw.error == "metadata-byte-limit" || raw.error == "" && raw.bytes.len != 64 { return "signature-length" }
+        if raw.error == "metadata-byte-limit" || raw.error == "" && raw.bytes.len != 64 {
+            return "signature-length"
+        }
         if raw.error != "" { return raw.error }
         var in_new = false
         for expected in defining.roles[ri].keys { if expected == id { in_new = true } }
         var in_old = false
-        if pi >= 0 { for expected in previous.roles[pi].keys { if expected == id { in_old = true } } }
+        if pi >= 0 {
+            for expected in previous.roles[pi].keys { if expected == id { in_old = true } }
+        }
         if !in_new && !in_old { return "unknown-signer" }
         let public = hex.decode(key.public) else List[byte]()
         if !curve.verify_strict(public, signed_in.bytes, raw.bytes) { return "bad-signature" }
@@ -420,7 +438,11 @@ fn attach(o: options.Options) -> str {
     let check = meta.parse(bytes, m.role)
     if check.error != "" { return check.error }
     var verdict = ""
-    if m.role == "root" { verdict = meta.verify(check, check, "root") } else { verdict = meta.verify(check, defining, m.role) }
+    if m.role == "root" {
+        verdict = meta.verify(check, check, "root")
+    } else {
+        verdict = meta.verify(check, defining, m.role)
+    }
     if verdict != "" { return verdict }
     let error = io.create(out, bytes)
     if error != "" { return error }
@@ -449,7 +471,9 @@ fn draft_targets(repo: str, o: options.Options, now: int) -> str {
     if m.error != "" { return m.error }
     let error = io.create(out, bytes)
     if error != "" { return error }
-    for e in m.entries { print("target {e.name} {e.package_version} {e.kind} {e.length} {e.digest}") }
+    for e in m.entries {
+        print("target {e.name} {e.package_version} {e.kind} {e.length} {e.digest}")
+    }
     print("version {m.version}")
     print("expires {writer.date(m.expires)}")
     print("sha256 {meta.digest(bytes)}")
