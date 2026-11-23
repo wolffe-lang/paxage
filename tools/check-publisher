@@ -145,7 +145,16 @@ def rows():
     check(p.returncode == 0 and (meta / 'timestamp.json').read_bytes() == timestamp1.read_bytes(),
           'publisher-commit-timestamp', ct.describe(p))
     refused(commit(docroot, timestamp1), 'publisher-commit-timestamp-same-version', 1, 'publish-version')
-    refused(commit(docroot, targets1), 'publisher-commit-rewrite', 1, 'immutable-rewrite')
+    # the same bytes again are already there (a commit repeated after an interruption); other bytes under the name refuse
+    p = commit(docroot, targets1)
+    check(p.returncode == 0 and (meta / '1.targets.json').read_bytes() == targets1.read_bytes(),
+          'publisher-commit-identical-again-is-a-noop', ct.describe(p))
+    other_signed = out / '1.targets.other.signed'
+    pxg('repo', 'draft-targets', '--repo', docroot.as_uri(), '--version', 1, '--expires', '2027-12-24T00:00:00Z',
+        '--manifest', manifest, '--buildinfo', buildinfo, '--out', other_signed)
+    other_targets = out / '1.targets.other.json'
+    sign_attach(tg, other_signed, other_targets, root1)
+    refused(commit(docroot, other_targets), 'publisher-commit-rewrite', 1, 'immutable-rewrite')
 
     # the whole repository, read through the client's own code
     p = pxg('repo', 'verify', '--repo', docroot.as_uri(), '--root', root1, '--state', WORK / 'verify-state',
