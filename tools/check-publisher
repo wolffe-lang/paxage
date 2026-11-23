@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""The publisher's verbs end to end: draft the snapshot and the timestamp, commit versioned metadata into a docroot
+(objects first, timestamp last, create-only), and verify a whole repository with the client's own code.
+
+Keys are throwaway OpenSSL Ed25519 keys under target/, signing is OpenSSL's (as in tools/check-openssl-ceremony); the
+docroot is a plain directory read back through file:// and through paxage's ordinary bootstrap, update and fetch.
+Rows: a first publish (root, targets, snapshot, timestamp), a daily timestamp re-sign and a weekly snapshot re-sign,
+the refusals (a snapshot or timestamp naming something absent, a rewrite, an old timestamp, a damaged signature, objects
+missing), the order of writes, and a verify that finds an altered object.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+oc = load('openssl_ceremony', 'check-openssl-ceremony')
+ct = oc.ct
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/publisher'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+oc.BIN, oc.WORK = BIN, WORK
+NOW = ct.NOW
+EXPIRES = oc.EXPIRES
+check, refused, ok, pxg = oc.check, oc.refused, oc.ok, oc.pxg
+
+
+def canonical(doc):
+    return oc.canonical(doc)
+
+
+def sign_attach(key_or_keys, signed, out, root):
+    keys = key_or_keys if isinstance(key_or_keys, list) else [key_or_keys]
+    if not Path(signed).exists():
+        Path(signed).write_bytes(b'the draft verb wrote nothing')  # later rows stay red by their own names
+    pairs = [(k, k.sign(signed)) for k in keys]
+    return oc.attach(signed, pairs, out, root=root)
+
+
+def version_of(path):
+    try:
+        return json.loads(Path(path).read_text())['signed']['version']
+    except (OSError, ValueError, KeyError):
+        return -1
+
+
+def commit(docroot, *files):
+    args = ['repo', 'commit', '--repo', docroot.as_uri(), '--now', NOW]
+    for f in files:
+        args += ['--add', f]
+    return pxg(*args)
+
+
+def rows():
+    names = ('r1', 'r2', 'r3', 'tg', 'sn', 'ts', 'stranger')
+    k = {n: oc.Key(n) for n in names}
+    r1, r2, r3, tg, sn, ts, stranger = (k[n] for n in names)
+    out = WORK / 'out'
+    out.mkdir()
+    docroot = WORK / 'docroot'
+    docroot.mkdir()
+    meta = docroot / 'metadata'
+
+    # root
+    signed = out / '1.root.signed'
+    pxg(*oc.root_args(1, [r1, r2, r3], tg, sn, ts, 2, signed))
+    root1 = out / '1.root.json'
+    sign_attach([r1, r2], signed, root1, None)
+    p = commit(docroot, root1)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo commit ok'], 'publisher-commit-root', ct.describe(p))
+    check((meta / '1.root.json').is_file() and (meta / '1.root.json').read_bytes() == root1.read_bytes(),
+          'publisher-commit-root-bytes')
+
+    # targets: objects staged into the docroot itself, then the signed list committed
+    pkg = ct.simple('alpha')
+    manifest, buildinfo = pkg.build(WORK / 'packages')
+    signed_t = out / '1.targets.signed'
+    p = pxg('repo', 'draft-targets', '--repo', docroot.as_uri(), '--version', 1, '--expires', EXPIRES,
+            '--manifest', manifest, '--buildinfo', buildinfo, '--out', signed_t)
+    ok(p, 'publisher-draft-targets', last='repo draft-targets ok')
+    targets1 = out / '1.targets.json'
+    sign_attach(tg, signed_t, targets1, root1)
+    p = commit(docroot, targets1)
+    check(p.returncode == 0 and (meta / '1.targets.json').is_file(), 'publisher-commit-targets', ct.describe(p))
+
+    # snapshot
+    signed_s = out / '1.snapshot.signed'
+    p = pxg('repo', 'draft-snapshot', '--repo', docroot.as_uri(), '--version', 1, '--targets-version', 1,
+            '--expires', EXPIRES, '--out', signed_s)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo draft-snapshot ok'], 'publisher-draft-snapshot',
+          ct.describe(p))
+    if signed_s.exists():
+        doc = json.loads(signed_s.read_text())
+        t1 = (meta / '1.targets.json').read_bytes()
+        want = {'_type': 'snapshot', 'expires': EXPIRES, 'spec_version': '1.0.37', 'version': 1,
+                'meta': {'targets.json': {'hashes': {'sha256': hashlib.sha256(t1).hexdigest()}, 'length': len(t1),
+                                          'version': 1}}}
+        check(doc == want and signed_s.read_bytes() == canonical(want), 'publisher-draft-snapshot-bytes',
+              signed_s.read_text()[:200])
+    snapshot1 = out / '1.snapshot.json'
+    sign_attach(sn, signed_s, snapshot1, root1)
+
+    # a snapshot into a docroot that does not hold its targets is refused, nothing written
+    empty = WORK / 'docroot-empty'
+    empty.mkdir()
+    commit(empty, root1)
+    p = commit(empty, snapshot1)
+    refused(p, 'publisher-commit-snapshot-dangling', 1, 'commit-dangling')
+    check(not (empty / 'metadata/1.snapshot.json').exists(), 'publisher-commit-snapshot-dangling-writes-nothing')
+    p = commit(docroot, snapshot1)
+    check(p.returncode == 0 and (meta / '1.snapshot.json').is_file(), 'publisher-commit-snapshot', ct.describe(p))
+
+    # timestamp, daily
+    signed_ts = out / '1.timestamp.signed'
+    p = pxg('repo', 'draft-timestamp', '--repo', docroot.as_uri(), '--version', 1, '--snapshot-version', 1,
+            '--expires', EXPIRES, '--out', signed_ts)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo draft-timestamp ok'], 'publisher-draft-timestamp',
+          ct.describe(p))
+    timestamp1 = out / '1.timestamp.json'
+    sign_attach(ts, signed_ts, timestamp1, root1)
+    dangling = WORK / 'docroot-dangling'
+    dangling.mkdir()
+    commit(dangling, root1)
+    refused(commit(dangling, timestamp1), 'publisher-commit-timestamp-dangling', 1, 'commit-dangling')
+    check(not (dangling / 'metadata/timestamp.json').exists(), 'publisher-commit-timestamp-dangling-writes-nothing')
+    p = commit(docroot, timestamp1)
+    check(p.returncode == 0 and (meta / 'timestamp.json').read_bytes() == timestamp1.read_bytes(),
+          'publisher-commit-timestamp', ct.describe(p))
+    refused(commit(docroot, timestamp1), 'publisher-commit-timestamp-same-version', 1, 'publish-version')
+    refused(commit(docroot, targets1), 'publisher-commit-rewrite', 1, 'immutable-rewrite')
+
+    # the whole repository, read through the client's own code
+    p = pxg('repo', 'verify', '--repo', docroot.as_uri(), '--root', root1, '--state', WORK / 'verify-state',
+            '--cache', WORK / 'verify-cache', '--now', NOW)
+    lines = p.stdout.splitlines()
+    check(p.returncode == 0 and lines[-1:] == ['repo verify ok'] and 'verified targets 3' in lines,
+          'publisher-verify', ct.describe(p))
+
+    # a daily timestamp re-sign and a weekly snapshot re-sign: new versions over the same files
+    signed_ts2 = out / '2.timestamp.signed'
+    pxg('repo', 'draft-timestamp', '--repo', docroot.as_uri(), '--version', 2, '--snapshot-version', 1,
+        '--expires', EXPIRES, '--out', signed_ts2)
+    timestamp2 = out / '2.timestamp.json'
+    sign_attach(ts, signed_ts2, timestamp2, root1)
+    p = commit(docroot, timestamp2)
+    check(p.returncode == 0 and version_of(meta / 'timestamp.json') == 2,
+          'publisher-resign-timestamp', ct.describe(p))
+    signed_s2 = out / '2.snapshot.signed'
+    pxg('repo', 'draft-snapshot', '--repo', docroot.as_uri(), '--version', 2, '--targets-version', 1,
+        '--expires', EXPIRES, '--out', signed_s2)
+    snapshot2 = out / '2.snapshot.json'
+    sign_attach(sn, signed_s2, snapshot2, root1)
+    signed_ts3 = out / '3.timestamp.signed'
+    p = commit(docroot, snapshot2)
+    check(p.returncode == 0 and (meta / '2.snapshot.json').is_file(), 'publisher-resign-snapshot', ct.describe(p))
+    pxg('repo', 'draft-timestamp', '--repo', docroot.as_uri(), '--version', 3, '--snapshot-version', 2,
+        '--expires', EXPIRES, '--out', signed_ts3)
+    timestamp3 = out / '3.timestamp.json'
+    sign_attach(ts, signed_ts3, timestamp3, root1)
+    check(commit(docroot, timestamp3).returncode == 0, 'publisher-resign-timestamp-over-new-snapshot')
+    p = pxg('repo', 'verify', '--repo', docroot.as_uri(), '--root', root1, '--state', WORK / 'verify-state2',
+            '--cache', WORK / 'verify-cache2', '--now', NOW)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo verify ok'], 'publisher-verify-after-resign',
+          ct.describe(p))
+
+    # a damaged signature is refused by the check commit makes itself
+    if not timestamp2.exists():
+        timestamp2.write_text('{"signatures":[{"keyid":"00","sig":"00"}],"signed":{}}')
+    env = json.loads(timestamp2.read_text())
+    env['signatures'][0]['sig'] = ('0' if env['signatures'][0]['sig'][0] != '0' else '1') + env['signatures'][0]['sig'][1:]
+    bad = out / 'bad.timestamp.json'
+    bad.write_bytes(canonical(env))
+    refused(commit(docroot, bad), 'publisher-commit-bad-signature', 1, 'signature-threshold')
+
+    # an old timestamp does not replace a new one
+    refused(commit(docroot, timestamp2), 'publisher-commit-old-timestamp', 1, 'publish-version')
+    check(version_of(meta / 'timestamp.json') == 3,
+          'publisher-commit-old-timestamp-keeps-new')
+
+    # the order of writes: the timestamp is the last file written
+    mtimes = {p.name: p.stat().st_mtime_ns for p in meta.iterdir()} if meta.is_dir() else {}
+    versioned = max([v for n, v in mtimes.items() if n != 'timestamp.json'], default=0)
+    check('timestamp.json' in mtimes and mtimes['timestamp.json'] >= versioned, 'publisher-timestamp-written-last', repr(mtimes))
+
+    # one commit of every file at once puts the timestamp last whatever the order given
+    fresh = WORK / 'docroot-one-shot'
+    fresh.mkdir()
+    shutil.copytree(docroot / 'targets', fresh / 'targets')
+    p = commit(fresh, timestamp1, snapshot1, targets1, root1)
+    check(p.returncode == 0, 'publisher-commit-one-shot', ct.describe(p))
+    m2 = {p.name: p.stat().st_mtime_ns for p in (fresh / 'metadata').iterdir()} if (fresh / 'metadata').is_dir() else {}
+    check(len(m2) == 4 and 'timestamp.json' in m2 and m2['timestamp.json'] >= max([v for n, v in m2.items() if n != 'timestamp.json'], default=0),
+          'publisher-one-shot-timestamp-last', repr(m2))
+
+    # objects the targets name must be present: otherwise nothing is written
+    bare = WORK / 'docroot-bare'
+    bare.mkdir()
+    commit(bare, root1)
+    refused(commit(bare, targets1), 'publisher-commit-targets-objects-missing', 1, 'commit-dangling')
+    check(not (bare / 'metadata/1.targets.json').exists(), 'publisher-commit-targets-objects-missing-writes-nothing')
+
+    # verify finds an altered object
+    copy = WORK / 'docroot-altered'
+    shutil.copytree(docroot, copy)
+    payload = sorted((copy / 'targets').glob('*.payload.tar'))[0]
+    data = bytearray(payload.read_bytes())
+    data[len(data) // 2] ^= 1
+    os.chmod(payload, 0o644)
+    payload.write_bytes(bytes(data))
+    p = pxg('repo', 'verify', '--repo', copy.as_uri(), '--root', root1, '--state', WORK / 'verify-state3',
+            '--cache', WORK / 'verify-cache3', '--now', NOW)
+    refused(p, 'publisher-verify-altered-object', 1, 'target-hash')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    oc.TOOL, version = fx.openssl_binary()
+    print(f'publisher: {version}', flush=True)
+    try:
+        rows()
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'publisher: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS publisher', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
