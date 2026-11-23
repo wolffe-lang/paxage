@@ -1,0 +1,72 @@
+# Settings shared by pxg-publish and pxg-resign. Sourced, never executed. Every value may be set in the environment
+# first (the checks do), then in the settings file named by PXG_SETTINGS (default /etc/pxg-publish.env).
+#
+#   PXG       the paxage binary
+#   OPENSSL   the OpenSSL 3 command line that makes the signatures (default: openssl)
+#   DOCROOT   the directory the web server serves as the repository (holds metadata/ and targets/)
+#   STATE     scratch space and the publish lock, owned by the publish user
+#   KEYS      the online signing keys: snapshot.key, snapshot.pub.pem, timestamp.key, timestamp.pub.pem
+#   ROOT_PIN  the pinned root that `repo verify` starts from (default: the first root in DOCROOT)
+#   UPLOAD_MAX_BYTES  the largest upload accepted
+#   TIMESTAMP_SECONDS, SNAPSHOT_SECONDS  how long a re-signed file stays valid (default 48 hours, 14 days)
+: "${PXG_SETTINGS:=/etc/pxg-publish.env}"
+if [ -f "$PXG_SETTINGS" ]; then
+  # shellcheck disable=SC1090
+  . "$PXG_SETTINGS"
+fi
+: "${PXG:=/usr/local/bin/pxg}"
+: "${OPENSSL:=openssl}"
+: "${DOCROOT:=/var/www/pkg.lupp.us/site/pax}"
+: "${STATE:=/var/lib/pxgpub}"
+: "${KEYS:=/home/pxgpub/keys}"
+: "${UPLOAD_MAX_BYTES:=536870912}"
+: "${TIMESTAMP_SECONDS:=172800}"
+: "${SNAPSHOT_SECONDS:=1209600}"
+: "${ROOT_PIN:=$DOCROOT/metadata/1.root.json}"
+
+die() { echo "pxg: $1" >&2; exit "${2:-1}"; }
+
+# The highest N of the files named N.SUFFIX in the metadata directory, or nothing.
+newest() {
+  ls "$DOCROOT/metadata" 2>/dev/null | sed -n "s/^\\([0-9][0-9]*\\)\\.$1\\.json\$/\\1/p" | sort -n | tail -1
+}
+
+# A time SECONDS from now, UTC, in the form the metadata uses.
+expiry() {
+  python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"
+}
+
+# One lock for every publisher process: a directory, taken once; a holder whose pid is gone is cleared.
+take_lock() {
+  [ "${PXG_LOCK_HELD:-}" = 1 ] && return 0
+  mkdir -p "$STATE"
+  local lock="$STATE/publish.lock"
+  if ! mkdir "$lock" 2>/dev/null; then
+    local holder
+    holder=$(cat "$lock/pid" 2>/dev/null || true)
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$lock"
+      mkdir "$lock" 2>/dev/null || die "locked" 7
+    else
+      die "locked" 7
+    fi
+  fi
+  echo $$ > "$lock/pid"
+  PXG_LOCK_DIR=$lock
+  export PXG_LOCK_HELD=1
+}
+release_lock() { [ -n "${PXG_LOCK_DIR:-}" ] && rm -rf "$PXG_LOCK_DIR"; return 0; }
+
+# A key file must exist and must not be readable by group or others.
+check_key() {
+  [ -f "$1" ] || die "key-missing $1"
+  if [ -n "$(find "$1" \( -perm -040 -o -perm -004 \) 2>/dev/null)" ]; then die "key-mode $1"; fi
+}
+
+# After files are placed: give them the web server's type where SELinux is in use, and say what every file now has.
+relabel() {
+  if command -v restorecon >/dev/null 2>&1; then
+    restorecon -R "$DOCROOT" || echo "pxg: restorecon failed" >&2
+    ls -Zd "$DOCROOT" "$DOCROOT"/metadata/* 2>/dev/null | sed 's/^/label /' || true
+  fi
+}

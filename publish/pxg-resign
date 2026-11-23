@@ -1,0 +1,56 @@
+#!/bin/bash
+# pxg-resign timestamp|snapshot: write the next version of the timestamp (daily) or the snapshot (weekly).
+#
+# What it changes: it adds one metadata file to the repository directory (DOCROOT/metadata): for `snapshot` the next
+# N.snapshot.json, then the next timestamp that names it; for `timestamp` the next timestamp over the newest snapshot.
+# Files already in the repository are never changed except timestamp.json, replaced last and atomically. It runs as the
+# publish user, reads the online key for the role, and changes nothing outside DOCROOT and STATE. The paxage binary
+# writes the bytes to sign and attaches the signature; OpenSSL makes the signature.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "${PXG_SETTINGS_LIB:-$here/pxg-settings}"
+role=${1:-}
+case $role in timestamp|snapshot) ;; *) die "usage: pxg-resign timestamp|snapshot" 2 ;; esac
+trap release_lock EXIT
+take_lock
+check_key "$KEYS/$role.key"
+[ -f "$KEYS/$role.pub.pem" ] || die "key-missing $KEYS/$role.pub.pem"
+latest_root=$(newest root)
+[ -n "$latest_root" ] || die "no-root"
+root_file="$DOCROOT/metadata/$latest_root.root.json"
+work=$(mktemp -d "$STATE/resign.XXXXXX")
+trap 'rm -rf "$work"; release_lock' EXIT
+repo="file://$DOCROOT"
+
+sign_and_commit() {   # NAME: the drafted bytes are $work/NAME.signed
+  "$OPENSSL" pkeyutl -sign -rawin -inkey "$KEYS/$role.key" -in "$work/$1.signed" -out "$work/$1.sig"
+  "$PXG" repo attach --signed "$work/$1.signed" --signature "$KEYS/$role.pub.pem=$work/$1.sig" \
+    --root "$root_file" --out "$work/$1.json" > /dev/null
+  "$PXG" repo commit --repo "$repo" --add "$work/$1.json" > /dev/null
+}
+
+if [ "$role" = snapshot ]; then
+  targets=$(newest targets); [ -n "$targets" ] || die "no-targets"
+  current=$(newest snapshot); current=${current:-0}
+  next=$((current + 1))
+  "$PXG" repo draft-snapshot --repo "$repo" --version "$next" --targets-version "$targets" \
+    --expires "$(expiry "$SNAPSHOT_SECONDS")" --out "$work/snapshot.signed" > /dev/null
+  sign_and_commit snapshot
+  echo "resigned snapshot $next"
+  # The timestamp that names it, signed with its own key.
+  PXG_LOCK_HELD=1 KEYS=$KEYS PXG=$PXG OPENSSL=$OPENSSL DOCROOT=$DOCROOT STATE=$STATE PXG_SETTINGS=$PXG_SETTINGS \
+    PXG_SETTINGS_LIB=${PXG_SETTINGS_LIB:-$here/pxg-settings} "$0" timestamp
+else
+  snapshot=$(newest snapshot); [ -n "$snapshot" ] || die "no-snapshot"
+  current=0
+  if [ -f "$DOCROOT/metadata/timestamp.json" ]; then
+    current=$("$PXG" repo inspect --file "$DOCROOT/metadata/timestamp.json" --root "$root_file" --now "$(expiry 0)" | sed -n 's/^version //p')
+  fi
+  next=$((current + 1))
+  "$PXG" repo draft-timestamp --repo "$repo" --version "$next" --snapshot-version "$snapshot" \
+    --expires "$(expiry "$TIMESTAMP_SECONDS")" --out "$work/timestamp.signed" > /dev/null
+  sign_and_commit timestamp
+  echo "resigned timestamp $next"
+fi
+relabel
