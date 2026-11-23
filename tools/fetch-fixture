@@ -200,7 +200,7 @@ class Pki:
         leaf_cert, leaf_key = self.issuing.leaf('xleaf', local)
         bundle = home / 'chain.pem'
         bundle.write_bytes(b''.join(Path(c).read_bytes() for c in
-                                    (leaf_cert, self.issuing.cert, self.middle.cert, cross)))
+                                    (leaf_cert, self.issuing.cert, self.middle.cert)))
         self.chain = (bundle, leaf_key)
         self.roots_chain = roots(home / 'roots-chain.der', self.anchor, self.second)
         self.roots_second = roots(home / 'roots-second.der', self.second)
