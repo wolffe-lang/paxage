@@ -16,7 +16,7 @@ Diagnostics start `paxage:` regardless of invocation name. Usage names both.
   `status`, `selected`, `removals`, `nodes`, `explanation`. Removals identify
   old and replacing packages; text is deterministic. No root/cache/trust writes.
 - `pack`, `verify-payload`, `stage`, `list-payload`: C4–C7 below.
-- `repo`, `bootstrap`, `update`, `fetch`: C8–C11 below; test-only signing and file transport.
+- `repo`, `bootstrap`, `update`, `fetch`: C8–C11 below; test-only keys made in paxage, external signing through the draft and attach verbs, and `file://` and `https://` transport.
 - `init`, `status`, `verify`, `install`, `remove`, `upgrade`, `autoremove`, `rescue`: C12–C16,
   transactions over a synthetic root (docs/TRANSACTIONS.md).
 - `--help` / `help`: usage, exit 0; `--version` aliases version.
@@ -139,7 +139,7 @@ referenced again only after whole-file verification; they are never rewritten.
 `metadata/timestamp.json` alone is atomically replaced, after referenced objects
 and metadata are present and synced. A failed publish can leave unreferenced
 immutable files, but must not publish a timestamp that refers to incomplete data.
-Success ends `repo VERB ok`. No command accepts unmarked production signing keys.
+Success ends `repo VERB ok`. The commands above that load a private key accept only keys marked `test-only`; production keys are never loaded by paxage (see the draft and attach verbs below).
 
 For production metadata paxage writes bytes and attaches signatures; it signs nothing:
 
