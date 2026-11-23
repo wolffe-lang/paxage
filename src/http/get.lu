@@ -219,7 +219,7 @@ fn send(mut c: Connection, target: str) -> str {
     for b in target.bytes() {
         if b as int <= 32 || b as int >= 127 || b == 35 as byte { return "http-framing" }
     }
-    let text = "GET {target} HTTP/1.1\r\nHost: {c.endpoint.authority}\r\nUser-Agent: paxage/0.1\r\nAccept-Encoding: identity\r\nConnection: keep-alive\r\n\r\n"
+    let text = "GET {target} HTTP/1.1\r\nHost: {c.endpoint.authority}\r\nUser-Agent: paxage/0.2\r\nAccept-Encoding: identity\r\nConnection: keep-alive\r\n\r\n"
     write_bytes(mut c, text.bytes()) else |e| match e {
         Unsupported(t) => { return tls_name(t) },
         _ => { return "reset" },
