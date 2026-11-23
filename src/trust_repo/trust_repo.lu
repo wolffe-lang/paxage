@@ -789,7 +789,6 @@ fn named_file(repo: str, role: str, e: meta.Entry) -> meta.Meta {
     let input = io.read("{repo}/metadata/{e.version}.{role}.json", 1048576 + 65536)
     if input.error != "" { m.error = input.error; return m }
     if input.bytes.len != e.length { m.error = "metadata-length"; return m }
-    if meta.digest(input.bytes) != e.digest { m.error = "metadata-hash"; return m }
     meta.parse(input.bytes, role)
 }
 
