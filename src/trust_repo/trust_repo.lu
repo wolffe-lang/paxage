@@ -586,7 +586,7 @@ fn referenced(repo: str, items: List[Item], role: str, e: meta.Entry) -> str {
     }
     if !found {
         let input = io.read("{repo}/metadata/{e.version}.{role}.json", 1048576 + 65536)
-        if input.error != "" { return "commit-dangling" }
+        if input.error != "" { return "" }
         bytes = copy input.bytes
     }
     if bytes.len != e.length || meta.digest(bytes) != e.digest { return "commit-dangling" }
