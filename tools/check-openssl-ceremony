@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""The externally signed path end to end, with OpenSSL 3 as the signer and as the independent verifier.
+
+paxage writes the bytes to be signed (repo draft-root, repo draft-targets), OpenSSL signs them with throwaway
+Ed25519 keys (pkeyutl -sign -rawin), paxage attaches the detached signatures (repo attach), and OpenSSL then verifies
+every attached signature again. Rows: a 2-of-3 root, the refusals for a short threshold, a stranger's key, wrong
+bytes, a short signature and an existing output, a rotation that replaces one root key and its old-threshold miss, and a
+targets batch signed by the targets key and read back. No key here is anything but a throwaway made under target/.
+OpenSSL's version is printed; rows need OpenSSL 3 or later (tools/fetch-fixture finds one).
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+ct = load('check_transactions', 'check-transactions')
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/openssl-ceremony'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+NOW = ct.NOW
+EXPIRES = '2027-11-23T00:00:00Z'
+TOOL = None
+
+
+def check(*a, **k):
+    try:
+        return ct.check(*a, **k)
+    except ct.RowFailed:
+        return False
+
+
+def refused(*a, **k):
+    try:
+        return ct.refused(*a, **k)
+    except ct.RowFailed:
+        return False
+
+
+def ok(*a, **k):
+    try:
+        return ct.ok(*a, **k)
+    except ct.RowFailed:
+        return False
+
+
+def pxg(*args):
+    return ct.pxg(*map(str, args), binary=BIN)
+
+
+def openssl(*args):
+    p = subprocess.run([TOOL, *map(str, args)], capture_output=True)
+    if p.returncode != 0:
+        raise SystemExit(f'FAIL openssl-ceremony-tool {args[0]} {p.stderr.decode()[-300:]}')
+    return p
+
+
+class Key:
+    def __init__(self, name):
+        self.name = name
+        self.priv = WORK / 'keys' / f'{name}.key'
+        self.pub = WORK / 'keys' / f'{name}.pub.pem'
+        self.priv.parent.mkdir(parents=True, exist_ok=True)
+        openssl('genpkey', '-algorithm', 'ED25519', '-out', self.priv)
+        openssl('pkey', '-in', self.priv, '-pubout', '-out', self.pub)
+        der = openssl('pkey', '-in', self.priv, '-pubout', '-outform', 'DER').stdout
+        self.public = der[12:].hex()
+        obj = '{"keytype":"ed25519","keyval":{"public":"%s"},"scheme":"ed25519"}' % self.public
+        self.id = hashlib.sha256(obj.encode()).hexdigest()
+
+    def sign(self, data_file, out=None):
+        out = out or WORK / 'sigs' / f'{self.name}-{Path(data_file).name}.sig'
+        out.parent.mkdir(parents=True, exist_ok=True)
+        openssl('pkeyutl', '-sign', '-rawin', '-inkey', self.priv, '-in', data_file, '-out', out)
+        return out
+
+    def verifies(self, data_file, sig_hex):
+        sig = WORK / 'verify.sig'
+        sig.write_bytes(bytes.fromhex(sig_hex))
+        p = subprocess.run([TOOL, 'pkeyutl', '-verify', '-rawin', '-pubin', '-inkey', str(self.pub), '-in',
+                            str(data_file), '-sigfile', str(sig)], capture_output=True)
+        return p.returncode == 0
+
+
+def canonical(doc):
+    return json.dumps(doc, separators=(',', ':'), sort_keys=True).encode()
+
+
+def root_args(version, roots, targets, snapshot, timestamp, threshold, out, previous=None):
+    args = ['repo', 'draft-root', '--version', version, '--expires', EXPIRES, '--root-threshold', threshold,
+            '--targets-key', targets.pub, '--snapshot-key', snapshot.pub, '--timestamp-key', timestamp.pub,
+            '--out', out]
+    for k in roots:
+        args += ['--root-key', k.pub]
+    if previous:
+        args += ['--previous', previous]
+    return args
+
+
+def attach(signed, pairs, out, root=None, previous=None):
+    args = ['repo', 'attach', '--signed', signed, '--out', out]
+    for key, sig in pairs:
+        args += ['--signature', f'{key.pub}={sig}']
+    if root:
+        args += ['--root', root]
+    if previous:
+        args += ['--previous', previous]
+    return pxg(*args)
+
+
+def rows(repo):
+    names = ('r1', 'r2', 'r3', 'r4', 'tg', 'sn', 'ts', 'stranger')
+    keys = {n: Key(n) for n in names}
+    r1, r2, r3, r4, tg, sn, ts, stranger = (keys[n] for n in names)
+    out = WORK / 'out'
+    out.mkdir()
+
+    # draft-root: the bytes to be signed, checked against an independent canonical rendering.
+    signed1 = out / '1.root.signed'
+    p = pxg(*root_args(1, [r1, r2, r3], tg, sn, ts, 2, signed1))
+    bytes1 = signed1.read_bytes() if signed1.exists() else b''
+    expected = {
+        '_type': 'root', 'consistent_snapshot': True, 'expires': EXPIRES, 'spec_version': '1.0.37', 'version': 1,
+        'keys': {k.id: {'keytype': 'ed25519', 'keyval': {'public': k.public}, 'scheme': 'ed25519'}
+                 for k in (r1, r2, r3, tg, sn, ts)},
+        'roles': {'root': {'keyids': sorted(k.id for k in (r1, r2, r3)), 'threshold': 2},
+                  'targets': {'keyids': [tg.id], 'threshold': 1},
+                  'snapshot': {'keyids': [sn.id], 'threshold': 1},
+                  'timestamp': {'keyids': [ts.id], 'threshold': 1}},
+    }
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo draft-root ok'], 'ceremony-draft-root',
+          ct.describe(p))
+    check(bytes1 == canonical(expected), 'ceremony-draft-root-bytes', bytes1[:200].decode(errors='replace'))
+    lines = p.stdout.splitlines()
+    check(f'sha256 {hashlib.sha256(bytes1).hexdigest()}' in lines and f'expires {EXPIRES}' in lines
+          and any(l.startswith('role root threshold 2 ') for l in lines), 'ceremony-draft-root-summary', p.stdout)
+    refused(pxg(*root_args(1, [r1, r2, r3], tg, sn, ts, 2, signed1)), 'ceremony-draft-root-output-exists', 1,
+            'immutable-rewrite')
+    refused(pxg(*root_args(1, [r1, r2, r3], tg, sn, ts, 4, out / 'x1.signed')), 'ceremony-draft-root-threshold', 1,
+            'threshold')
+    refused(pxg(*root_args(1, [r1, r2, r3], r1, sn, ts, 2, out / 'x2.signed')), 'ceremony-draft-root-shared-key', 1,
+            'role-keys')
+
+    # attach: two of three root signatures, verified again by OpenSSL.
+    if not signed1.exists():
+        signed1.write_bytes(b'draft-root wrote nothing')  # the rows below stay red by their own names
+    sigs = {k.name: k.sign(signed1) for k in (r1, r2, r3, stranger)}
+    root1 = out / '1.root.json'
+    p = attach(signed1, [(r1, sigs['r1']), (r3, sigs['r3'])], root1)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo attach ok'], 'ceremony-attach-root',
+          ct.describe(p))
+    if root1.exists():
+        env = json.loads(root1.read_text())
+        by_id = {k.id: k for k in (r1, r2, r3)}
+        good = (len(env['signatures']) == 2 and root1.read_bytes() == canonical(env)
+                and all(s['keyid'] in by_id and by_id[s['keyid']].verifies(signed1, s['sig'])
+                        for s in env['signatures'])
+                and canonical(env['signed']) == bytes1)
+        check(good, 'ceremony-attach-root-openssl-verifies', root1.read_text()[:200])
+        p = pxg('repo', 'inspect', '--file', root1, '--now', NOW)
+        check(p.returncode == 0 and 'threshold 2 valid 2 met' in p.stdout.splitlines(), 'ceremony-attach-root-inspect',
+              ct.describe(p))
+        state = out / 'bootstrap-state'
+        p = pxg('bootstrap', '--repo', repo.url, '--root', root1, '--state', state, '--now', NOW)
+        ok(p, 'ceremony-attach-root-bootstrap', last='bootstrap ok')
+    refused(attach(signed1, [(r1, sigs['r1'])], out / 'short.json'), 'ceremony-attach-threshold', 1,
+            'threshold-not-met')
+    check(not (out / 'short.json').exists(), 'ceremony-attach-threshold-writes-nothing')
+    refused(attach(signed1, [(r1, sigs['r1']), (stranger, sigs['stranger'])], out / 'stranger.json'),
+            'ceremony-attach-unknown-signer', 1, 'unknown-signer')
+    other = out / 'other.bytes'
+    other.write_bytes(b'not the root')
+    wrong = r2.sign(other, out / 'wrong.sig')
+    refused(attach(signed1, [(r1, sigs['r1']), (r2, wrong)], out / 'wrong.json'), 'ceremony-attach-bad-signature', 1,
+            'bad-signature')
+    stub = out / 'short.sig'
+    stub.write_bytes(sigs['r2'].read_bytes()[:63])
+    refused(attach(signed1, [(r1, sigs['r1']), (r2, stub)], out / 'stub.json'), 'ceremony-attach-signature-length', 1,
+            'signature-length')
+    refused(attach(signed1, [(r1, sigs['r1']), (r1, sigs['r1'])], out / 'dup.json'), 'ceremony-attach-duplicate', 1,
+            'duplicate-signature')
+    refused(attach(signed1, [(r1, sigs['r1']), (r3, sigs['r3'])], root1), 'ceremony-attach-output-exists', 1,
+            'immutable-rewrite')
+
+    # rotation: r3 replaced by r4. The new root needs two of {r1,r2,r4} and the old one two of {r1,r2,r3}.
+    signed2 = out / '2.root.signed'
+    p = pxg(*root_args(2, [r1, r2, r4], tg, sn, ts, 2, signed2, previous=root1))
+    lines = p.stdout.splitlines()
+    check(p.returncode == 0 and f'added {r4.id}' in lines and f'removed {r3.id}' in lines, 'ceremony-rotate-draft',
+          ct.describe(p))
+    refused(pxg(*root_args(3, [r1, r2, r4], tg, sn, ts, 2, out / 'skip.signed', previous=root1)),
+            'ceremony-rotate-version-skip', 1, 'root-version')
+    if not signed2.exists():
+        signed2.write_bytes(b'draft-root wrote nothing')
+    if True:
+        s2 = {k.name: k.sign(signed2) for k in (r1, r2, r4)}
+        root2 = out / '2.root.json'
+        p = attach(signed2, [(r1, s2['r1']), (r2, s2['r2'])], root2, previous=root1)
+        check(p.returncode == 0, 'ceremony-rotate-attach', ct.describe(p))
+        refused(attach(signed2, [(r1, s2['r1']), (r4, s2['r4'])], out / 'old-miss.json', previous=root1),
+                'ceremony-rotate-old-threshold', 1, 'previous-threshold-not-met')
+        refused(attach(signed2, [(r1, s2['r1']), (r2, s2['r2'])], out / 'noprev.json', previous=out / 'absent.json'),
+                'ceremony-rotate-previous-missing', 1, 'not-found')
+
+    # a targets batch: staged objects, bytes to sign, signature by the targets key only.
+    pkg = ct.simple('alpha')
+    manifest, buildinfo = pkg.build(WORK / 'packages')
+    stage = WORK / 'stage'
+    stage.mkdir()
+    signed_t = out / '1.targets.signed'
+    p = pxg('repo', 'draft-targets', '--repo', stage.as_uri(), '--version', 1, '--expires', EXPIRES,
+            '--manifest', manifest, '--buildinfo', buildinfo, '--out', signed_t)
+    lines = p.stdout.splitlines()
+    check(p.returncode == 0 and lines[-1:] == ['repo draft-targets ok']
+          and len([l for l in lines if l.startswith('target ')]) == 3, 'ceremony-draft-targets', ct.describe(p))
+    if not signed_t.exists():
+        signed_t.write_bytes(b'draft-targets wrote nothing')
+        check(False, 'ceremony-draft-targets-bytes', 'no bytes written')
+    else:
+        doc = json.loads(signed_t.read_text())
+        payload = Path(str(manifest)[:-len('.manifest')] + '.payload.tar')
+        want = {'alpha-1-1.manifest': Path(manifest), 'alpha-1-1.payload.tar': payload,
+                'alpha-1-1.buildinfo': Path(buildinfo)}
+        got = {name: (t['hashes']['sha256'], t['length']) for name, t in doc['targets'].items()}
+        exp = {name: (hashlib.sha256(f.read_bytes()).hexdigest(), f.stat().st_size) for name, f in want.items()}
+        check(doc['_type'] == 'targets' and doc['version'] == 1 and got == exp
+              and signed_t.read_bytes() == canonical(doc), 'ceremony-draft-targets-bytes', repr(got))
+        check(all((stage / 'targets' / f'{d}.{n}').is_file() for n, (d, _) in exp.items()),
+              'ceremony-draft-targets-staged')
+        st = tg.sign(signed_t)
+        targets_json = out / '1.targets.json'
+        p = attach(signed_t, [(tg, st)], targets_json, root=root1)
+        check(p.returncode == 0, 'ceremony-attach-targets', ct.describe(p))
+        if targets_json.exists():
+            env = json.loads(targets_json.read_text())
+            check(len(env['signatures']) == 1 and tg.verifies(signed_t, env['signatures'][0]['sig']),
+                  'ceremony-attach-targets-openssl-verifies')
+            p = pxg('repo', 'inspect', '--file', targets_json, '--root', root1, '--now', NOW)
+            check(p.returncode == 0 and 'threshold 1 valid 1 met' in p.stdout.splitlines()
+                  and sum(l.startswith('entry alpha ') for l in p.stdout.splitlines()) == 3,
+                  'ceremony-attach-targets-inspect', ct.describe(p))
+        wrong_key = sn.sign(signed_t)
+        refused(attach(signed_t, [(sn, wrong_key)], out / 'wrong-role.json', root=root1), 'ceremony-attach-wrong-role',
+                1, 'unknown-signer')
+        refused(attach(signed_t, [(tg, st)], out / 'no-root.json'), 'ceremony-attach-targets-needs-root', 1,
+                'root-required')
+    refused(pxg('repo', 'draft-targets', '--repo', stage.as_uri(), '--version', 2, '--expires', EXPIRES,
+                '--manifest', manifest, '--out', out / 'incomplete.signed'), 'ceremony-draft-targets-incomplete', 1,
+            'target-incomplete')
+
+
+def main():
+    global TOOL
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    TOOL, version = fx.openssl_binary()
+    print(f'openssl-ceremony: {version}', flush=True)
+    fixture = ct.fixture_dir(WORK / 'fixture')
+    ct.fixture_dir(fixture / 'packages')
+    repo = ct.Repo(fixture)
+    repo.setup()
+    try:
+        rows(repo)
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'openssl-ceremony: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS openssl-ceremony', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
