@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-11-23
+
+- Experimental preview. Adds the pieces to publish a signed repository, and the scripts for the machine that serves one; no repository is published yet, so the live check against a public repository stays a named skip.
+- Add the `repo` verbs for an external signing ceremony: `repo key-id --public`, `repo inspect`, `repo draft-root`, `repo draft-targets`, `repo draft-snapshot`, `repo draft-timestamp` and `repo attach`. paxage writes the bytes to sign and attaches a detached Ed25519 signature after verifying it; it never loads or handles a private key. Root version 1 needs two of three root signatures.
+- Add `repo commit`, which checks every file before writing any, writes roots, targets and snapshots create-only and replaces the timestamp last and atomically; committing the same bytes again is a no-op, and different bytes under an existing name refuse `immutable-rewrite`. Add `repo verify`, which reads a whole repository (a `file://` or `https://` URL) the way a client does, and `repo index`, which writes the repository's web pages.
+- New refusals: `commit-dangling`, `publish-version`, `expired-timestamp`, `threshold-not-met`, `previous-threshold-not-met`, `unknown-signer`, `bad-signature`, `signature-length`, `duplicate-signature`, `root-required`, `key-not-ed25519`, `key-malformed`.
+- Add `publish/`: an install script with a `--check` mode that changes nothing and says what it would do, a restricted publish command for one ssh key, and re-sign scripts with systemd timers for the timestamp (daily) and the snapshot (weekly). The key ceremony stays offline; the host holds only the snapshot and timestamp keys.
+- Check that the Linux binary asks for no glibc newer than 2.34, in the gauntlet and in the release build line.
+- Run a daily check of the published repository from a hosted runner; until a root is pinned it warns and skips, and after 2026-12-31 a missing root turns it red.
+
 ## 0.1.2 — 2026-11-22
 
 - Experimental preview, as 0.1.1. No change to the program: the release workflow's smoke job can now read the draft it checks.
