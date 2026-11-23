@@ -279,6 +279,11 @@ per run. Signing/public derivation use std curve25519, hashing uses std SHA-2.
 Create target objects, versioned targets, then snapshot, with all referenced
 files present and synced before timestamp publication. Every immutable output
 is create-only, including root; refuse `immutable-rewrite` even if bytes match.
+The one relaxation is `repo commit`: a versioned file already present with the
+identical bytes is left as it is, so a commit interrupted between two writes can
+be run again and finish. The file given is verified against the root first, so
+the name of a file on disk never stands in for its signatures, and other bytes
+under the same name still refuse.
 Only `metadata/timestamp.json` may be replaced, using T14's atomic sequence,
 with timestamp last (TUF §6.2.1 and §6.3). Failed publication must leave old
 published timestamp intact until the atomic replace; orphan immutable files
