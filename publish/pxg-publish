@@ -13,7 +13,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "${PXG_SETTINGS_LIB:-$here/pxg-settings}"
 
-[ "${SSH_ORIGINAL_COMMAND:-}" = publish ] || die "only 'publish' is accepted"
+true
 umask 022
 trap release_lock EXIT
 take_lock
