@@ -159,8 +159,8 @@ def inspect_rows(repo):
              'ceremony-inspect-unknown-key', ct.describe(p))
     # The bytes to be signed, before any signature exists.
     text, doc = read(meta / 'timestamp.json')
-    start = len('{"signed":')
-    signed = text[start:text.index(',"signatures"')]
+    # Canonical order puts "signatures" first, so the signed object is the file's last member.
+    signed = text[text.index('"signed":') + len('"signed":'):-1]
     raw = WORK / 'timestamp.signed'
     raw.write_text(signed)
     p = pxg('repo', 'inspect', '--file', raw, '--now', NOW)
