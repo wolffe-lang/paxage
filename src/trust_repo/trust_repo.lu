@@ -642,7 +642,7 @@ fn commit(repo: str, o: options.Options, now: int, f: failpoint.Fail) -> str {
         for i in ordered(items, role) {
             let m = copy items[i].m
             let auth = meta.verify(m, current, role)
-            if auth != "" { return auth }
+            if auth != "" && place(repo, role, m.version, items[i].bytes) != "same" { return auth }
             let held = place(repo, role, m.version, items[i].bytes)
             if held != "" && held != "same" { return held }
             if role == "targets" {
