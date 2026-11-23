@@ -683,6 +683,10 @@ fn commit(repo: str, o: options.Options, now: int, f: failpoint.Fail) -> str {
             return old.error
         }
     }
+    if stamps.len == 1 {
+        let early = io.replace("{repo}/metadata", "timestamp.json", "timestamp.{stamp.version}.next", items[stamps[0]].bytes)
+        if early != "" { return early }
+    }
     var writes = 0
     for role in ["root", "targets", "snapshot"] {
         for i in ordered(items, role) {
