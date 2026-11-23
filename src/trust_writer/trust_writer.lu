@@ -112,7 +112,15 @@ fn id_list(ids: List[str]) -> str {
 
 /// The canonical signed bytes of a root from public keys alone: nothing is signed here. Keys are 64-hex Ed25519
 /// public keys; the three single-key roles each take one. Returns "" for unusable input; the caller parses the result.
-pub fn root_signed(version: int, expires: int, root: List[str], threshold: int, targets: str, snapshot: str, timestamp: str) -> str {
+pub fn root_signed(
+    version: int,
+    expires: int,
+    root: List[str],
+    threshold: int,
+    targets: str,
+    snapshot: str,
+    timestamp: str,
+) -> str {
     if version < 1 || date(expires) == "" || root.len == 0 { return "" }
     var ids = Map[str, str]()
     var root_ids = List[str]()
