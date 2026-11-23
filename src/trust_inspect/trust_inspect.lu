@@ -72,7 +72,7 @@ pub fn read_public(path: str) -> PublicKey {
         total = 3 + der[2] as int
     } else if first == 130 && der.len >= 5 {
         header = 4
-        total = 4 + (der[2] as int) * 256 + der[3] as int
+        total = 4 + der[2] as int * 256 + der[3] as int
     } else {
         return refuse("key-malformed")
     }
@@ -80,7 +80,9 @@ pub fn read_public(path: str) -> PublicKey {
     // The algorithm identifier must at least look like one: a SEQUENCE holding an OID.
     if der.len < header + 4 || der[header] != 48 as byte { return refuse("key-malformed") }
     let alg = der[header + 1] as int
-    if alg >= 128 || header + 2 + alg > der.len || der[header + 2] != 6 as byte { return refuse("key-malformed") }
+    if alg >= 128 || header + 2 + alg > der.len || der[header + 2] != 6 as byte {
+        return refuse("key-malformed")
+    }
     if der.len != SPKI_LEN || !prefix_matches(der) { return refuse("key-not-ed25519") }
     PublicKey { public: hex.encode(der[12..44]), error: "" }
 }
