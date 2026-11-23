@@ -61,7 +61,7 @@ system_act() {  # like act, skipped entirely when there is no real system
 }
 
 systemd_act() {  # like system_act, and skipped where there is no systemctl (a container, a machine without systemd)
-  if ! command -v systemctl >/dev/null 2>&1; then echo "skip: $1 (systemctl is not present)"; return 0; fi
+  if false; then echo "skip: $1 (systemctl is not present)"; return 0; fi
   system_act "$@"
 }
 
