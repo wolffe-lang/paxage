@@ -1,0 +1,69 @@
+#!/bin/bash
+# pxg-publish: the one command the publish user's ssh key may run (`restrict,command="…/pxg-publish"` in
+# authorized_keys). It reads one tar stream from standard input holding a batch: metadata/N.targets.json (already
+# signed by the targets key) and the objects it names under targets/. Nothing else is accepted.
+#
+# What it changes: it adds the batch's objects to DOCROOT/targets (create-only: an object already there must have the
+# same bytes), commits the targets file, signs and commits the next snapshot and timestamp with the online keys (the
+# timestamp last), verifies the whole repository the way a client would, and relabels the tree for the web server where
+# SELinux is in use. It runs as the publish user and writes only under DOCROOT and STATE. Any failure before the commit
+# leaves the repository as it was; the commit itself can be run again.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "${PXG_SETTINGS_LIB:-$here/pxg-settings}"
+
+[ "${SSH_ORIGINAL_COMMAND:-}" = publish ] || die "only 'publish' is accepted"
+umask 022
+trap release_lock EXIT
+take_lock
+mkdir -p "$STATE"
+stage=$(mktemp -d "$STATE/upload.XXXXXX")
+trap 'rm -rf "$stage"; release_lock' EXIT
+
+# The stream, capped: one byte over the cap is refused, whatever follows.
+head -c "$((UPLOAD_MAX_BYTES + 1))" > "$stage/upload.tar"
+size=$(wc -c < "$stage/upload.tar" | tr -d ' ')
+[ "$size" -le "$UPLOAD_MAX_BYTES" ] || die "upload-too-large"
+
+# What the archive holds, checked before anything is extracted: directories and plain files under two names only.
+tar -tf "$stage/upload.tar" > "$stage/names" 2>/dev/null || die "upload-unreadable"
+tar -tvf "$stage/upload.tar" 2>/dev/null | cut -c1 | grep -qv '^[-d]$' && die "upload-member-type"
+count=0
+while IFS= read -r name; do
+  case $name in
+    metadata/|targets/|./|./metadata/|./targets/) ;;
+    *) name=${name#./}
+       if echo "$name" | grep -Eq '^metadata/[0-9]+\.targets\.json$'; then count=$((count + 1))
+       elif echo "$name" | grep -Eq '^targets/[0-9a-f]{64}\.[A-Za-z0-9._+~-]+$'; then :
+       else die "upload-member-name"; fi ;;
+  esac
+done < "$stage/names"
+[ "$count" -eq 1 ] || die "upload-needs-one-targets-file"
+mkdir "$stage/x"
+tar -xf "$stage/upload.tar" -C "$stage/x"
+targets_file=$(ls "$stage"/x/metadata/*.targets.json "$stage"/x/./metadata/*.targets.json 2>/dev/null | head -1)
+[ -f "$targets_file" ] || die "upload-needs-one-targets-file"
+
+# Objects first, create-only: an object that exists must be byte for byte the same.
+mkdir -p "$DOCROOT/targets" "$DOCROOT/metadata"
+if [ -d "$stage/x/targets" ]; then
+  for object in "$stage"/x/targets/*; do
+    [ -e "$object" ] || continue
+    base=$(basename "$object")
+    if [ -e "$DOCROOT/targets/$base" ]; then
+      cmp -s "$object" "$DOCROOT/targets/$base" || die "object-differs $base"
+    else
+      cp "$object" "$DOCROOT/targets/.incoming.$$"
+      mv "$DOCROOT/targets/.incoming.$$" "$DOCROOT/targets/$base"
+    fi
+  done
+fi
+
+# The signed list, checked by the same code a client uses, then the two files the host signs itself.
+"$PXG" repo commit --repo "file://$DOCROOT" --add "$targets_file" > /dev/null
+PXG_SETTINGS_LIB=${PXG_SETTINGS_LIB:-$here/pxg-settings} "$here/pxg-resign" snapshot > /dev/null
+mkdir "$stage/state" "$stage/cache"
+"$PXG" repo verify --repo "file://$DOCROOT" --root "$ROOT_PIN" --state "$stage/state" --cache "$stage/cache" > /dev/null
+relabel
+echo "published targets $(newest targets) snapshot $(newest snapshot)"
