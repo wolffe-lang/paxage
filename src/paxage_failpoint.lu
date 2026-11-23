@@ -5,9 +5,23 @@
 use root_cli
 use failpoint
 use transport
+use trust_options
+use trust_repo
 
 fn main() -> int {
     let a = env_args()
+    if a.len >= 2 && a[0] == "repo" && a[1] == "commit" {
+        let o = trust_options.parse(a, 2)
+        if o.error != "" { eprint("paxage: {o.error}"); return 2 }
+        let spec = env_get("PAXAGE_FAILPOINT") else |_| { "" }
+        let f = failpoint.parse(spec, "")
+        if !failpoint.valid(spec, f) { eprint("paxage-failpoint: bad PAXAGE_FAILPOINT {spec}"); return 2 }
+        let now = trust_options.now(o)
+        let error = trust_repo.run_with("commit", o, now, f)
+        if error != "" { eprint("paxage: {error}"); return 1 }
+        print("repo commit ok")
+        return 0
+    }
     if a.len < 1 || !root_cli.owns(a[0]) { eprint("paxage-failpoint: root verbs only"); return 2 }
     let spec = env_get("PAXAGE_FAILPOINT") else |_| { "" }
     let fifo = env_get("PAXAGE_FAILPOINT_FIFO") else |_| { "" }
