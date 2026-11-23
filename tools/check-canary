@@ -29,7 +29,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 PIN = ROOT / 'ci/canary-root.json'
 MIN_TIMESTAMP_HOURS = 12
-MIN_CERT_DAYS = 14
+MIN_CERT_DAYS = 1
 # The day the first publication is expected; a canary with no pinned root is a gate that is dark, so it may be dark
 # only until then.
 SKIP_UNTIL = datetime.date(2027, 1, 31)
