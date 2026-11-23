@@ -18,8 +18,8 @@
 #   9. with --enable-timers, enables and starts the two timers; without it they stay off
 #  10. where SELinux is in use, runs restorecon -R on the repository directory, /home/pxgpub and /var/lib/pxgpub, and
 #      prints the label of every top-level file in the repository directory
-# It generates, reads and moves no signing key: /home/pxgpub/keys is created empty for the owner's key ceremony.
-# Steps 1, 8, 9 and 10 touch the system and are marked "verified by the owner's run": nothing here can prove them.
+# It generates, reads and moves no signing key: /home/pxgpub/keys is created empty for the key ceremony.
+# Steps 1, 8, 9 and 10 touch the system and are marked "verified by the run on the real machine": nothing here can prove them.
 #
 # For the checks that run this script without root: PXG_INSTALL_ROOT puts every path under that directory and
 # PXG_INSTALL_NOSYSTEM=1 skips the steps that need a real system (user, ownership, systemd, SELinux).

@@ -7,4 +7,4 @@ These scripts run on the machine that serves a repository's files. They are writ
 - `pxg-resign timestamp` and `pxg-resign snapshot` write the next timestamp (daily) or snapshot (weekly, followed by the timestamp that names it). The two timers in `pxg-resign-*.timer` call them.
 - `pxg-settings` holds the names every script reads (the repository directory, the key directory, the scratch directory, the paxage and OpenSSL commands); `/etc/pxg-publish.env` overrides them.
 
-The online keys (snapshot and timestamp) are files the owner places in the key directory; no script here makes, reads for any other purpose, or moves a key. The targets key and the root keys stay offline and sign through `repo draft-targets`, `repo draft-root` and `repo attach`.
+The online keys (snapshot and timestamp) are files the machine's administrator places in the key directory; no script here makes, reads for any other purpose, or moves a key. The targets key and the root keys stay offline and sign through `repo draft-targets`, `repo draft-root` and `repo attach`.
