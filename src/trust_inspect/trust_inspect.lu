@@ -1,0 +1,179 @@
+//! Read-only looks at keys and metadata for the people who sign them: the key id of an OpenSSL public
+//! key, and a summary of a metadata file or of the bytes about to be signed. Nothing here writes a file,
+//! loads a private key or decides trust; it prints what it finds and names a file it cannot read.
+
+use trust_metadata as meta
+use trust_writer as writer
+use trust_io as io
+use trust_json as json
+use std.hex as hex
+use std.base64 as base64
+use std.x.crypto.curve25519 as curve
+
+/// The DER prefix of an Ed25519 SubjectPublicKeyInfo (RFC 8410): the key is the 32 bytes after it.
+const SPKI_LEN: int = 44
+
+fn prefix_matches(b: List[byte]) -> bool {
+    let want = [48, 42, 48, 5, 6, 3, 43, 101, 112, 3, 33, 0]
+    if b.len < 12 { return false }
+    for i in 0..12 { if b[i] as int != want[i] { return false } }
+    true
+}
+
+/// PEM text to DER, or an empty list when the text is not one PUBLIC KEY block.
+fn pem_der(text: str) -> List[byte] {
+    var body = ""
+    var begun = false
+    var ended = false
+    for raw in text.split("\n") {
+        var line = raw
+        if line.ends_with("\r") { line = line[0..line.len - 1] }
+        if line == "" { continue }
+        if ended { return List[byte]() }
+        if line == "-----BEGIN PUBLIC KEY-----" {
+            if begun { return List[byte]() }
+            begun = true
+            continue
+        }
+        if line == "-----END PUBLIC KEY-----" {
+            if !begun { return List[byte]() }
+            ended = true
+            continue
+        }
+        if !begun { return List[byte]() }
+        body = "{body}{line}"
+    }
+    if !ended { return List[byte]() }
+    base64.decode(body) else |_| { return List[byte]() }
+}
+
+/// Print an Ed25519 public key's id and hex, or name why it is not one.
+pub fn key_id(path: str) -> str {
+    let input = io.read(path, 4096)
+    if input.error != "" { return input.error }
+    var der = copy input.bytes
+    if der.len > 0 && der[0] == 45 as byte {
+        let text = str_from_utf8(input.bytes) else ""
+        der = pem_der(text)
+    }
+    if der.len < 4 || der[0] != 48 as byte { return "key-malformed" }
+    var header = 2
+    var total = 0
+    let first = der[1] as int
+    if first < 128 {
+        total = 2 + first
+    } else if first == 129 {
+        header = 3
+        total = 3 + der[2] as int
+    } else if first == 130 && der.len >= 5 {
+        header = 4
+        total = 4 + der[2] as int * 256 + der[3] as int
+    } else {
+        return "key-malformed"
+    }
+    if total != der.len { return "key-malformed" }
+    // The algorithm identifier must at least look like one: a SEQUENCE holding an OID.
+    if der.len < header + 4 || der[header] != 48 as byte { return "key-malformed" }
+    let alg = der[header + 1] as int
+    if alg >= 128 || header + 2 + alg > der.len || der[header + 2] != 6 as byte {
+        return "key-malformed"
+    }
+    if der.len != SPKI_LEN || !prefix_matches(der) { return "key-not-ed25519" }
+    let public = hex.encode(der[12..44])
+    print("key-id {meta.digest(writer.key_object(public).bytes())}")
+    print("public {public}")
+    ""
+}
+
+fn days_left(expires: int, now: int) -> str {
+    let diff = expires - now
+    if diff >= 0 { return "{diff / 86400}" }
+    "-{(0 - diff) / 86400}"
+}
+
+fn key_known(root: meta.Meta, id: str) -> int {
+    for i in 0..root.keys.len { if root.keys[i].id == id { return i } }
+    -1
+}
+
+/// Print a summary of a metadata file or of bare signed bytes. Reports; it never judges trust.
+pub fn inspect(path: str, root_path: str, now: int) -> str {
+    let input = io.read(path, 1048576 + 65536)
+    if input.error != "" { return input.error }
+    var bytes = copy input.bytes
+    var head = ""
+    if bytes.len > 8 { head = str_from_utf8(bytes[0..8]) else "" }
+    if head == "{{\"_type\"" {
+        // Bare signed bytes, before any signature exists: wrap them so one parser reads both.
+        var wrapped = "{{\"signatures\":[],\"signed\":".bytes()
+        for b in input.bytes { (mut wrapped).push(b) }
+        (mut wrapped).push(125 as byte)
+        bytes = wrapped
+    }
+    var m = meta.absent("root")
+    var found = false
+    for role in ["root", "timestamp", "snapshot", "targets"] {
+        m = meta.parse(bytes, role)
+        if m.error != "role-type" { found = true; break }
+    }
+    if !found { return "role-type" }
+    if m.error != "" { return m.error }
+    let si = json.field(m.data, 0, "signed")
+    print("role {m.role}")
+    print("version {m.version}")
+    print("expires {meta.text(m.data, si, "expires")} days-left {days_left(m.expires, now)}")
+    print("sha256 {meta.digest(input.bytes)}")
+    print("length {input.bytes.len}")
+    if m.role == "root" {
+        for r in m.roles {
+            var ids = ""
+            for id in r.keys { ids = "{ids} {id}" }
+            print("keys {r.name} threshold {r.threshold}{ids}")
+        }
+    }
+    for e in m.entries {
+        if m.role == "targets" {
+            print("entry {e.name} {e.package_version} {e.kind} {e.length} {e.digest}")
+        } else {
+            print("reference {e.path} {e.version} {e.length} {e.digest}")
+        }
+    }
+    let sigs = json.children(m.data, json.field(m.data, 0, "signatures"))
+    print("signatures {sigs.len}")
+    var root = copy m
+    if root_path != "" {
+        let rin = io.read(root_path, 65536)
+        if rin.error != "" { return rin.error }
+        root = meta.parse(rin.bytes, "root")
+        if root.error != "" { return root.error }
+    } else if m.role != "root" {
+        for i in sigs { print("signature {meta.text(m.data, i, "keyid")} unchecked") }
+        return ""
+    }
+    let ri = meta.role_index(root, m.role)
+    if ri < 0 { return "role-keys" }
+    let node = copy m.data.nodes[si]
+    let signed = m.wire[node.start..node.end]
+    var valid = 0
+    for i in sigs {
+        let id = meta.text(m.data, i, "keyid")
+        var authorized = false
+        for expected in root.roles[ri].keys { if expected == id { authorized = true } }
+        let at = key_known(root, id)
+        if !authorized || at < 0 {
+            print("signature {id} unknown-key")
+            continue
+        }
+        let sig = hex.decode(meta.text(m.data, i, "sig")) else List[byte]()
+        if sig.len == 64 && curve.verify_strict(root.keys[at].public, signed, sig) {
+            valid += 1
+            print("signature {id} valid")
+        } else {
+            print("signature {id} invalid")
+        }
+    }
+    var verdict = "not-met"
+    if valid >= root.roles[ri].threshold { verdict = "met" }
+    print("threshold {root.roles[ri].threshold} valid {valid} {verdict}")
+    ""
+}

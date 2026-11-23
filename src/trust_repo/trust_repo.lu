@@ -5,6 +5,7 @@ use trust_writer as writer
 use trust_metadata as meta
 use trust_json as json
 use trust_io as io
+use trust_inspect as inspect
 use trust_cache as cache
 use literal
 use schema
@@ -258,6 +259,14 @@ fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
 /// Run one test-only repository operation, with an exclusive publisher lock.
 pub fn run(verb: str, o: options.Options, now: int) -> str {
     if verb == "keygen" { return keygen(options.flag_value(o, "--keys")) }
+    if verb == "key-id" { return inspect.key_id(options.flag_value(o, "--public")) }
+    if verb == "inspect" {
+        return inspect.inspect(
+            options.flag_value(o, "--file"),
+            options.flag_value(o, "--root"),
+            now,
+        )
+    }
     let raw = options.file_path(options.flag_value(o, "--repo"))
     if raw == "" { return "unsupported-transport" }
     let error = cache.directory(raw)

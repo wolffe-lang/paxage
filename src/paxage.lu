@@ -20,7 +20,7 @@ use std.str as text
 use std.x.crypto.sha2 as sha2
 
 fn usage() -> str {
-    "Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | bootstrap --repo URL --root FILE --state DIR | update --repo URL --state DIR | fetch --repo URL --state DIR --cache DIR --target NAME [--stage DIR] [--tls-roots FILE] [--now UTC]\nRoot: init --root DIR --repo URL --pinned-root FILE --arch A --slot S | install --root DIR SPEC... [--tls-roots FILE] | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR"
+    "Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | repo key-id --public FILE | repo inspect --file FILE [--root FILE] [--now UTC] | bootstrap --repo URL --root FILE --state DIR | update --repo URL --state DIR | fetch --repo URL --state DIR --cache DIR --target NAME [--stage DIR] [--tls-roots FILE] [--now UTC]\nRoot: init --root DIR --repo URL --pinned-root FILE --arch A --slot S | install --root DIR SPEC... [--tls-roots FILE] | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR"
 }
 
 fn bad_usage(message: str) -> int { eprint("paxage: {message}\n{usage()}"); 2 }
@@ -271,19 +271,25 @@ fn trust(args: List[str]) -> int {
     var start = 1
     var operation = verb
     if verb == "repo" {
-        if args.len < 2 { return bad_usage("repo needs keygen, init, rotate or publish") }
+        if args.len < 2 {
+            return bad_usage("repo needs keygen, init, rotate, publish, key-id or inspect")
+        }
         operation = args[1]
         if operation != "keygen" &&
             operation != "init" &&
             operation != "rotate" &&
-            operation != "publish" {
+            operation != "publish" &&
+            operation != "key-id" &&
+            operation != "inspect" {
             return fail("unsupported-repo-verb")
         }
         start = 2
     }
     let o = trust_options.parse(args, start)
     if o.error != "" { return bad_usage(o.error) }
-    let now = trust_options.now(o)
+    // key-id reads no clock and prints nothing but the key.
+    var now = 0
+    if operation != "key-id" { now = trust_options.now(o) }
     if now < 0 { return fail("metadata-time") }
     if verb != "repo" {
         let early = trust_options.build_refusal(trust_options.flag_value(o, "--now") != "", now)

@@ -48,6 +48,8 @@ pub fn parse(args: List[str], start: int) -> Options {
             "--manifest",
             "--buildinfo",
             "--tls-roots",
+            "--public",
+            "--file",
         ] {
             if name == allowed { known = true }
         }
