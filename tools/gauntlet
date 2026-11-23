@@ -24,6 +24,8 @@ step runtime-witness bash tools/check-runtime-witness
 step unit tools/check-test
 step tls-module tools/check-tls-module
 step cli tools/check-e2e
+step glibc-floor-tests python3 -I tools/test-glibc-floor
+if [ "$(uname -s)" = Linux ]; then step glibc-floor python3 -I tools/check-glibc-floor target/bin/paxage; fi
 step names python3 -I tools/check-names
 if [ "$(uname -s)" = Linux ]; then
   step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
