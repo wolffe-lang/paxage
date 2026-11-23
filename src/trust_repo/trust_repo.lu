@@ -686,7 +686,6 @@ fn commit(repo: str, o: options.Options, now: int, f: failpoint.Fail) -> str {
     var writes = 0
     for role in ["root", "targets", "snapshot"] {
         for i in ordered(items, role) {
-            if place(repo, role, items[i].m.version, items[i].bytes) == "same" { continue }
             let written = write_metadata(
                 repo,
                 str_from_utf8(items[i].bytes) else "",
