@@ -1,0 +1,8 @@
+[Unit]
+Description=Re-sign the repository timestamp
+Documentation=file:///usr/local/libexec/pxg-resign
+
+[Service]
+Type=oneshot
+User=pxgpub
+ExecStart=/usr/local/libexec/pxg-resign timestamp
