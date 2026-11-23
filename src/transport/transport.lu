@@ -16,13 +16,15 @@ use trust_metadata as meta
 
 /// Test-only overrides. The shipped binary passes shipped(); only the
 /// test-only paxage-failpoint binary reads PAXAGE_FETCH_KNOBS.
-pub struct Knobs { waits: List[int], read_ms: int, free: int, clock: int }
+pub struct Knobs { waits: List[int], read_ms: int, connect_ms: int, free: int, clock: int }
 
 /// The shipped values: retries after 10 s and 30 s, 30 s for every read, the
-/// filesystem's own free space, the system clock.
-pub fn shipped() -> Knobs { Knobs { waits: [10000, 30000], read_ms: 30000, free: -1, clock: -1 } }
+/// filesystem's own free space, the system clock, 10 s to connect.
+pub fn shipped() -> Knobs {
+    Knobs { waits: [10000, 30000], read_ms: 30000, connect_ms: 10000, free: -1, clock: -1 }
+}
 
-/// Parse "waits=MS,MS read=MS free=BYTES clock=UNIX" over shipped(); an
+/// Parse "waits=MS,MS read=MS connect=MS free=BYTES clock=UNIX" over shipped(); an
 /// unknown word is ignored and a malformed number keeps the shipped value.
 pub fn knobs(text: str) -> Knobs {
     var k = shipped()
@@ -40,6 +42,9 @@ pub fn knobs(text: str) -> Knobs {
         } else if key == "read" {
             let n = options.integer(value)
             if n > 0 { k.read_ms = n }
+        } else if key == "connect" {
+            let n = options.integer(value)
+            if n > 0 { k.connect_ms = n }
         } else if key == "free" {
             k.free = options.integer(value)
         } else if key == "clock" {
@@ -90,7 +95,7 @@ pub fn open(url: str, roots: str, now: int, k: Knobs) -> Repo {
         return r
     }
     var bad = false
-    let conn = http.connection(url, roots, now, k.read_ms) else |_| {
+    let conn = http.connection(url, roots, now, k.read_ms, k.connect_ms) else |_| {
         bad = true
         http.idle()
     }
@@ -135,6 +140,9 @@ fn verdict(r: Repo, g: http.Got, target: bool) -> Verdict {
     }
     let f = g.refusal
     if f == "connect" { return Verdict { error: "fetch: connect {place}", retry: true } }
+    if f == "connect-timeout" {
+        return Verdict { error: "fetch: connect-timeout {place}", retry: true }
+    }
     if f == "refused" { return Verdict { error: "fetch: refused {place}", retry: true } }
     if f == "reset" { return Verdict { error: "fetch: reset {place}", retry: true } }
     if f == "stalled" { return Verdict { error: "fetch: stalled", retry: true } }

@@ -8,7 +8,10 @@
 //!
 //! The connect itself has no deadline at this toolchain: std.net.connect waits
 //! as long as the host's own connect does (a name lookup included), and a
-//! failed lookup is the same `io` row as a failed connection.
+//! failed lookup is the same `io` row as a failed connection. connect_ms is
+//! carried to the dial so the surface is final; the dial honours it once std
+//! offers a connect with a deadline. A connect the host itself ends with a
+//! timeout is `connect-timeout` already.
 
 use std.net
 use std.x.tls.client
@@ -24,6 +27,7 @@ pub struct Connection {
     roots: str,
     unix_now: int,
     read_ms: int,
+    connect_ms: int,
 }
 
 /// One response: its status (0 when none arrived), a bounded body or the
@@ -38,7 +42,13 @@ struct Started { h: Head, refusal: str }
 
 /// A validated URL's connection, not yet dialled. The URL is checked before
 /// any network: https, or http to a literal loopback address.
-pub fn connection(url: str, roots: str, unix_now: int, read_ms: int) -> Connection ! Errors {
+pub fn connection(
+    url: str,
+    roots: str,
+    unix_now: int,
+    read_ms: int,
+    connect_ms: int,
+) -> Connection ! Errors {
     Connection {
         endpoint: endpoint(url)?,
         fd: -1,
@@ -48,6 +58,7 @@ pub fn connection(url: str, roots: str, unix_now: int, read_ms: int) -> Connecti
         roots,
         unix_now,
         read_ms,
+        connect_ms,
     }
 }
 
@@ -62,6 +73,7 @@ pub fn idle() -> Connection {
         roots: "",
         unix_now: 0,
         read_ms: 0,
+        connect_ms: 0,
     }
 }
 
@@ -105,6 +117,7 @@ fn dial(mut c: Connection) -> str {
     }
     var socket = net.connect(address) else |e| match e {
         refused => { return "refused" },
+        timeout => { return "connect-timeout" },
         _ => { return "connect" },
     }
     net.set_deadline(mut socket, c.read_ms) else |_| {
