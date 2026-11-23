@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check-glibc-floor BINARY [--floor X.Y]: the newest glibc symbol version a Linux binary asks for, against a floor.
+"""check-glibc-floor BINARY [--floor X.Y] [--skip-other]: the newest glibc symbol version a Linux binary asks for, against a floor.
 
 The Linux release archive is a dynamic build that must run on the oldest host that serves the repository
 (AlmaLinux 9, glibc 2.34). A build image that asks for a newer symbol version would fail there at start, so the
@@ -21,11 +21,17 @@ def main(argv):
         i = args.index('--floor')
         floor = args[i + 1]
         del args[i:i + 2]
+    skip_other = '--skip-other' in args
+    if skip_other:
+        args.remove('--skip-other')
     if len(args) != 1:
-        print('usage: check-glibc-floor BINARY [--floor X.Y]')
+        print('usage: check-glibc-floor BINARY [--floor X.Y] [--skip-other]')
         return 2
     data = Path(args[0]).read_bytes()
     if not data.startswith(b'\x7fELF'):
+        if skip_other:
+            print('SKIP glibc-floor not an ELF file (another platform)')
+            return 0
         print('FAIL glibc-floor not an ELF file')
         return 1
     found = sorted({m.decode() for m in re.findall(rb'GLIBC_([0-9]+(?:\.[0-9]+)+)', data)}, key=version)
