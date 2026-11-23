@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""repo index: the web pages for a published repository, built only from metadata that verifies.
+
+A docroot is published with OpenSSL-signed metadata (as in tools/check-publisher), then `repo index` writes a front
+page and one page per package. The rows read the pages back with an HTML parser and compare every fact with the signed
+targets file read independently, check that a repository that does not verify writes nothing, that an expired
+repository is refused, and that existing pages are never overwritten. Pages are static, plain and script-free.
+"""
+import hashlib
+import html.parser
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+oc = load('openssl_ceremony', 'check-openssl-ceremony')
+ct = oc.ct
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/index'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+oc.BIN, oc.WORK = BIN, WORK
+NOW = ct.NOW
+EXPIRES = oc.EXPIRES
+check, refused, ok, pxg = oc.check, oc.refused, oc.ok, oc.pxg
+
+
+class Page(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tags, self.links, self.text, self.problems, self.stack = [], [], [], [], []
+
+    VOID = {'meta', 'br', 'hr', 'link', 'img'}
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+        if tag not in self.VOID:
+            self.stack.append(tag)
+        for k, v in attrs:
+            if k == 'href':
+                self.links.append(v)
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack.pop() != tag:
+            self.problems.append(f'unbalanced </{tag}>')
+
+    def handle_data(self, data):
+        self.text.append(data)
+
+
+def parse(path):
+    page = Page()
+    page.feed(Path(path).read_text())
+    page.close()
+    if page.stack:
+        page.problems.append(f'unclosed {page.stack}')
+    return page
+
+
+def sign(key, data, out, root):
+    return oc.attach(data, [(key, key.sign(data))], out, root=root)
+
+
+def commit(docroot, *files):
+    args = ['repo', 'commit', '--repo', docroot.as_uri(), '--now', NOW]
+    for f in files:
+        args += ['--add', f]
+    return pxg(*args)
+
+
+def publish(docroot, out):
+    names = ('r1', 'r2', 'r3', 'tg', 'sn', 'ts')
+    r1, r2, r3, tg, sn, ts = (oc.Key(n) for n in names)
+    s = out / '1.root.signed'
+    pxg(*oc.root_args(1, [r1, r2, r3], tg, sn, ts, 2, s))
+    root = out / '1.root.json'
+    oc.attach(s, [(r1, r1.sign(s)), (r2, r2.sign(s))], root)
+    commit(docroot, root)
+    alpha = ct.simple('alpha').build(WORK / 'packages')
+    beta = ct.simple('beta', requires=[ct.dep('alpha')]).build(WORK / 'packages')
+    t = out / '1.targets.signed'
+    pxg('repo', 'draft-targets', '--repo', docroot.as_uri(), '--version', 1, '--expires', EXPIRES, '--manifest', alpha[0],
+        '--buildinfo', alpha[1], '--manifest', beta[0], '--buildinfo', beta[1], '--out', t)
+    tj = out / '1.targets.json'
+    sign(tg, t, tj, root)
+    commit(docroot, tj)
+    sn1 = out / '1.snapshot.signed'
+    pxg('repo', 'draft-snapshot', '--repo', docroot.as_uri(), '--version', 1, '--targets-version', 1, '--expires', EXPIRES,
+        '--out', sn1)
+    snj = out / '1.snapshot.json'
+    sign(sn, sn1, snj, root)
+    commit(docroot, snj)
+    ts1 = out / '1.timestamp.signed'
+    pxg('repo', 'draft-timestamp', '--repo', docroot.as_uri(), '--version', 1, '--snapshot-version', 1, '--expires',
+        EXPIRES, '--out', ts1)
+    tsj = out / '1.timestamp.json'
+    sign(ts, ts1, tsj, root)
+    return root, commit(docroot, tsj)
+
+
+def index(docroot, pages, root=None, now=NOW, base='/pax/'):
+    args = ['repo', 'index', '--repo', docroot.as_uri(), '--out', pages, '--base', base, '--now', now]
+    return pxg(*args)
+
+
+def rows():
+    out = WORK / 'out'
+    out.mkdir()
+    docroot = WORK / 'docroot'
+    docroot.mkdir()
+    root, p = publish(docroot, out)
+    ok(p, 'index-setup-published', last='repo commit ok')
+    targets = json.loads((docroot / 'metadata/1.targets.json').read_text())['signed']['targets']
+
+    pages = WORK / 'pages'
+    p = index(docroot, pages)
+    check(p.returncode == 0 and p.stdout.splitlines()[-1:] == ['repo index ok'], 'index-ok', ct.describe(p))
+    front = pages / 'index.html'
+    check(front.is_file(), 'index-front-page-exists')
+    if front.is_file():
+        page = parse(front)
+        text = ' '.join(page.text)
+        check(not page.problems and 'script' not in page.tags, 'index-front-well-formed', repr(page.problems))
+        check('alpha' in text and 'beta' in text and '1-1' in text, 'index-front-lists-packages', text[:300])
+        check('packages/alpha.html' in page.links and 'packages/beta.html' in page.links, 'index-front-links',
+              repr(page.links))
+        check('timestamp' in text.lower() and '2027' in text, 'index-front-says-when-it-expires', text[:300])
+    for name in ('alpha', 'beta'):
+        path = pages / 'packages' / f'{name}.html'
+        check(path.is_file(), f'index-package-page-{name}')
+        if not path.is_file():
+            continue
+        page = parse(path)
+        text = ' '.join(page.text)
+        mine = {n: t for n, t in targets.items() if t['custom']['name'] == name}
+        links = set(page.links)
+        want = {f'/pax/targets/{t["hashes"]["sha256"]}.{n}' for n, t in mine.items()}
+        check(not page.problems and want <= links, f'index-package-{name}-download-links', repr((page.problems, links)))
+        check(all(t['hashes']['sha256'] in text and str(t['length']) in text for t in mine.values()),
+              f'index-package-{name}-digests-and-lengths')
+    # the base path of the links is a choice the caller makes
+    other = WORK / 'pages-base'
+    p = index(docroot, other, base='/repo/')
+    page = parse(other / 'packages/alpha.html') if (other / 'packages/alpha.html').exists() else None
+    check(p.returncode == 0 and page is not None and all(l.startswith('/repo/targets/') or l.startswith('../') or
+                                                         l.startswith('index') or l.endswith('.html') for l in page.links)
+          and any(l.startswith('/repo/targets/') for l in page.links), 'index-base-path', ct.describe(p))
+
+    # existing pages are never overwritten
+    refused(index(docroot, pages), 'index-existing-output', 1, 'immutable-rewrite')
+
+    # a repository that does not verify writes nothing
+    broken = WORK / 'docroot-broken'
+    shutil.copytree(docroot, broken)
+    data = bytearray((broken / 'metadata/1.targets.json').read_bytes())
+    at = data.find(b'"sig":"') + len(b'"sig":"')
+    data[at] = ord('0') if data[at] != ord('0') else ord('1')
+    (broken / 'metadata/1.targets.json').write_bytes(bytes(data))
+    p = index(broken, WORK / 'pages-broken')
+    check(p.returncode == 1 and 'paxage: ' in p.stderr, 'index-unverified-refused', ct.describe(p))
+    check(not (WORK / 'pages-broken/index.html').exists(), 'index-unverified-writes-nothing')
+
+    # an expired repository is not presented as current
+    refused(index(docroot, WORK / 'pages-expired', now='2030-01-01T00:00:00Z'), 'index-expired-refused', 1,
+            'expired-timestamp')
+    check(not (WORK / 'pages-expired/index.html').exists(), 'index-expired-writes-nothing')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    oc.TOOL, version = fx.openssl_binary()
+    print(f'index: {version}', flush=True)
+    try:
+        rows()
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'index: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS index', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
