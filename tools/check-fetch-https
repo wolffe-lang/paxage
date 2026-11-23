@@ -690,6 +690,72 @@ def unknown_kind(e):
 
 # ---------------------------------------------------------------- refusals that stay
 
+@row('fetch-user-agent')
+def user_agent(e):
+    server, url = e.serve('agent')
+    state = trusted(e, url, 'fetch-user-agent', e.pki.roots)
+    if state is None:
+        return
+    agents = {h.get('user-agent') for h in server.heads}
+    ct.check(bool(server.heads) and agents == {'paxage/0.2'}, 'fetch-user-agent', repr(sorted(map(str, agents))))
+    ct.check(all(h.get('accept-encoding') == 'identity' and h.get('connection') == 'keep-alive'
+                 for h in server.heads), 'fetch-request-head')
+
+
+@row('fetch-http-429-retry')
+def http_429_retry(e):
+    server, url = e.serve('retry429')
+    state, p = bootstrap(e, url, 'fetch-http-429-retry')
+    if not ct.ok(p, 'fetch-http-429-retry-bootstrap', last='bootstrap ok'):
+        return
+    path = '/retry429/metadata/timestamp.json'
+    server.rules[path] = {'kind': 'status', 'code': 429, 'times': 2}
+    q = update(url, state, e.pki.roots, binary=FPBIN, env=FAST)
+    ct.ok(q, 'fetch-http-429-retry', last='update ok')
+    ct.check(server.count(path) == 3, 'fetch-http-429-retry-three-requests', f'requests={server.count(path)}')
+
+
+@row('fetch-http-429-always')
+def http_429_always(e):
+    path = '/always429/metadata/timestamp.json'
+    s = root_failure(e, 'always429', lambda l: {path: {'kind': 'status', 'code': 429}},
+                     'timestamp: http-status 429', 'fetch-http-429-always')
+    if s is not None:
+        ct.check(s.count(path) == 3, 'fetch-http-429-always-three-attempts', f'requests={s.count(path)}')
+
+
+@row('fetch-connection-close-redial')
+def connection_close_redial(e):
+    server, url = e.serve('closing')
+    root = ready_root(e, url, 'fetch-connection-close-redial')
+    if root is None:
+        return
+    server.close_each = True
+    before = len(server.log)
+    p = install(root, e.pki.roots, 'beta')
+    if not ct.ok(p, 'fetch-connection-close-redial', last='install ok generation=1'):
+        return
+    asked = len(server.log) - before
+    ct.check(asked >= 8 and server.connections >= asked, 'fetch-connection-close-redial-dialled-each',
+             f'requests={asked} connections={server.connections}')
+
+
+@row('fetch-tls-cross-signed-chain')
+def tls_cross_signed(e):
+    # The shape a public repository host sends: leaf, intermediate, an intermediate root, and the anchor
+    # again, cross-signed by a second root. Both roots are in the roots file.
+    server, url = e.serve('xchain', cert='chain')
+    state = trusted(e, url, 'fetch-tls-cross-signed-chain', e.pki.roots_chain)
+    ct.check(state is not None and server.count('/xchain/metadata/timestamp.json') >= 1,
+             'fetch-tls-cross-signed-chain-reached')
+
+
+@row('fetch-tls-cross-signed-no-anchor')
+def tls_cross_signed_no_anchor(e):
+    tls_row(e, 'fetch-tls-cross-signed-no-anchor', 'xnone', 'chain', 'fetch: tls issuer_mismatch',
+            roots=e.pki.roots)
+
+
 @row('fetch-scheme-refused')
 def scheme_refused(e):
     state = e.fresh('scheme') / 'state'
