@@ -631,7 +631,9 @@ fn commit(repo: str, o: options.Options, now: int) -> str {
                 for e in m.entries {
                     let path = "{repo}/targets/{e.digest}.{e.path}"
                     let measured = cache.measure(path, e.length)
-                    if measured.error != "" || measured.length != e.length || measured.digest != e.digest {
+                    if measured.error != "" ||
+                        measured.length != e.length ||
+                        measured.digest != e.digest {
                         return "commit-dangling"
                     }
                 }
@@ -654,7 +656,9 @@ fn commit(repo: str, o: options.Options, now: int) -> str {
         let old = io.read("{repo}/metadata/timestamp.json", 16384)
         if old.error == "" {
             let previous = meta.parse(old.bytes, "timestamp")
-            if previous.error == "" && meta.verify(previous, current, "timestamp") == "" && previous.version >= stamp.version {
+            if previous.error == "" &&
+                meta.verify(previous, current, "timestamp") == "" &&
+                previous.version >= stamp.version {
                 return "publish-version"
             }
         } else if old.error != "not-found" {
@@ -663,7 +667,12 @@ fn commit(repo: str, o: options.Options, now: int) -> str {
     }
     for role in ["root", "targets", "snapshot"] {
         for i in ordered(items, role) {
-            let written = write_metadata(repo, str_from_utf8(items[i].bytes) else "", role, items[i].m.version)
+            let written = write_metadata(
+                repo,
+                str_from_utf8(items[i].bytes) else "",
+                role,
+                items[i].m.version,
+            )
             if written != "" { return written }
         }
     }
@@ -697,7 +706,19 @@ fn verify_all(o: options.Options, now: int) -> str {
     var count = 0
     for e in loaded.value.targets.entries {
         if !meta.known_kind(e.kind) { continue }
-        let one = options.parse(["--repo", copy url, "--state", copy state_dir, "--cache", copy cache_dir, "--target", copy e.path], 0)
+        let one = options.parse(
+            [
+                "--repo",
+                copy url,
+                "--state",
+                copy state_dir,
+                "--cache",
+                copy cache_dir,
+                "--target",
+                copy e.path,
+            ],
+            0,
+        )
         if one.error != "" { return one.error }
         error = client.run("fetch", one, now, k)
         if error != "" { return error }
