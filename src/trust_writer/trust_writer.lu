@@ -87,6 +87,81 @@ pub fn root(keys: List[Signing], signers: List[Signing], version: int, expires: 
     envelope(signed, signers)
 }
 
+fn sorted_ids(ids: List[str]) -> List[str] {
+    var out = copy ids
+    for i in 0..out.len {
+        for j in i + 1..out.len {
+            if json.before(out[j], out[i]) {
+                let old = copy out[i]
+                out[i] = copy out[j]
+                out[j] = old
+            }
+        }
+    }
+    out
+}
+
+fn id_list(ids: List[str]) -> str {
+    var out = ""
+    for id in sorted_ids(ids) {
+        if out != "" { out += "," }
+        out += "\"{id}\""
+    }
+    "[{out}]"
+}
+
+/// The canonical signed bytes of a root from public keys alone: nothing is signed here. Keys are 64-hex Ed25519
+/// public keys; the three single-key roles each take one. Returns "" for unusable input; the caller parses the result.
+pub fn root_signed(version: int, expires: int, root: List[str], threshold: int, targets: str, snapshot: str, timestamp: str) -> str {
+    if version < 1 || date(expires) == "" || root.len == 0 { return "" }
+    var ids = Map[str, str]()
+    var root_ids = List[str]()
+    for p in root {
+        let id = meta.digest(key_object(p).bytes())
+        (mut root_ids).push(copy id)
+        let have = ids[id] else ""
+        if have == "" { ids[id] = copy p }
+    }
+    let targets_id = meta.digest(key_object(targets).bytes())
+    let snapshot_id = meta.digest(key_object(snapshot).bytes())
+    let timestamp_id = meta.digest(key_object(timestamp).bytes())
+    for pair in [[targets_id, targets], [snapshot_id, snapshot], [timestamp_id, timestamp]] {
+        let have = ids[pair[0]] else ""
+        if have == "" { ids[pair[0]] = copy pair[1] }
+    }
+    var all = List[str]()
+    for pair in ids.pairs() { (mut all).push(copy pair.0) }
+    var entries = ""
+    for id in sorted_ids(all) {
+        if entries != "" { entries += "," }
+        entries += "\"{id}\":" + key_object(ids[id] else "")
+    }
+    let roles = "{{\"root\":{{\"keyids\":{id_list(root_ids)},\"threshold\":{threshold}}},\"snapshot\":{{\"keyids\":[\"{snapshot_id}\"],\"threshold\":1}},\"targets\":{{\"keyids\":[\"{targets_id}\"],\"threshold\":1}},\"timestamp\":{{\"keyids\":[\"{timestamp_id}\"],\"threshold\":1}}}}"
+    "{{\"_type\":\"root\",\"consistent_snapshot\":true,\"expires\":\"{date(expires)}\",\"keys\":{{{entries}}},\"roles\":{roles},\"spec_version\":\"1.0.37\",\"version\":{version}}}"
+}
+
+/// Attach detached signatures, given as (key id, 128-hex signature) pairs in any order, to canonical signed bytes.
+/// Nothing is verified here; the caller verifies each signature first. Ordered by key id.
+pub fn attached(signed: str, ids: List[str], sigs: List[str]) -> str {
+    var order = List[int]()
+    for i in 0..ids.len { (mut order).push(i) }
+    for i in 0..order.len {
+        for j in i + 1..order.len {
+            if json.before(ids[order[j]], ids[order[i]]) {
+                let old = order[i]
+                order[i] = order[j]
+                order[j] = old
+            }
+        }
+    }
+    var signatures = ""
+    for i in order {
+        if signatures != "" { signatures += "," }
+        signatures += "{{\"keyid\":\"{ids[i]}\",\"sig\":\"{sigs[i]}\"}}"
+    }
+    "{{\"signatures\":[{signatures}],\"signed\":{signed}}}"
+}
+
 /// Build a timestamp or snapshot with an exact whole-file metadata binding.
 pub fn reference(role: str, version: int, expires: int, ref: meta.Entry, signer: Signing) -> str {
     if role != "timestamp" && role != "snapshot" || version < 1 || date(expires) == "" { return "" }
@@ -95,7 +170,7 @@ pub fn reference(role: str, version: int, expires: int, ref: meta.Entry, signer:
 }
 
 /// Build targets over sorted logical names with F3 identity fields and SHA-256 bindings.
-pub fn targets(entries: List[meta.Entry], version: int, expires: int, signer: Signing) -> str {
+pub fn targets_signed(entries: List[meta.Entry], version: int, expires: int) -> str {
     if version < 1 || entries.len > 768 || date(expires) == "" { return "" }
     var order = List[int]()
     for i in 0..entries.len { (mut order).push(i) }
@@ -123,5 +198,12 @@ pub fn targets(entries: List[meta.Entry], version: int, expires: int, signer: Si
         objects += "{path}:{{\"custom\":{{\"architecture\":{arch},\"kind\":{kind},\"name\":{name},\"version\":{package_version}}},\"hashes\":{{\"sha256\":\"{e.digest}\"}},\"length\":{e.length}}}"
     }
     let signed = "{{\"_type\":\"targets\",\"expires\":\"{date(expires)}\",\"spec_version\":\"1.0.37\",\"targets\":{{{objects}}},\"version\":{version}}}"
+    signed
+}
+
+/// Targets signed with a marked test key.
+pub fn targets(entries: List[meta.Entry], version: int, expires: int, signer: Signing) -> str {
+    let signed = targets_signed(entries, version, expires)
+    if signed == "" { return "" }
     envelope(signed, [signer])
 }
