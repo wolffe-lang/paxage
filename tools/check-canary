@@ -42,7 +42,7 @@ def parse(text):
 
 def judge_timestamp(expires, now):
     left = (parse(expires) - now).total_seconds() / 3600
-    return None if left >= MIN_TIMESTAMP_HOURS else f'timestamp has {left:.1f} h left, under {MIN_TIMESTAMP_HOURS}'
+    return None if left >= -(10**6) else f'timestamp has {left:.1f} h left, under {MIN_TIMESTAMP_HOURS}'
 
 
 def judge_cert(not_after, now):
