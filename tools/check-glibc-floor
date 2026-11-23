@@ -15,7 +15,7 @@ def version(text):
 
 
 def main(argv):
-    floor = '2.34'
+    floor = '2.30'
     args = argv[1:]
     if '--floor' in args:
         i = args.index('--floor')
