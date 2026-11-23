@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Rows for the verbs the key ceremony reads with: repo key-id, repo inspect, and bootstrap's parse failures.
+
+The oracles are independent of paxage: OpenSSL makes the Ed25519 keys and the RSA key, and Python computes the
+expected key id (SHA-256 of the canonical key object) and reads the metadata files itself. Test keys only.
+Every row prints PASS or FAIL by name; the step fails at the end if any row is red.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the checkout
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+ct = load('check_transactions', 'check-transactions')
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/ceremony'
+ct.BIN, ct.WORK, ct.KEEP_GOING = BIN, WORK, True
+NOW = ct.NOW
+SPKI = bytes.fromhex('302a300506032b6570032100')
+
+
+def check(*a, **k):
+    try:
+        return ct.check(*a, **k)
+    except ct.RowFailed:
+        return False
+
+
+def refused(*a, **k):
+    try:
+        return ct.refused(*a, **k)
+    except ct.RowFailed:
+        return False
+
+
+def pxg(*args):
+    return ct.pxg(*args, binary=BIN)
+
+
+def openssl(tool, *args, data=None):
+    p = subprocess.run([tool, *map(str, args)], capture_output=True, input=data)
+    if p.returncode != 0:
+        raise SystemExit(f'FAIL ceremony-openssl {args[0]} {p.stderr.decode()[-300:]}')
+    return p.stdout
+
+
+def expect_id(public_hex):
+    obj = '{"keytype":"ed25519","keyval":{"public":"%s"},"scheme":"ed25519"}' % public_hex
+    return hashlib.sha256(obj.encode()).hexdigest()
+
+
+def key_rows(tool):
+    home = WORK / 'keys'
+    home.mkdir(parents=True)
+    ed = home / 'ed.key'
+    openssl(tool, 'genpkey', '-algorithm', 'ED25519', '-out', ed)
+    pem = home / 'ed.pub.pem'
+    der = home / 'ed.pub.der'
+    openssl(tool, 'pkey', '-in', ed, '-pubout', '-out', pem)
+    openssl(tool, 'pkey', '-in', ed, '-pubout', '-outform', 'DER', '-out', der)
+    raw = der.read_bytes()
+    assert raw.startswith(SPKI) and len(raw) == 44
+    public = raw[12:].hex()
+    want = [f'key-id {expect_id(public)}', f'public {public}']
+    for label, path in (('pem', pem), ('der', der)):
+        p = pxg('repo', 'key-id', '--public', path)
+        got = p.stdout.splitlines()
+        check(p.returncode == 0 and got == want + ['repo key-id ok'], f'ceremony-key-id-{label}',
+                 ct.describe(p))
+    rsa = home / 'rsa.key'
+    openssl(tool, 'genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048', '-out', rsa)
+    rsa_pub = home / 'rsa.pub.pem'
+    openssl(tool, 'pkey', '-in', rsa, '-pubout', '-out', rsa_pub)
+    refused(pxg('repo', 'key-id', '--public', rsa_pub), 'ceremony-key-id-rsa', 1, 'key-not-ed25519')
+    ec = home / 'ec.key'
+    openssl(tool, 'genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', ec)
+    ec_pub = home / 'ec.pub.pem'
+    openssl(tool, 'pkey', '-in', ec, '-pubout', '-out', ec_pub)
+    refused(pxg('repo', 'key-id', '--public', ec_pub), 'ceremony-key-id-ecdsa', 1, 'key-not-ed25519')
+    for label, blob in (('truncated', raw[:-1]), ('trailing', raw + b'\0'), ('empty', b''),
+                        ('bad-prefix', b'\x30\x2a' + raw[2:3] + b'\xff' + raw[4:])):
+        path = home / f'{label}.der'
+        path.write_bytes(blob)
+        refused(pxg('repo', 'key-id', '--public', path), f'ceremony-key-id-{label}', 1, 'key-malformed')
+    bad_pem = home / 'bad.pem'
+    bad_pem.write_text('-----BEGIN PUBLIC KEY-----\n!!!!\n-----END PUBLIC KEY-----\n')
+    refused(pxg('repo', 'key-id', '--public', bad_pem), 'ceremony-key-id-bad-pem', 1, 'key-malformed')
+    refused(pxg('repo', 'key-id', '--public', home / 'absent.der'), 'ceremony-key-id-missing', 1, 'not-found')
+
+
+def read(path):
+    text = Path(path).read_text()
+    return text, json.loads(text)
+
+
+def inspect_rows(repo):
+    meta = repo.repo / 'metadata'
+    for role_file, role in (('1.root.json', 'root'), ('timestamp.json', 'timestamp')):
+        text, doc = read(meta / role_file)
+        signed = doc['signed']
+        args = ['repo', 'inspect', '--file', meta / role_file, '--root', repo.pinned, '--now', NOW]
+        p = pxg(*args)
+        lines = p.stdout.splitlines()
+        want_sha = hashlib.sha256(text.encode()).hexdigest()
+        good = (p.returncode == 0 and f'role {role}' in lines and f'version {signed["version"]}' in lines
+                and f'sha256 {want_sha}' in lines and f'length {len(text.encode())}' in lines
+                and any(l.startswith(f'expires {signed["expires"]} days-left ') for l in lines)
+                and lines[-1] == 'repo inspect ok')
+        check(good, f'ceremony-inspect-{role}', ct.describe(p))
+        verdicts = [l for l in lines if l.startswith('signature ')]
+        check(len(verdicts) == len(doc['signatures']) and all(l.endswith(' valid') for l in verdicts),
+                 f'ceremony-inspect-{role}-signatures', repr(verdicts))
+    # Targets: every entry, from the published targets file.
+    found = sorted(meta.glob('*.targets.json'))
+    check(bool(found), 'ceremony-inspect-targets-present')
+    if found:
+        text, doc = read(found[-1])
+        p = pxg('repo', 'inspect', '--file', found[-1], '--root', repo.pinned, '--now', NOW)
+        lines = p.stdout.splitlines()
+        entries = [l for l in lines if l.startswith('entry ')]
+        want = sorted(
+            f'entry {v["custom"]["name"]} {v["custom"]["version"]} {v["custom"]["kind"]} {v["length"]} '
+            f'{v["hashes"]["sha256"]}' for v in doc['signed']['targets'].values())
+        check(p.returncode == 0 and sorted(entries) == want, 'ceremony-inspect-targets-entries',
+                 ct.describe(p))
+    # A flipped signature byte is reported invalid, with exit 0: inspect reports, it does not judge.
+    text, doc = read(meta / 'timestamp.json')
+    sig = doc['signatures'][0]['sig']
+    doc['signatures'][0]['sig'] = ('0' if sig[0] != '0' else '1') + sig[1:]
+    bad = WORK / 'bad-signature.json'
+    bad.write_text(json.dumps(doc, separators=(',', ':'), sort_keys=True))
+    p = pxg('repo', 'inspect', '--file', bad, '--root', repo.pinned, '--now', NOW)
+    check(p.returncode == 0 and any(l.endswith(' invalid') for l in p.stdout.splitlines()),
+             'ceremony-inspect-invalid-signature', ct.describe(p))
+    # A signature by a key the root does not list for the role.
+    doc['signatures'][0]['keyid'] = '0' * 64
+    unk = WORK / 'unknown-key.json'
+    unk.write_text(json.dumps(doc, separators=(',', ':'), sort_keys=True))
+    p = pxg('repo', 'inspect', '--file', unk, '--root', repo.pinned, '--now', NOW)
+    check(p.returncode == 0 and any(l.endswith(' unknown-key') for l in p.stdout.splitlines()),
+             'ceremony-inspect-unknown-key', ct.describe(p))
+    # The bytes to be signed, before any signature exists.
+    text, doc = read(meta / 'timestamp.json')
+    start = len('{"signed":')
+    signed = text[start:text.index(',"signatures"')]
+    raw = WORK / 'timestamp.signed'
+    raw.write_text(signed)
+    p = pxg('repo', 'inspect', '--file', raw, '--now', NOW)
+    lines = p.stdout.splitlines()
+    check(p.returncode == 0 and 'role timestamp' in lines and 'signatures 0' in lines
+             and f'sha256 {hashlib.sha256(signed.encode()).hexdigest()}' in lines, 'ceremony-inspect-unsigned',
+             ct.describe(p))
+    # Expired: the days left are negative and the verb still exits 0.
+    p = pxg('repo', 'inspect', '--file', meta / 'timestamp.json', '--root', repo.pinned, '--now', '2030-01-01T00:00:00Z')
+    check(p.returncode == 0 and any(l.startswith('expires ') and ' days-left -' in l for l in p.stdout.splitlines()),
+             'ceremony-inspect-expired', ct.describe(p))
+    # Not canonical metadata: exit 1 by name.
+    pretty = WORK / 'pretty.json'
+    pretty.write_text(json.dumps(json.loads((meta / 'timestamp.json').read_text()), indent=2))
+    refused(pxg('repo', 'inspect', '--file', pretty, '--now', NOW), 'ceremony-inspect-pretty', 1, 'non-canonical-signed')
+    refused(pxg('repo', 'inspect', '--file', WORK / 'absent.json', '--now', NOW), 'ceremony-inspect-missing', 1,
+               'not-found')
+
+
+def bootstrap_rows(repo):
+    pretty = WORK / 'pretty-root.json'
+    pretty.write_text(json.dumps(json.loads(repo.pinned.read_text()), indent=2))
+    state = WORK / 'bs-state'
+    p = pxg('bootstrap', '--repo', repo.url, '--root', pretty, '--state', state, '--now', NOW)
+    refused(p, 'ceremony-bootstrap-parse-error-named', 1, 'non-canonical-signed')
+    check('bootstrap-unpinned' not in p.stderr, 'ceremony-bootstrap-not-unpinned', ct.describe(p))
+    garbage = WORK / 'garbage.json'
+    garbage.write_text('not json')
+    p = pxg('bootstrap', '--repo', repo.url, '--root', garbage, '--state', WORK / 'bs-state2', '--now', NOW)
+    check(p.returncode == 1 and 'bootstrap-unpinned' not in p.stderr, 'ceremony-bootstrap-garbage-named',
+             ct.describe(p))
+    # A well-formed root of the wrong role stays unpinned.
+    other = sorted((repo.repo / 'metadata').glob('*.targets.json'))
+    if other:
+        p = pxg('bootstrap', '--repo', repo.url, '--root', other[-1], '--state', WORK / 'bs-state3', '--now', NOW)
+        refused(p, 'ceremony-bootstrap-wrong-role', 1, 'role-type')
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o755)
+    tool, version = fx.openssl_binary()
+    print(f'ceremony: {version}', flush=True)
+    fixture = ct.fixture_dir(WORK / 'fixture')
+    ct.fixture_dir(fixture / 'packages')
+    repo = ct.Repo(fixture)
+    repo.setup()
+    repo.publish([ct.simple('alpha')])
+    for rows in (lambda: key_rows(tool), lambda: inspect_rows(repo), lambda: bootstrap_rows(repo)):
+        try:
+            rows()
+        except ct.RowFailed:
+            continue
+    if ct.FAILED:
+        print(f'ceremony: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS ceremony', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
