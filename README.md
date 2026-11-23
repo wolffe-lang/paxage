@@ -45,8 +45,8 @@ they do not replace a trusted download channel or constitute signed releases.
 Homebrew and AUR recipes are prepared separately after published hashes are
 known; preparation does not imply that either package is already available.
 
-This release is experimental. It has the HTTPS transport and the signing-ceremony and publishing verbs, but no public
-repository is published yet, and the HTTPS transport has been exercised only against local test repositories and a live
+This release is experimental. It has the signing-ceremony and publishing verbs, but no public
+repository is published yet, and the transport has been exercised only against local test repositories and a live
 TLS handshake. Signatures are made outside paxage, which handles no production private key. It makes no live-root writes and has no
 PAX root transactions. Do not use it
 as a production system package manager. Both `paxage` and `pxg` are included.
