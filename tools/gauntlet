@@ -29,6 +29,7 @@ step openssl-ceremony python3 -I tools/check-openssl-ceremony
 step publisher python3 -I tools/check-publisher
 step commit-failpoint python3 -I tools/check-commit-failpoint
 step index python3 -I tools/check-index
+step publish-scripts python3 -I tools/check-publish-scripts
 step names python3 -I tools/check-names
 if [ "$(uname -s)" = Linux ]; then
   step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
