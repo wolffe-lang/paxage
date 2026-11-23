@@ -172,9 +172,10 @@ attached, then placed.
   follow each other by one and verify under the previous root, every other file must verify under the newest
   root, a targets file's objects must already be in `targets/` with the signed length and digest, and a
   snapshot or timestamp must name a file that is in the docroot or in the same commit (`commit-dangling`
-  otherwise). It then writes roots, targets and snapshots create-only (`immutable-rewrite`) and replaces
+  otherwise). It then writes roots, targets and snapshots create-only (a file already there with the same bytes is left as it is, so a commit that was interrupted can be run again; other bytes refuse `immutable-rewrite`) and replaces
   `metadata/timestamp.json` last, atomically; a timestamp that is not newer than the current one refuses
-  `publish-version`, an expired one `expired-timestamp`. A refusal writes nothing.
+  `publish-version`, an expired one `expired-timestamp`. A refusal writes nothing, and an interruption between two writes leaves the old timestamp serving a repository that
+  still verifies.
 - `repo verify --repo URL --root PINNED --state DIR --cache DIR` reads the whole repository with the
   client's own code: it bootstraps a fresh state from the pinned root, updates, and fetches every target the
   signed list names into the cache, so a short or altered object refuses `target-hash` or `target-length`.
