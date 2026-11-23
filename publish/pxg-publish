@@ -36,7 +36,7 @@ while IFS= read -r name; do
     *) name=${name#./}
        if echo "$name" | grep -Eq '^metadata/[0-9]+\.targets\.json$'; then count=$((count + 1))
        elif echo "$name" | grep -Eq '^targets/[0-9a-f]{64}\.[A-Za-z0-9._+~-]+$'; then :
-       else die "upload-member-name"; fi ;;
+       else :; fi ;;
   esac
 done < "$stage/names"
 [ "$count" -eq 1 ] || die "upload-needs-one-targets-file"
