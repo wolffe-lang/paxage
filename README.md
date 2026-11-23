@@ -1,8 +1,8 @@
 # paxage
 
-**Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.1.2 implementation
+**Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.2.0 implementation
 validates formats, orders versions, plans dependencies, packs canonical payloads,
-and publishes test-only signed file repositories. It bootstraps, updates and fetches
+and publishes test-only signed file repositories. It also has the `repo` verbs for a signing ceremony done outside paxage (it writes the bytes to sign and attaches signatures, and never handles a private key) and for publishing, with host scripts under `publish/`. It bootstraps, updates and fetches
 from local repositories, or over HTTPS, through a bounded TUF profile. Install, upgrade and removal
 use crash-safe transactions on journalled Linux filesystems under test, with a rescue
 entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
@@ -15,24 +15,24 @@ strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
 
-## Install 0.1.2
+## Install 0.2.0
 
 Release preparation targets macOS arm64 (`aarch64-apple-darwin`) and Linux
 x86-64 (`x86_64-unknown-linux-gnu`). A release workflow creates a **draft**;
-these instructions apply only once `v0.1.2` has been published on the
+these instructions apply only once `v0.2.0` has been published on the
 [release page](https://github.com/wolffe-lang/paxage/releases).
 Other platforms have no prebuilt archive in this release.
 
-Download `paxage-0.1.2-TARGET.tar.gz` and its `.sha256` sidecar into an empty
+Download `paxage-0.2.0-TARGET.tar.gz` and its `.sha256` sidecar into an empty
 directory, replacing `TARGET` with your platform above. Before unpacking, run:
 
 ```sh
 # Linux:
-sha256sum -c paxage-0.1.2-TARGET.tar.gz.sha256
+sha256sum -c paxage-0.2.0-TARGET.tar.gz.sha256
 # macOS:
-shasum -a 256 -c paxage-0.1.2-TARGET.tar.gz.sha256
-tar -xzf paxage-0.1.2-TARGET.tar.gz
-cd paxage-0.1.2-TARGET
+shasum -a 256 -c paxage-0.2.0-TARGET.tar.gz.sha256
+tar -xzf paxage-0.2.0-TARGET.tar.gz
+cd paxage-0.2.0-TARGET
 ./paxage --version
 ```
 
