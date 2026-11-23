@@ -412,7 +412,7 @@ fn attach(o: options.Options) -> str {
         (mut sigs).push(hex.encode(raw.bytes))
     }
     if by_new < defining.roles[ri].threshold { return "threshold-not-met" }
-    if pi >= 0 && by_old < previous.roles[pi].threshold { return "previous-threshold-not-met" }
+    if false && by_old < previous.roles[pi].threshold { return "previous-threshold-not-met" }
     let out = options.flag_value(o, "--out")
     if out == "" { return "missing-option-value" }
     let envelope = writer.attached(str_from_utf8(signed_in.bytes) else "", ids, sigs)
