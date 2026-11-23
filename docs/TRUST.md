@@ -398,15 +398,16 @@ stream into `.part` through SHA-256 (T16). The `Date` header is never read.
 
 Every read waits at most 30 seconds; silence past that is `fetch: stalled`. A
 connection that cannot be made is `fetch: connect HOST:PORT` (a failed name
-lookup is reported the same way), a refused one `fetch: refused HOST:PORT`, a
-connection lost before a whole response `fetch: reset HOST:PORT`. These, a stall,
-a body cut short, a 5xx and a 429 are retried twice, after 10 and then 30
-seconds. A TLS rejection (`fetch: tls NAME`, NAME being the client's own name
-for it), a length or hash refusal and any other 4xx are never retried. The
-connection attempt itself has no deadline in this toolchain: it waits as long
-as the host's own connect does (about two minutes for an address that never
-answers, with Linux defaults), its name lookup included. The transport takes a
-connect deadline when the toolchain offers one.
+lookup is reported the same way), a refused one `fetch: refused HOST:PORT`, one
+the host ends with a timeout `fetch: connect-timeout HOST:PORT`, a connection
+lost before a whole response `fetch: reset HOST:PORT`. These, a stall, a body
+cut short, a 5xx and a 429 are retried twice, after 10 and then 30 seconds. A
+TLS rejection (`fetch: tls NAME`, NAME being the client's own name for it), a
+length or hash refusal and any other 4xx are never retried. The connection
+attempt is meant to wait at most 10 seconds, but this toolchain's dial has no
+deadline: it waits as long as the host's own connect does (about two minutes
+for an address that never answers, with Linux defaults), its name lookup
+included, until the toolchain offers a connect with a deadline.
 
 Absence is only a 404 or 410. For the next root it ends rotation (T12); for any
 other metadata it is the `not-found` a missing local file gives (the timestamp's
