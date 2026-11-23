@@ -130,7 +130,7 @@ fn verdict(r: Repo, g: http.Got, target: bool) -> Verdict {
         }
         return Verdict {
             error: "http-status {g.status}",
-            retry: g.status >= 500 || g.status == 429,
+            retry: g.status >= 500,
         }
     }
     let f = g.refusal
