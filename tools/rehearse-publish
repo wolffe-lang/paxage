@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""The publishing flow end to end, on a machine set up by publish/install, with throwaway keys.
+
+It runs as the publish user, never as root (paxage refuses trust operations as root). The caller has already run
+publish/install as root, which is the only step that needs it: it creates the user, the directories under /var/www
+and /home, and the files in /usr/local and /etc. This tool then does what the owner's ceremony and publishing do, with
+keys made here and thrown away with the machine:
+
+  1. makes seven OpenSSL keys (three root, targets, snapshot, timestamp) and writes root 1 with two of the three root
+     signatures, committing it to the real repository directory;
+  2. puts only the snapshot and timestamp keys in the publish user's key directory, mode 0600;
+  3. builds a signed batch (targets file and the objects it names) and sends it to the installed pxg-publish as ssh
+     would, with SSH_ORIGINAL_COMMAND=publish and the tar stream on standard input;
+  4. runs the installed pxg-resign for the timestamp and for the snapshot;
+  5. reads the repository as a client: repo verify, then bootstrap, update and fetch of every target into scratch
+     directories.
+
+Every path is the installed one (/usr/local/libexec, /usr/local/bin/pxg, /var/www/pkg.lupp.us/site/pax). Nothing is
+reached over a network.
+"""
+import getpass
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+LIBEXEC = Path('/usr/local/libexec')
+DOCROOT = Path('/var/www/pkg.lupp.us/site/pax')
+KEYS = Path('/home/pxgpub/keys')
+STATE = Path('/var/lib/pxgpub')
+INSTALLED = Path('/usr/local/bin/pxg')
+
+
+def load(name, file):
+    loader = importlib.machinery.SourceFileLoader(name, str(TOOLS / file))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+fx = load('fetch_fixture', 'fetch-fixture')
+oc = load('openssl_ceremony', 'check-openssl-ceremony')
+ct = oc.ct
+WORK = Path(os.environ.get('REHEARSAL_WORK', str(Path.home() / 'rehearsal')))
+ct.BIN, ct.WORK, ct.KEEP_GOING = INSTALLED, WORK, True
+oc.BIN, oc.WORK = INSTALLED, WORK
+EXPIRES = '2099-01-01T00:00:00Z'
+oc.EXPIRES = EXPIRES
+check, ok, pxg = oc.check, oc.ok, oc.pxg
+
+
+def tar_bytes(members):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w') as t:
+        for name, data in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def script(name, *args, stdin=None):
+    env = dict(os.environ, SSH_ORIGINAL_COMMAND='publish')
+    return subprocess.run(['bash', str(LIBEXEC / name), *args], input=stdin, capture_output=True, env=env, timeout=300)
+
+
+def text(p):
+    return (p.stdout + p.stderr).decode(errors='replace')
+
+
+def rows():
+    check(os.geteuid() != 0, 'rehearse-not-root', 'run as the publish user')
+    check(getpass.getuser() == 'pxgpub', 'rehearse-is-the-publish-user', getpass.getuser())
+    for path in (LIBEXEC / 'pxg-publish', LIBEXEC / 'pxg-resign', INSTALLED, DOCROOT / 'metadata', DOCROOT / 'targets',
+                 KEYS, STATE):
+        check(path.exists(), f'rehearse-installed-{str(path).strip("/").replace("/", "-")}', 'run publish/install first')
+    check(not any(KEYS.iterdir()), 'rehearse-key-directory-starts-empty')
+    check(not any((DOCROOT / 'metadata').iterdir()), 'rehearse-repository-starts-empty')
+
+    names = ('r1', 'r2', 'r3', 'tg', 'sn', 'ts')
+    k = {n: oc.Key(n) for n in names}
+    r1, r2, r3, tg, sn, ts = (k[n] for n in names)
+    out = WORK / 'out'
+    out.mkdir()
+    s = out / '1.root.signed'
+    pxg(*oc.root_args(1, [r1, r2, r3], tg, sn, ts, 2, s))
+    root1 = out / '1.root.json'
+    oc.attach(s, [(r1, r1.sign(s)), (r2, r2.sign(s))], root1)
+    ok(pxg('repo', 'commit', '--repo', DOCROOT.as_uri(), '--add', root1), 'rehearse-root-committed', last='repo commit ok')
+    for role, key in (('snapshot', sn), ('timestamp', ts)):
+        shutil.copyfile(key.priv, KEYS / f'{role}.key')
+        shutil.copyfile(key.pub, KEYS / f'{role}.pub.pem')
+        os.chmod(KEYS / f'{role}.key', 0o600)
+    check(sorted(p.name for p in KEYS.iterdir()) == ['snapshot.key', 'snapshot.pub.pem', 'timestamp.key',
+                                                      'timestamp.pub.pem'], 'rehearse-only-online-keys-on-the-host')
+
+    def batch(version, packages, label):
+        stage = WORK / f'stage-{label}'
+        stage.mkdir()
+        args = ['repo', 'draft-targets', '--repo', stage.as_uri(), '--version', version, '--expires', EXPIRES]
+        for m, b in packages:
+            args += ['--manifest', m, '--buildinfo', b]
+        signed = out / f'{label}.targets.signed'
+        pxg(*args, '--out', signed)
+        final = out / f'{label}.targets.json'
+        oc.attach(signed, [(tg, tg.sign(signed))], final, root=root1)
+        members = [(f'metadata/{version}.targets.json', final.read_bytes())]
+        for f in sorted((stage / 'targets').glob('*')):
+            members.append((f'targets/{f.name}', f.read_bytes()))
+        return tar_bytes(members)
+
+    alpha = ct.simple('alpha').build(WORK / 'packages')
+    beta = ct.simple('beta').build(WORK / 'packages')
+    p = script('pxg-publish', stdin=batch(1, [alpha], 'b1'))
+    check(p.returncode == 0 and text(p).strip().endswith('published targets 1 snapshot 1'), 'rehearse-publish-one', text(p))
+    p = script('pxg-publish', stdin=batch(2, [alpha, beta], 'b2'))
+    check(p.returncode == 0 and text(p).strip().endswith('published targets 2 snapshot 2'), 'rehearse-publish-two', text(p))
+    p = script('pxg-resign', 'timestamp')
+    check(p.returncode == 0 and 'resigned timestamp' in text(p), 'rehearse-resign-timestamp', text(p))
+    p = script('pxg-resign', 'snapshot')
+    check(p.returncode == 0 and 'resigned snapshot' in text(p), 'rehearse-resign-snapshot', text(p))
+    check(not (STATE / 'publish.lock').exists() and not list(STATE.glob('upload.*')) and not list(STATE.glob('resign.*')),
+          'rehearse-no-lock-or-scratch-left')
+
+    v = pxg('repo', 'verify', '--repo', DOCROOT.as_uri(), '--root', root1, '--state', WORK / 'vs', '--cache', WORK / 'vc',
+            '--now', ct.NOW)
+    check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'rehearse-client-verify', ct.describe(v))
+
+    state, cache = WORK / 'cs', WORK / 'cc'
+    ok(pxg('bootstrap', '--repo', DOCROOT.as_uri(), '--root', root1, '--state', state), 'rehearse-client-bootstrap',
+       last='bootstrap ok')
+    u = pxg('update', '--repo', DOCROOT.as_uri(), '--state', state, '--now', ct.NOW)
+    check(u.returncode == 0, 'rehearse-client-update', ct.describe(u))
+    newest = max(int(p.name.split('.')[0]) for p in (DOCROOT / 'metadata').glob('*.targets.json'))
+    listed = json.loads((DOCROOT / 'metadata' / f'{newest}.targets.json').read_text())['signed']['targets']
+    check(len(listed) >= 6, 'rehearse-targets-listed', str(sorted(listed)))
+    for name in sorted(listed):
+        f = pxg('fetch', '--repo', DOCROOT.as_uri(), '--state', state, '--cache', cache, '--target', name, '--now', ct.NOW)
+        check(f.returncode == 0 and f.stdout.splitlines()[-1:] == ['fetch ok'], f'rehearse-client-fetch-{name}', ct.describe(f))
+
+    # the same scripts refuse what they should, on the installed copy
+    before = sorted(str(p) for p in DOCROOT.rglob('*'))
+    env = dict(os.environ, SSH_ORIGINAL_COMMAND='ls')
+    p = subprocess.run(['bash', str(LIBEXEC / 'pxg-publish')], input=b'', capture_output=True, env=env)
+    check(p.returncode == 1 and sorted(str(x) for x in DOCROOT.rglob('*')) == before, 'rehearse-wrong-command-refused', text(p))
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True, mode=0o700)
+    oc.TOOL, version = fx.openssl_binary()
+    print(f'rehearse-publish: {version}', flush=True)
+    try:
+        rows()
+    except ct.RowFailed:
+        pass
+    if ct.FAILED:
+        print(f'rehearse-publish: {len(ct.FAILED)} red rows: {" ".join(ct.FAILED)}', flush=True)
+        return 1
+    print('PASS rehearse-publish', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
