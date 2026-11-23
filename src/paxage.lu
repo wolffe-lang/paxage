@@ -20,7 +20,7 @@ use std.str as text
 use std.x.crypto.sha2 as sha2
 
 fn usage() -> str {
-    "Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | repo key-id --public FILE | repo draft-root ... | repo attach ... | repo draft-targets ... | repo draft-snapshot ... | repo draft-timestamp ... | repo commit ... | repo verify ... | repo inspect --file FILE [--root FILE] [--now UTC] | bootstrap --repo URL --root FILE --state DIR | update --repo URL --state DIR | fetch --repo URL --state DIR --cache DIR --target NAME [--stage DIR] [--tls-roots FILE] [--now UTC]\nRoot: init --root DIR --repo URL --pinned-root FILE --arch A --slot S | install --root DIR SPEC... [--tls-roots FILE] | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR"
+    "Usage: paxage (pxg) version | check-manifest FILE | compare V1 V2 | resolve --snapshot DIR --want SPEC... [--json]\nPayload: pack SOURCE TEMPLATE OUTDIR --epoch N | verify-payload FILE --length N [--manifest FILE] | list-payload FILE --length N [--json] | stage FILE --length N --sha256 HEX --manifest FILE --into DIR\nTrust: repo keygen|init|rotate|publish ... | repo key-id --public FILE | repo draft-root ... | repo attach ... | repo draft-targets ... | repo draft-snapshot ... | repo draft-timestamp ... | repo commit ... | repo verify ... | repo index ... | repo inspect --file FILE [--root FILE] [--now UTC] | bootstrap --repo URL --root FILE --state DIR | update --repo URL --state DIR | fetch --repo URL --state DIR --cache DIR --target NAME [--stage DIR] [--tls-roots FILE] [--now UTC]\nRoot: init --root DIR --repo URL --pinned-root FILE --arch A --slot S | install --root DIR SPEC... [--tls-roots FILE] | remove --root DIR NAME... [--purge] | upgrade --root DIR | autoremove --root DIR [--yes] | status --root DIR [--json] | verify --root DIR | rescue --root DIR"
 }
 
 fn bad_usage(message: str) -> int { eprint("paxage: {message}\n{usage()}"); 2 }
@@ -286,6 +286,7 @@ fn trust(args: List[str]) -> int {
             operation != "draft-timestamp" &&
             operation != "commit" &&
             operation != "verify" &&
+            operation != "index" &&
             operation != "key-id" &&
             operation != "inspect" {
             return fail("unsupported-repo-verb")

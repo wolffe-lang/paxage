@@ -67,6 +67,7 @@ pub fn parse(args: List[str], start: int) -> Options {
             "--root-key",
             "--signature",
             "--add",
+            "--base",
             "--targets-version",
             "--snapshot-version",
         ] {
