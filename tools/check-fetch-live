@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""fetch-live-handshake: paxage's HTTPS transport against lupp.us, validated
+"""fetch-live-handshake: paxage's HTTPS transport against pkg.lupp.us, validated
 against PAX's own root file. Networked, so never part of the default gate (the
 gauntlet prints a named SKIP); a record runs it in its networked step.
 
 It stages the roots file the way PAX builds /etc/ssl/certs/ca-roots.der: curl's
 extract of Mozilla's store, fetched by name and refused unless both its PEM and
 its concatenated DER have the digests PAX pins. It bootstraps a state from a
-test root for https://lupp.us/pax/, where no repository is published, and runs
+test root for https://pkg.lupp.us/pax/, where no repository is published, and runs
 one update with the system clock: the TLS 1.3 handshake must complete under
 those roots, and the server's plain 404s for metadata/2.root.json and
 metadata/timestamp.json must read as absence, so the update ends
@@ -30,7 +30,7 @@ sys.dont_write_bytecode = True  # loaded modules leave no __pycache__ in the che
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / 'target/bin/paxage'
 WORK = ROOT / 'target/fetch-live'
-HOST = 'lupp.us'
+HOST = 'pkg.lupp.us'
 REPO = f'https://{HOST}/pax/'
 # PAX's roots pin: curl's extract of Mozilla's store, 2026-10-20, 118 certificates.
 ROOTS_URL = 'https://curl.se/ca/cacert-2026-10-20.pem'
@@ -99,6 +99,32 @@ def transcript(pem):
             print(f'INFO live: {line.strip()}', flush=True)
 
 
+def absence_headers(host, port=443, base='/pax/', scheme='https', context=None):
+    """R4: what a client or a cache may learn from an absent file. Returns a list of problems, empty when fine.
+
+    An absent next root (metadata/N.root.json) is how a rotation is told apart from none, so its 404 must be plain
+    and must not be cacheable for long: no `immutable`, no max-age. An absent timestamp may say no-cache. Anything
+    else under the base that is absent is held to the first rule. Reads over HTTP/1.1 with no coding, like the client.
+    """
+    import http.client
+    problems = []
+    for name in ('metadata/999999.root.json', 'metadata/timestamp.json', 'targets/absent-object'):
+        conn = (http.client.HTTPSConnection(host, port, timeout=30, context=context) if scheme == 'https'
+                else http.client.HTTPConnection(host, port, timeout=30))
+        conn.request('GET', base + name, headers={'Accept-Encoding': 'identity'})
+        r = conn.getresponse()
+        r.read()
+        cache = (r.getheader('Cache-Control') or '').lower()
+        conn.close()
+        if r.status != 404:
+            problems.append(f'{name}: status {r.status}, not 404')
+        if 'immutable' in cache or 'max-age' in cache or 'public' in cache:
+            problems.append(f'{name}: an absent file carries Cache-Control {cache!r}')
+        if name.endswith('timestamp.json') and cache not in ('', 'no-cache'):
+            problems.append(f'{name}: absent timestamp carries Cache-Control {cache!r}')
+    return problems
+
+
 def main():
     if WORK.exists():
         shutil.rmtree(WORK)
@@ -114,6 +140,9 @@ def main():
     p = run('update', '--repo', REPO, '--state', state, '--tls-roots', der)
     emit(p.returncode == 1 and 'timestamp: repository-missing' in p.stderr and 'clock=system' in p.stdout,
          'fetch-live-handshake', f'exit={p.returncode} stdout={p.stdout!r} stderr={p.stderr!r}')
+    ctx = ssl.create_default_context(cafile=str(pem))
+    problems = absence_headers(HOST, context=ctx)
+    emit(not problems, 'fetch-live-absence-headers', '; '.join(problems))
     transcript(pem)
     if FAILED:
         print(f'fetch-live: {len(FAILED)} red rows', flush=True)
