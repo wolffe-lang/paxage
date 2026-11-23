@@ -1,0 +1,25 @@
+# The published repository, read from outside once a day. Red means a client would soon fail or already does:
+# a timestamp under 12 hours from expiry, a certificate under 14 days, a chain the std client no longer completes,
+# a repository that no longer verifies against the pinned root, or an absent file that is not a plain uncached 404.
+name: canary
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canary:
+    name: canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: tools/fetch-toolchain
+      - name: build
+        run: sh tools/build
+      - name: judgments
+        run: python3 -I tools/check-canary --self-test
+      - name: published repository
+        run: python3 -I tools/check-canary
