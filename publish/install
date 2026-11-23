@@ -15,6 +15,7 @@
 #      nothing else (restrict,command="/usr/local/libexec/pxg-publish"), if the same line is not already there
 #   7. with --binary FILE, copies the paxage binary to /usr/local/bin/pxg (mode 0755)
 #   8. copies four systemd units (two services, two timers) into /etc/systemd/system and runs systemctl daemon-reload
+#      (skipped, and said so, where there is no systemctl)
 #   9. with --enable-timers, enables and starts the two timers; without it they stay off
 #  10. where SELinux is in use, runs restorecon -R on the repository directory, /home/pxgpub and /var/lib/pxgpub, and
 #      prints the label of every top-level file in the repository directory
@@ -57,6 +58,11 @@ act() {  # DESCRIPTION COMMAND...
 system_act() {  # like act, skipped entirely when there is no real system
   if [ "$nosys" = 1 ]; then echo "skip: $1 (no system changes)"; return 0; fi
   act "$@"
+}
+
+systemd_act() {  # like system_act, and skipped where there is no systemctl (a container, a machine without systemd)
+  if ! command -v systemctl >/dev/null 2>&1; then echo "skip: $1 (systemctl is not present)"; return 0; fi
+  system_act "$@"
 }
 
 ensure_dir() {  # PATH MODE
@@ -116,9 +122,9 @@ else echo "note: /usr/local/bin/pxg is missing; pass --binary FILE or place the 
 for unit in pxg-resign-timestamp.service pxg-resign-timestamp.timer pxg-resign-snapshot.service pxg-resign-snapshot.timer; do
   ensure_file "$here/$unit" "/etc/systemd/system/$unit" 0644
 done
-system_act "systemctl daemon-reload" systemctl daemon-reload
+systemd_act "systemctl daemon-reload" systemctl daemon-reload
 if [ "$enable" = 1 ]; then
-  system_act "enable and start the two timers" systemctl enable --now pxg-resign-timestamp.timer pxg-resign-snapshot.timer
+  systemd_act "enable and start the two timers" systemctl enable --now pxg-resign-timestamp.timer pxg-resign-snapshot.timer
 else
   echo "note: the timers stay off; pass --enable-timers to start them"
 fi
