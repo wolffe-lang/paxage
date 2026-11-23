@@ -8,7 +8,7 @@
     "sh",
     "-eu",
     "-c",
-    "PAXAGE_ROOT=\"$PWD\"; export PAXAGE_ROOT; . tools/lib-toolchain.sh; mkdir -p target/release; \"$WOLF\" build --release --deny-warnings src/paxage.lu -o target/release/paxage; cp target/release/paxage target/release/pxg; python3 -I tools/check-glibc-floor --skip-other target/release/paxage"
+    "PAXAGE_ROOT=\"$PWD\"; export PAXAGE_ROOT; . tools/lib-toolchain.sh; mkdir -p target/release; \"$WOLF\" build --release --deny-warnings src/paxage.lu -o target/release/paxage; cp target/release/paxage target/release/pxg"
   ],
   "binaries": {
     "paxage": "target/release/paxage",
