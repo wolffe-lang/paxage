@@ -814,7 +814,6 @@ fn index_pages(o: options.Options, now: int) -> str {
     if stamp.error != "" { return stamp.error }
     let auth = meta.verify(stamp, root, "timestamp")
     if auth != "" { return auth }
-    if stamp.expires <= now { return "expired-timestamp" }
     let snapshot = named_file(repo, "snapshot", stamp.entries[0])
     let snapshot_auth = meta.verify(snapshot, root, "snapshot")
     if snapshot_auth != "" { return snapshot_auth }
