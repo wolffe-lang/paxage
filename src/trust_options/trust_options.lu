@@ -11,6 +11,7 @@ pub struct Options {
     buildinfos: List[str],
     root_keys: List[str],
     signatures: List[str],
+    adds: List[str],
     error: str,
 }
 
@@ -25,6 +26,7 @@ pub fn parse(args: List[str], start: int) -> Options {
         buildinfos: List[str](),
         root_keys: List[str](),
         signatures: List[str](),
+        adds: List[str](),
         error: "",
     }
     var i = start
@@ -64,6 +66,9 @@ pub fn parse(args: List[str], start: int) -> Options {
             "--out",
             "--root-key",
             "--signature",
+            "--add",
+            "--targets-version",
+            "--snapshot-version",
         ] {
             if name == allowed { known = true }
         }
@@ -73,6 +78,8 @@ pub fn parse(args: List[str], start: int) -> Options {
             (mut o.root_keys).push(value)
         } else if name == "--signature" {
             (mut o.signatures).push(value)
+        } else if name == "--add" {
+            (mut o.adds).push(value)
         } else if name == "--manifest" {
             (mut o.manifests).push(value)
         } else if name == "--buildinfo" {
@@ -81,7 +88,7 @@ pub fn parse(args: List[str], start: int) -> Options {
             if flag_value(o, name) != "" { o.error = "duplicate-option"; return o }
             o.values[name] = value
         }
-        if o.root_keys.len > 16 || o.signatures.len > 16 { o.error = "key-limit"; return o }
+        if o.root_keys.len > 16 || o.signatures.len > 16 || o.adds.len > 64 { o.error = "key-limit"; return o }
         if o.manifests.len > 256 || o.buildinfos.len > 256 { o.error = "target-limit"; return o }
         i += 2
     }
