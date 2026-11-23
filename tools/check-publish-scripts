@@ -221,9 +221,9 @@ def rows():
 
     # --- the daily and weekly re-signs
     p = run('pxg-resign', 'timestamp', env=env)
-    check(p.returncode == 0 and 'resigned timestamp 2' in text(p), 'scripts-resign-timestamp', text(p))
+    check(p.returncode == 0 and 'resigned timestamp 3' in text(p), 'scripts-resign-timestamp', text(p))
     p = run('pxg-resign', 'snapshot', env=env)
-    check(p.returncode == 0 and 'resigned snapshot 3' in text(p) and 'resigned timestamp 3' in text(p),
+    check(p.returncode == 0 and 'resigned snapshot 3' in text(p) and 'resigned timestamp 4' in text(p),
           'scripts-resign-snapshot', text(p))
     v = verify('four')
     check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'scripts-resign-verifies', ct.describe(v))
