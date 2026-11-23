@@ -160,6 +160,26 @@ For production metadata paxage writes bytes and attaches signatures; it signs no
   the canonical signed targets bytes, one `target NAME VERSION KIND LENGTH SHA256` line per file. A
   manifest without its buildinfo refuses `target-incomplete`.
 
+The publisher's side works on a docroot (`--repo file:///DOCROOT`) the same way: bytes out, signatures
+attached, then placed.
+
+- `repo draft-snapshot --repo file:///DOCROOT --version N --targets-version M --expires UTC --out FILE` and
+  `repo draft-timestamp ... --version N --snapshot-version S ...` write the canonical signed bytes of a
+  snapshot or a timestamp that names the current file below it, after checking that file against the newest
+  root in the docroot (a file that does not verify refuses by the verifier's name). The weekly snapshot and
+  the daily timestamp are these two with the next version number.
+- `repo commit --repo file:///DOCROOT --add FILE...` checks every envelope before it writes any: roots must
+  follow each other by one and verify under the previous root, every other file must verify under the newest
+  root, a targets file's objects must already be in `targets/` with the signed length and digest, and a
+  snapshot or timestamp must name a file that is in the docroot or in the same commit (`commit-dangling`
+  otherwise). It then writes roots, targets and snapshots create-only (`immutable-rewrite`) and replaces
+  `metadata/timestamp.json` last, atomically; a timestamp that is not newer than the current one refuses
+  `publish-version`, an expired one `expired-timestamp`. A refusal writes nothing.
+- `repo verify --repo URL --root PINNED --state DIR --cache DIR` reads the whole repository with the
+  client's own code: it bootstraps a fresh state from the pinned root, updates, and fetches every target the
+  signed list names into the cache, so a short or altered object refuses `target-hash` or `target-length`.
+  `file://` and `https://` repositories both work; the state and cache directories are scratch ones.
+
 In the ceremony the public keys are those of the labelled media (ROOT-A, ROOT-B, ROOT-C for the
 three root keys, TARGETS-1 for the targets key) and the online keys of the publish user
 `pxgpub`; the signing command is `openssl pkeyutl -sign -rawin -inkey KEY -in FILE -out SIG`.
