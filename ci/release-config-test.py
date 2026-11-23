@@ -37,6 +37,7 @@ class ReleaseBuild(unittest.TestCase):
                 ': "${PAXAGE_ROOT:?release command must set PAXAGE_ROOT}"\n'
                 '[ "$PAXAGE_ROOT" = "$PWD" ]\n'
                 'WOLF="$PAXAGE_ROOT/.wolf-bin/wolf"\nexport WOLF\n')
+            (root / 'tools/check-glibc-floor').write_bytes((ROOT / 'tools/check-glibc-floor').read_bytes())
             compiler = root / '.wolf-bin/wolf'
             compiler.write_text(
                 '#!/bin/sh\nset -eu\nprintf "%s\\n" "$@" > compiler.argv\n'
