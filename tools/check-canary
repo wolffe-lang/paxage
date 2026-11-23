@@ -32,7 +32,7 @@ MIN_TIMESTAMP_HOURS = 12
 MIN_CERT_DAYS = 14
 # The day the first publication is expected; a canary with no pinned root is a gate that is dark, so it may be dark
 # only until then.
-SKIP_UNTIL = datetime.date(2027, 1, 31)
+SKIP_UNTIL = datetime.date(2026, 12, 31)
 FAILED = []
 
 
