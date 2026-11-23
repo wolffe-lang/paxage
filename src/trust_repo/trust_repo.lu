@@ -654,7 +654,7 @@ fn commit(repo: str, o: options.Options, now: int) -> str {
         let old = io.read("{repo}/metadata/timestamp.json", 16384)
         if old.error == "" {
             let previous = meta.parse(old.bytes, "timestamp")
-            if previous.error == "" && meta.verify(previous, current, "timestamp") == "" && previous.version >= stamp.version {
+            if previous.error == "" && meta.verify(previous, current, "timestamp") == "" && previous.version > stamp.version + 100 {
                 return "publish-version"
             }
         } else if old.error != "not-found" {
