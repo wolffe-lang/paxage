@@ -34,6 +34,7 @@ step publish-scripts python3 -I tools/check-publish-scripts
 step glibc-floor-tests python3 -I tools/test-glibc-floor
 if [ "$(uname -s)" = Linux ]; then step glibc-floor python3 -I tools/check-glibc-floor target/bin/paxage; fi
 step names python3 -I tools/check-names
+step status python3 -I tools/check-status
 if [ "$(uname -s)" = Linux ]; then
   step payload prlimit --as=2147483648 python3 -I tools/check-payload --fuzz
   # podman runs uncapped; the step caps the archivers and paxage inside the container (ulimit -v
