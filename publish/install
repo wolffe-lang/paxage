@@ -14,11 +14,13 @@
 #   6. with --deploy-key FILE, appends one line to /home/pxgpub/.ssh/authorized_keys that lets that key run pxg-publish and
 #      nothing else (restrict,command="/usr/local/libexec/pxg-publish"), if the same line is not already there
 #   7. with --binary FILE, copies the paxage binary to /usr/local/bin/pxg (mode 0755)
-#   8. copies four systemd units (two services, two timers) into /etc/systemd/system and runs systemctl daemon-reload
-#      (skipped, and said so, where there is no systemctl)
-#   9. with --enable-timers, enables and starts the two timers; without it they stay off
-#  10. where SELinux is in use, runs restorecon -R on the repository directory, /home/pxgpub and /var/lib/pxgpub, and
-#      prints the label of every top-level file in the repository directory
+#   8. copies four systemd units (two services, two timers) into /etc/systemd/system and, only when one of them was
+#      written or replaced in this run, runs systemctl daemon-reload (skipped, and said so, where there is no systemctl)
+#   9. with --enable-timers, enables and starts the two timers unless both are already enabled and active; without it
+#      they stay off
+#  10. where SELinux is in use, and only when restorecon -n -v -R says a label would change, runs restorecon -R on the
+#      repository directory, /home/pxgpub and /var/lib/pxgpub; then prints the label of every top-level file in the
+#      repository directory
 # It generates, reads and moves no signing key: /home/pxgpub/keys is created empty for the key ceremony.
 # Steps 1, 8, 9 and 10 touch the system and are marked "verified by the run on the real machine": nothing here can prove them.
 #
@@ -70,11 +72,13 @@ ensure_dir() {  # PATH MODE
   if [ -d "$path" ]; then have "directory $1"; else act "create directory $1 (mode $2)" mkdir -p "$path"; fi
   if [ "$check" = 0 ]; then chmod "$2" "$path"; fi
 }
+changed=0   # set to 1 by ensure_file when it writes (or, under --check, would write) a file
 ensure_file() {  # SOURCE DEST MODE
   local dest=$P$2
   if [ -f "$dest" ] && cmp -s "$1" "$dest"; then have "file $2"; else
     if [ "$check" = 0 ]; then mkdir -p "$(dirname "$dest")"; fi
     act "install $2 (mode $3)" cp "$1" "$dest"
+    changed=1
   fi
   if [ "$check" = 0 ] && [ -f "$dest" ]; then chmod "$3" "$dest"; fi
 }
@@ -119,20 +123,40 @@ elif [ -x "$P/usr/local/bin/pxg" ]; then have "file /usr/local/bin/pxg"
 else echo "note: /usr/local/bin/pxg is missing; pass --binary FILE or place the paxage binary there"; fi
 
 # 8 and 9. the units
+units_changed=0
 for unit in pxg-resign-timestamp.service pxg-resign-timestamp.timer pxg-resign-snapshot.service pxg-resign-snapshot.timer; do
+  changed=0
   ensure_file "$here/$unit" "/etc/systemd/system/$unit" 0644
+  [ "$changed" = 1 ] && units_changed=1
 done
-systemd_act "systemctl daemon-reload" systemctl daemon-reload
+if [ "$units_changed" = 1 ]; then
+  systemd_act "systemctl daemon-reload" systemctl daemon-reload
+elif command -v systemctl >/dev/null 2>&1 && [ "$nosys" = 0 ]; then
+  have "systemd units (no daemon-reload needed)"
+else
+  systemd_act "systemctl daemon-reload" systemctl daemon-reload
+fi
 if [ "$enable" = 1 ]; then
-  systemd_act "enable and start the two timers" systemctl enable --now pxg-resign-timestamp.timer pxg-resign-snapshot.timer
+  if command -v systemctl >/dev/null 2>&1 && [ "$nosys" = 0 ] \
+      && systemctl is-enabled --quiet pxg-resign-timestamp.timer pxg-resign-snapshot.timer 2>/dev/null \
+      && systemctl is-active --quiet pxg-resign-timestamp.timer pxg-resign-snapshot.timer 2>/dev/null; then
+    have "timers enabled and active"
+  else
+    systemd_act "enable and start the two timers" systemctl enable --now pxg-resign-timestamp.timer pxg-resign-snapshot.timer
+  fi
 else
   echo "note: the timers stay off; pass --enable-timers to start them"
 fi
 
-# 10. labels
+# 10. labels: reported as done only when restorecon -n says something would change
 if command -v restorecon >/dev/null 2>&1 && [ "$nosys" = 0 ]; then
-  system_act "relabel the repository, the publish user's home and its state (restorecon -R)" restorecon -R "$docroot" "/home/$user" "/var/lib/$user"
-  [ "$check" = 1 ] || ls -Zd "$docroot" "$docroot"/* | sed 's/^/label /'
+  pending=$(restorecon -n -v -R "$P$docroot" "$P/home/$user" "$P/var/lib/$user" 2>&1 || true)
+  if [ -z "$pending" ]; then
+    have "SELinux labels (restorecon -n finds nothing to change)"
+  else
+    system_act "relabel the repository, the publish user's home and its state (restorecon -R)" restorecon -R "$P$docroot" "$P/home/$user" "$P/var/lib/$user"
+  fi
+  [ "$check" = 1 ] || { ls -Zd "$P$docroot" "$P$docroot"/* 2>/dev/null | sed 's/^/label /' || true; }
 else
   echo "skip: SELinux labels (no restorecon here)"
 fi
