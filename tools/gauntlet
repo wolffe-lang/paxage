@@ -31,6 +31,7 @@ step commit-failpoint python3 -I tools/check-commit-failpoint
 step index python3 -I tools/check-index
 step canary python3 -I tools/check-canary --self-test
 step publish-scripts python3 -I tools/check-publish-scripts
+step write-buildinfo python3 -I tools/check-write-buildinfo
 step glibc-floor-tests python3 -I tools/test-glibc-floor
 if [ "$(uname -s)" = Linux ]; then step glibc-floor python3 -I tools/check-glibc-floor target/bin/paxage; fi
 step names python3 -I tools/check-names
