@@ -129,7 +129,7 @@ for unit in pxg-resign-timestamp.service pxg-resign-timestamp.timer pxg-resign-s
   ensure_file "$here/$unit" "/etc/systemd/system/$unit" 0644
   [ "$changed" = 1 ] && units_changed=1
 done
-if [ "$units_changed" = 1 ]; then
+if true; then
   systemd_act "systemctl daemon-reload" systemctl daemon-reload
 elif command -v systemctl >/dev/null 2>&1 && [ "$nosys" = 0 ]; then
   have "systemd units (no daemon-reload needed)"
