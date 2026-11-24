@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-11-24
+
+- Experimental preview. Fixes found by installing on a host that has systemd, SELinux and a web server; no change to the formats or the trust rules.
+- Write the files meant to be served world-readable. `repo init`, `repo rotate`, `repo publish`, `repo commit` and `repo index` create metadata files and pages with an explicit mode of 0644 (a chmod, so the caller's umask cannot hide them), and a replaced timestamp is made readable before the rename so it is never briefly unreadable. Before, they were mode 0600 and a web server running as another user answered 403. `pxg-publish` makes the objects it places 0644 as well. Key files, trust state and the cache stay 0600.
+- Make `publish/install` a no-op on a second run where systemd and SELinux exist: `systemctl daemon-reload` runs only when a unit file was written, the relabel is reported as present unless `restorecon -n` says a label would change, and `--enable-timers` is reported as present when both timers are already enabled and active.
+- Say in the README, the CLI index and the changelog what the release has (the signing-ceremony verbs and the HTTPS transport) and what is still experimental; rows derive the claim from the program's own usage text, so the two cannot disagree.
+
 ## 0.2.0 — 2026-11-23
 
 - Experimental preview. Adds the pieces to publish a signed repository, and the scripts for the machine that serves one; no repository is published yet, so the live check against a public repository stays a named skip.
