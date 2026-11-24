@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""tools/write-buildinfo: rows for the buildinfo writer.
+
+The writer prints an R4 buildinfo literal from the digests of a build. Rows read its output with a small independent
+reader of the F2 literal form (not the writer's code), check every field against the inputs, refuse bad digests, bad
+sources, an existing output and a missing field, and then prove paxage accepts the file where it matters: a package
+whose manifest names the buildinfo's digest passes `pack` and `repo draft-targets`, and a one-byte change to the
+buildinfo is refused `buildinfo-hash`.
+"""
+import hashlib
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / 'tools'
+WRITER = TOOLS / 'write-buildinfo'
+BIN = ROOT / 'target/bin/paxage'
+WORK = ROOT / 'target/write-buildinfo'
+FAILED = []
+A, B, C, D, E = ('a' * 64, 'b' * 64, 'c' * 64, 'd' * 64, 'e' * 64)
+
+
+def row(name, good, detail=''):
+    if not good:
+        FAILED.append(name)
+    print(f'{"PASS" if good else "FAIL"} {name}{"" if good else " " + detail}', flush=True)
+
+
+def write(*args):
+    return subprocess.run([sys.executable, '-I', str(WRITER), *map(str, args)], capture_output=True, text=True)
+
+
+def tokens(text):
+    return re.findall(r'"[^"]*"|[A-Za-z_][A-Za-z0-9_]*|-?\d+|[{}\[\]:,]', text)
+
+
+def read(text):
+    """A reader for the F2 forms the buildinfo uses: record { field: value, ... }, [list], "string", integer, true/false."""
+    t = tokens(text)
+    pos = 0
+
+    def value():
+        nonlocal pos
+        tok = t[pos]
+        if tok.startswith('"'):
+            pos += 1
+            return tok[1:-1]
+        if re.fullmatch(r'-?\d+', tok):
+            pos += 1
+            return int(tok)
+        if tok == '[':
+            pos += 1
+            out = []
+            while t[pos] != ']':
+                out.append(value())
+                if t[pos] == ',':
+                    pos += 1
+            pos += 1
+            return out
+        if tok in ('true', 'false'):
+            pos += 1
+            return tok == 'true'
+        kind = tok
+        pos += 1
+        assert t[pos] == '{', (kind, t[pos])
+        pos += 1
+        fields = {}
+        while t[pos] != '}':
+            name = t[pos]
+            assert t[pos + 1] == ':'
+            pos += 2
+            fields[name] = value()
+            if t[pos] == ',':
+                pos += 1
+        pos += 1
+        return (kind, fields)
+
+    result = value()
+    assert pos == len(t), 'trailing tokens'
+    return result
+
+
+def full(out):
+    return ['--recipe', A, '--toolchain', B, '--container', C, '--source-package', D, '--epoch', 1700000000,
+            '--source', f'scent-0.2.0.tar={E}:12345', '--source', f'extra.tar={A}:7',
+            '--dependency', f'libfoo={B}:99', '--out', out]
+
+
+def main():
+    if WORK.exists():
+        shutil.rmtree(WORK)
+    WORK.mkdir(parents=True)
+    out = WORK / 'x.buildinfo'
+    p = write(*full(out))
+    row('buildinfo-writes', p.returncode == 0 and out.exists(), f'exit={p.returncode} {p.stderr!r}')
+    if not out.exists():
+        print('write-buildinfo: the writer is missing or failed; the remaining rows need its output', flush=True)
+        print(f'write-buildinfo: {len(FAILED)} red rows: {" ".join(FAILED)}', flush=True)
+        return 1
+    text = out.read_text()
+    kind, f = read(text)
+    row('buildinfo-record-kind', kind == 'buildinfo', kind)
+    row('buildinfo-fields-in-r4-order', list(f) == ['schema', 'features', 'recipe', 'sources', 'toolchain', 'container',
+                                                    'dependencies', 'source_date_epoch', 'source_package'], str(list(f)))
+    row('buildinfo-schema-and-features', f['schema'] == 1 and f['features'] == [])
+    row('buildinfo-digests', (f['recipe'], f['toolchain'], f['container'], f['source_package']) == (A, B, C, D))
+    row('buildinfo-epoch', f['source_date_epoch'] == 1700000000)
+    srcs = [(s[1]['name'], s[1]['sha256'], s[1]['length']) for s in f['sources']]
+    row('buildinfo-sources-in-given-order', srcs == [('scent-0.2.0.tar', E, 12345), ('extra.tar', A, 7)], str(srcs))
+    deps = [(s[1]['name'], s[1]['sha256'], s[1]['length']) for s in f['dependencies']]
+    row('buildinfo-dependencies', deps == [('libfoo', B, 99)], str(deps))
+    row('buildinfo-ends-in-one-newline', text.endswith('}\n') and not text.endswith('\n\n'))
+    row('buildinfo-ascii-no-tabs', text.isascii() and '\t' not in text)
+    again = WORK / 'y.buildinfo'
+    write(*full(again))
+    row('buildinfo-is-deterministic', again.read_bytes() == out.read_bytes())
+    p = write(*full(out))
+    row('buildinfo-existing-output-refused', p.returncode == 1 and 'output-exists' in p.stderr and
+        out.read_bytes() == again.read_bytes(), f'exit={p.returncode} {p.stderr!r}')
+    # no sources and no dependencies are allowed lists
+    bare = WORK / 'bare.buildinfo'
+    p = write('--recipe', A, '--toolchain', B, '--container', C, '--source-package', D, '--epoch', 0, '--out', bare)
+    row('buildinfo-empty-lists', p.returncode == 0 and read(bare.read_text())[1]['sources'] == [] if bare.exists() else False,
+        p.stderr)
+    # refusals
+    def refused(name, args, needle):
+        o = WORK / f'{name}.buildinfo'
+        a = [x if x != 'OUT' else str(o) for x in args]
+        p = write(*a)
+        row(f'buildinfo-refuses-{name}', p.returncode == 1 and needle in p.stderr and not o.exists(),
+            f'exit={p.returncode} {p.stderr!r} exists={o.exists()}')
+    base = ['--recipe', A, '--toolchain', B, '--container', C, '--source-package', D, '--epoch', 5, '--out', 'OUT']
+    def with_(flag, value):
+        out_ = list(base)
+        out_[out_.index(flag) + 1] = value
+        return out_
+    refused('short-digest', with_('--recipe', 'abc'), 'bad-digest')
+    refused('uppercase-digest', with_('--toolchain', 'B' * 64), 'bad-digest')
+    refused('non-hex-digest', with_('--container', 'g' * 64), 'bad-digest')
+    refused('negative-epoch', with_('--epoch', -1), 'bad-epoch')
+    refused('text-epoch', with_('--epoch', 'now'), 'bad-epoch')
+    refused('source-without-length', base[:-2] + ['--source', f'x={A}', '--out', 'OUT'], 'bad-source')
+    refused('source-with-path-name', base[:-2] + ['--source', f'/etc/passwd={A}:1', '--out', 'OUT'], 'bad-source')
+    refused('source-with-quote', base[:-2] + ['--source', f'a"b={A}:1', '--out', 'OUT'], 'bad-source')
+    refused('missing-recipe', ['--toolchain', B, '--container', C, '--source-package', D, '--epoch', 5, '--out', 'OUT'],
+            'missing-option')
+    refused('unknown-option', base + ['--nonsense', '1'], 'bad-usage')
+    # paxage accepts a package bound to this file, and refuses it once the file changes
+    if not BIN.exists():
+        row('buildinfo-paxage-binary-present', False, f'{BIN} is not built')
+    else:
+        src = WORK / 'src/usr/bin'
+        src.mkdir(parents=True)
+        (src / 'hello').write_bytes(b'#!/bin/sh\n')
+        os.chmod(src / 'hello', 0o755)
+        os.chmod(WORK / 'src/usr', 0o755)
+        os.chmod(WORK / 'src', 0o755)
+        digest = hashlib.sha256(out.read_bytes()).hexdigest()
+        template = WORK / 'hello-1-1.template'
+        template.write_text(
+            'manifest { schema: 1, features: [], name: "hello", version: "1-1", arch: "x86_64", slot: "default", '
+            f'license: "GPL-3.0-or-later", sources: [source {{ name: "scent-0.2.0.tar", sha256: "{E}", length: 12345 }}], '
+            f'buildinfo: "{digest}", installed_bytes: 0, installed_inodes: 0, requires: [], optional: [], provides: [], '
+            'conflicts: [], replaces: [], files: [], configs: [], actions: [] }\n')
+        packed = WORK / 'packed'
+        packed.mkdir()
+        p = subprocess.run([str(BIN), 'pack', str(WORK / 'src'), str(template), str(packed), '--epoch', '1700000000'],
+                           capture_output=True, text=True)
+        row('buildinfo-pack-accepts-the-template', p.returncode == 0, f'exit={p.returncode} {p.stderr!r}')
+        shutil.copyfile(out, packed / 'hello-1-1.buildinfo')
+        stage = WORK / 'stage'
+        stage.mkdir(mode=0o700)
+        signed = WORK / 'hello.targets.signed'
+        args = [str(BIN), 'repo', 'draft-targets', '--repo', stage.as_uri(), '--version', '1', '--expires',
+                '2099-01-01T00:00:00Z', '--manifest', str(packed / 'hello-1-1.manifest'), '--buildinfo',
+                str(packed / 'hello-1-1.buildinfo'), '--out', str(signed)]
+        p = subprocess.run(args, capture_output=True, text=True)
+        row('buildinfo-draft-targets-accepts-it', p.returncode == 0 and signed.exists(), f'exit={p.returncode} {p.stderr!r}')
+        changed = packed / 'changed.buildinfo'
+        changed.write_bytes(out.read_bytes() + b' ')
+        stage2 = WORK / 'stage2'
+        stage2.mkdir(mode=0o700)
+        args[args.index('--repo') + 1] = stage2.as_uri()
+        args[args.index('--buildinfo') + 1] = str(changed)
+        args[args.index('--out') + 1] = str(WORK / 'changed.signed')
+        p = subprocess.run(args, capture_output=True, text=True)
+        row('buildinfo-changed-file-refused-buildinfo-hash', p.returncode == 1 and 'buildinfo-hash' in p.stderr,
+            f'exit={p.returncode} {p.stderr!r}')
+    if FAILED:
+        print(f'write-buildinfo: {len(FAILED)} red rows: {" ".join(FAILED)}', flush=True)
+        return 1
+    print('PASS write-buildinfo', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
