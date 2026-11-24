@@ -290,7 +290,9 @@ def rows():
           'scripts-install-skips-systemd-where-absent', text(p))
     (farm / 'systemctl').write_text('#!/bin/sh\ncase "$1" in is-enabled|is-active) exit 1;; esac\nexit 0\n')
     os.chmod(farm / 'systemctl', 0o755)
-    p = run('install', '--check', '--enable-timers', env=penv)
+    fresh = WORK / 'prefix-sd'
+    fresh.mkdir()
+    p = run('install', '--check', '--enable-timers', env=dict(penv, PXG_INSTALL_ROOT=str(fresh)))
     lines = text(p).splitlines()
     check(p.returncode == 0 and 'would: systemctl daemon-reload' in lines
           and 'would: enable and start the two timers' in lines and not any('systemctl is not present' in l for l in lines),
