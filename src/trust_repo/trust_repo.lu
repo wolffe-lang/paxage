@@ -82,7 +82,7 @@ fn write_metadata(repo: str, text: str, role: str, version: int) -> str {
     let m = meta.parse(bytes, role)
     if m.error != "" { return m.error }
     if m.version != version { return "metadata-version" }
-    let error = io.create_public("{repo}/metadata/{version}.{role}.json", bytes)
+    let error = io.create("{repo}/metadata/{version}.{role}.json", bytes)
     if error != "" { return error }
     fs_sync_dir("{repo}/metadata") else |_| { return "state-dir-sync" }
     ""
