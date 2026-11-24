@@ -61,8 +61,8 @@ def main(argv):
             refuse('bad-digest', flag)
     if not re.fullmatch(r'\d+', given['--epoch']):
         refuse('bad-epoch', given['--epoch'])
-    text = (f'buildinfo {{ schema: 1, features: [], recipe: "{given["--recipe"]}", sources: [{", ".join(sources)}], '
-            f'toolchain: "{given["--toolchain"]}", container: "{given["--container"]}", dependencies: [{", ".join(deps)}], '
+    text = (f'buildinfo {{ schema: 1, features: [], toolchain: "{given["--toolchain"]}", recipe: "{given["--recipe"]}", sources: [{", ".join(sources)}], '
+            f'container: "{given["--container"]}", dependencies: [{", ".join(deps)}], '
             f'source_date_epoch: {int(given["--epoch"])}, source_package: "{given["--source-package"]}" }}\n')
     out = Path(given['--out'])
     try:
