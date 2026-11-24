@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""write-buildinfo: print an R4 buildinfo literal from the digests of a build.
+
+    write-buildinfo --recipe HEX --toolchain HEX --container HEX --source-package HEX --epoch N
+                    [--source NAME=HEX:LENGTH]... [--dependency NAME=HEX:LENGTH]... --out FILE
+
+The fields and their order are those of docs/RECIPE.md R4:
+buildinfo { schema, features, recipe, sources, toolchain, container, dependencies, source_date_epoch, source_package }.
+Every digest is 64 lowercase hex characters; `--source` and `--dependency` name a source record (name, SHA-256, byte
+length) and repeat in the order they are given; the epoch is a nonnegative integer. Output is create-only: an existing
+file refuses `output-exists`. Nothing here claims a build happened: the writer records what the caller says it built from.
+The manifest of the package names this file by its SHA-256 (`sha256sum FILE`), which `repo draft-targets` and the client
+check byte for byte.
+"""
+import re
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+HEX = re.compile(r'[0-9a-f]{64}\Z')
+NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_+.~-]{0,127}\Z')
+FLAGS = {'--recipe', '--toolchain', '--container', '--source-package', '--epoch', '--source', '--dependency', '--out'}
+
+
+def refuse(code, detail=''):
+    print(f'write-buildinfo: {code}{" " + detail if detail else ""}', file=sys.stderr)
+    sys.exit(1)
+
+
+def record(kind, text):
+    m = re.fullmatch(r'([^=]+)=([^:]+):(\d+)', text)
+    if not m or not NAME.match(m.group(1)) or not HEX.match(m.group(2)):
+        refuse('bad-source', text)
+    return f'source {{ name: "{m.group(1)}", sha256: "{m.group(2)}", length: {int(m.group(3))} }}'
+
+
+def main(argv):
+    given = {}
+    sources, deps = [], []
+    i = 0
+    while i < len(argv):
+        flag = argv[i]
+        if flag not in FLAGS or i + 1 >= len(argv):
+            refuse('bad-usage', flag)
+        value = argv[i + 1]
+        if flag == '--source':
+            sources.append(record('source', value))
+        elif flag == '--dependency':
+            deps.append(record('dependency', value))
+        elif flag in given:
+            refuse('bad-usage', f'{flag} given twice')
+        else:
+            given[flag] = value
+        i += 2
+    for flag in ('--recipe', '--toolchain', '--container', '--source-package', '--epoch', '--out'):
+        if flag not in given:
+            refuse('missing-option', flag)
+    for flag in ('--recipe', '--toolchain', '--container', '--source-package'):
+        if not HEX.match(given[flag]):
+            refuse('bad-digest', flag)
+    if not re.fullmatch(r'\d+', given['--epoch']):
+        refuse('bad-epoch', given['--epoch'])
+    text = (f'buildinfo {{ schema: 1, features: [], recipe: "{given["--recipe"]}", sources: [{", ".join(sources)}], '
+            f'toolchain: "{given["--toolchain"]}", container: "{given["--container"]}", dependencies: [{", ".join(deps)}], '
+            f'source_date_epoch: {int(given["--epoch"])}, source_package: "{given["--source-package"]}" }}\n')
+    out = Path(given['--out'])
+    try:
+        with open(out, 'x') as f:
+            f.write(text)
+    except FileExistsError:
+        refuse('output-exists', str(out))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
