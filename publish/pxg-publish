@@ -56,7 +56,6 @@ if [ -d "$stage/x/targets" ]; then
       cmp -s "$object" "$DOCROOT/targets/$base" || die "object-differs $base"
     else
       cp "$object" "$DOCROOT/targets/.incoming.$$"
-      chmod 0644 "$DOCROOT/targets/.incoming.$$"
       mv "$DOCROOT/targets/.incoming.$$" "$DOCROOT/targets/$base"
     fi
   done
