@@ -63,7 +63,7 @@ def tree(path):
 def unreadable(path):
     """Regular files under path that a web server running as another user could not read."""
     return sorted(str(f.relative_to(path)) for f in Path(path).rglob('*')
-                  if f.is_file() and f.stat().st_mode & 0o044 != 0o044)
+                  if f.is_file() and f.name != 'lock' and f.stat().st_mode & 0o044 != 0o044)
 
 
 def run(script, *args, env=None, stdin=None, timeout=120):
@@ -83,7 +83,11 @@ def tar_bytes(members):
     with tarfile.open(fileobj=buf, mode='w') as t:
         for m in members:
             info = tarfile.TarInfo(m[0])
-            if len(m) == 3:
+            if len(m) == 3 and isinstance(m[2], int):
+                info.mode = m[2]
+                info.size = len(m[1])
+                t.addfile(info, io.BytesIO(m[1]))
+            elif len(m) == 3:
                 info.type = tarfile.SYMTYPE
                 info.linkname = m[2]
                 t.addfile(info)
@@ -136,7 +140,7 @@ def rows():
         if final.exists():
             members.append((f'metadata/{version}.targets.json', final.read_bytes()))
         for f in sorted((stage / 'targets').glob('*')):
-            members.append((f'targets/{f.name}', f.read_bytes()))
+            members.append((f'targets/{f.name}', f.read_bytes(), f.stat().st_mode & 0o777))
         return tar_bytes(members)
 
     alpha = ct.simple('alpha').build(WORK / 'packages')
