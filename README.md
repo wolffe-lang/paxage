@@ -1,6 +1,6 @@
 # paxage
 
-**Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.2.0 implementation
+**Experimental.** PAX's package manager, also invoked as `pxg`. The current 0.2.1 implementation
 validates formats, orders versions, plans dependencies, packs canonical payloads,
 and publishes signed file repositories. Signing happens outside paxage: the `repo draft-*` verbs write the
 bytes to sign, a signer such as OpenSSL 3 makes the signature, and `repo attach` checks it and adds it; paxage never
@@ -17,24 +17,24 @@ strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
 The name has not been registered in any package registry.
 
-## Install 0.2.0
+## Install 0.2.1
 
 Release preparation targets macOS arm64 (`aarch64-apple-darwin`) and Linux
 x86-64 (`x86_64-unknown-linux-gnu`). A release workflow creates a **draft**;
-these instructions apply only once `v0.2.0` has been published on the
+these instructions apply only once `v0.2.1` has been published on the
 [release page](https://github.com/wolffe-lang/paxage/releases).
 Other platforms have no prebuilt archive in this release.
 
-Download `paxage-0.2.0-TARGET.tar.gz` and its `.sha256` sidecar into an empty
+Download `paxage-0.2.1-TARGET.tar.gz` and its `.sha256` sidecar into an empty
 directory, replacing `TARGET` with your platform above. Before unpacking, run:
 
 ```sh
 # Linux:
-sha256sum -c paxage-0.2.0-TARGET.tar.gz.sha256
+sha256sum -c paxage-0.2.1-TARGET.tar.gz.sha256
 # macOS:
-shasum -a 256 -c paxage-0.2.0-TARGET.tar.gz.sha256
-tar -xzf paxage-0.2.0-TARGET.tar.gz
-cd paxage-0.2.0-TARGET
+shasum -a 256 -c paxage-0.2.1-TARGET.tar.gz.sha256
+tar -xzf paxage-0.2.1-TARGET.tar.gz
+cd paxage-0.2.1-TARGET
 ./paxage --version
 ```
 

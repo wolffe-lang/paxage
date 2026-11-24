@@ -39,7 +39,7 @@ BIN = BINDIR / 'paxage'
 LINK = BINDIR / 'pxg'
 FPBIN = BINDIR / 'paxage-failpoint'
 WORK = ROOT / 'target/names'
-VERSION = 'paxage 0.2.0 (pxg; format v1, file trust, pack and stage, linux transactions)'
+VERSION = 'paxage 0.2.1 (pxg; format v1, file trust, pack and stage, linux transactions)'
 STATE, CACHE, ETC = 'var/lib/paxage', 'var/cache/paxage', 'etc/paxage'
 ct.BIN, ct.FPBIN, ct.WORK = BIN, FPBIN, WORK
 
