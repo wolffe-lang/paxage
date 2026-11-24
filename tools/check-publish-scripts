@@ -295,6 +295,69 @@ def rows():
     check(p.returncode == 0 and 'would: systemctl daemon-reload' in lines
           and 'would: enable and start the two timers' in lines and not any('systemctl is not present' in l for l in lines),
           'scripts-install-would-run-systemd-where-present', text(p))
+    # Where systemd and SELinux both exist, a second run changes nothing and says so: stand-ins for id, useradd, chown,
+    # systemctl and restorecon keep their state in a directory, so the rows run on any machine.
+    fstate = WORK / 'fstate'
+    fstate.mkdir()
+    farm2 = WORK / 'farm2'
+    farm2.mkdir()
+    for tool in ('bash', 'sh', 'cmp', 'cp', 'mkdir', 'chmod', 'dirname', 'grep', 'cat', 'sed', 'ls', 'tee', 'printf',
+                 'env', 'touch'):
+        found = shutil.which(tool)
+        if found:
+            (farm2 / tool).symlink_to(found)
+    fakes = {
+        'id': '#!/bin/sh\ncase "$1" in -u) echo 0;; *) exit 0;; esac\n',
+        'useradd': '#!/bin/sh\nexit 0\n',
+        'chown': '#!/bin/sh\nexit 0\n',
+        'systemctl': '#!/bin/sh\necho "systemctl $*" >> "$FARM_STATE/calls"\n'
+                     'case "$1" in is-enabled|is-active) [ -f "$FARM_STATE/enabled" ]; exit $?;;\n'
+                     'enable) touch "$FARM_STATE/enabled";; esac\nexit 0\n',
+        'restorecon': '#!/bin/sh\necho "restorecon $*" >> "$FARM_STATE/calls"\n'
+                      'case " $* " in *" -n "*) [ -f "$FARM_STATE/labelled" ] || echo "Would relabel the tree";;\n'
+                      '*) touch "$FARM_STATE/labelled";; esac\nexit 0\n',
+    }
+    for name, body in fakes.items():
+        (farm2 / name).write_text(body)
+        os.chmod(farm2 / name, 0o755)
+    prefix2 = WORK / 'prefix2'
+    prefix2.mkdir()
+    senv = {'PXG_INSTALL_ROOT': str(prefix2), 'PATH': str(farm2), 'FARM_STATE': str(fstate)}
+    sargs = ('--deploy-key', str(deploy), '--binary', str(BIN), '--enable-timers')
+
+    def calls():
+        f = fstate / 'calls'
+        return f.read_text().splitlines() if f.exists() else []
+
+    p = run('install', *sargs, env=senv)
+    first = text(p).splitlines()
+    check(p.returncode == 0 and 'do: systemctl daemon-reload' in first and 'do: enable and start the two timers' in first
+          and any(l.startswith('do: relabel') for l in first), 'scripts-install-first-run-with-systemd-and-selinux', text(p))
+    before_calls = calls()
+    p = run('install', *sargs, env=senv)
+    second = text(p).splitlines()
+    check(p.returncode == 0 and not any(l.startswith('do:') for l in second), 'scripts-install-second-run-does-nothing', text(p))
+    check('have: SELinux labels' in ' '.join(second) and 'have: systemd units' in ' '.join(second)
+          and 'have: timers enabled and active' in ' '.join(second), 'scripts-install-second-run-says-have', text(p))
+    after_calls = calls()
+    check([c for c in after_calls[len(before_calls):] if 'daemon-reload' in c or ' enable ' in c
+           or (c.startswith('restorecon') and ' -n ' not in c)] == [], 'scripts-install-second-run-calls-no-changing-command',
+          '\n'.join(after_calls[len(before_calls):]))
+    p = run('install', '--check', *sargs, env=senv)
+    check(p.returncode == 0 and not any(l.startswith('would:') for l in text(p).splitlines()),
+          'scripts-install-check-after-second-run-has-nothing-to-do', text(p))
+    # a changed unit file is written and the daemon told; nothing else is redone
+    other = WORK / 'publish-changed'
+    shutil.copytree(PUBLISH, other)
+    unit = other / 'pxg-resign-timestamp.timer'
+    unit.write_text(unit.read_text().replace('04:17:00', '05:17:00'))
+    full = dict(os.environ)
+    full.update(senv)
+    p3 = subprocess.run(['bash', str(other / 'install'), *sargs], capture_output=True, env=full, timeout=120)
+    third = text(p3).splitlines()
+    dos = [l for l in third if l.startswith('do:')]
+    check(p3.returncode == 0 and dos == ['do: install /etc/systemd/system/pxg-resign-timestamp.timer (mode 0644)',
+                                         'do: systemctl daemon-reload'], 'scripts-install-changed-unit-reloads-once', text(p3))
     p = run('install', '--nonsense', env=ienv)
     check(p.returncode == 2, 'scripts-install-unknown-option', text(p))
 
