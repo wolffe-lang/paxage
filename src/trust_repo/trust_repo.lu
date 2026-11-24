@@ -82,7 +82,7 @@ fn write_metadata(repo: str, text: str, role: str, version: int) -> str {
     let m = meta.parse(bytes, role)
     if m.error != "" { return m.error }
     if m.version != version { return "metadata-version" }
-    let error = io.create("{repo}/metadata/{version}.{role}.json", bytes)
+    let error = io.create_public("{repo}/metadata/{version}.{role}.json", bytes)
     if error != "" { return error }
     fs_sync_dir("{repo}/metadata") else |_| { return "state-dir-sync" }
     ""
@@ -275,7 +275,7 @@ fn publish(repo: str, keys: Keys, o: options.Options, now: int) -> str {
     if target_written != "" { return target_written }
     let snapshot_written = write_metadata(repo, snapshot_text, "snapshot", v)
     if snapshot_written != "" { return snapshot_written }
-    io.replace("{repo}/metadata", "timestamp.json", "timestamp.{v}.next", timestamp_bytes)
+    io.replace_public("{repo}/metadata", "timestamp.json", "timestamp.{v}.next", timestamp_bytes)
 }
 
 /// `signed` bytes wrapped in an envelope with no signatures, so one parser reads both.
@@ -702,7 +702,7 @@ fn commit(repo: str, o: options.Options, now: int, f: failpoint.Fail) -> str {
     let before = failpoint.hit(f, "commit:timestamp", "")
     if before != "" { return before }
     if stamps.len == 1 {
-        let error = io.replace(
+        let error = io.replace_public(
             "{repo}/metadata",
             "timestamp.json",
             "timestamp.{stamp.version}.next",
@@ -864,10 +864,10 @@ fn index_pages(o: options.Options, now: int) -> str {
         let made = cache.directory(dir)
         if made != "" { return made }
     }
-    var error = io.create("{out}/index.html", front.bytes())
+    var error = io.create_public("{out}/index.html", front.bytes())
     if error != "" { return error }
     for i in 0..pages.len {
-        error = io.create(pages[i], bodies[i].bytes())
+        error = io.create_public(pages[i], bodies[i].bytes())
         if error != "" { return error }
     }
     print("pages {pages.len + 1}")

@@ -6,8 +6,9 @@
 # What it changes: it adds the batch's objects to DOCROOT/targets (create-only: an object already there must have the
 # same bytes), commits the targets file, signs and commits the next snapshot and timestamp with the online keys (the
 # timestamp last), verifies the whole repository the way a client would, and relabels the tree for the web server where
-# SELinux is in use. It runs as the publish user and writes only under DOCROOT and STATE. Any failure before the commit
-# leaves the repository as it was; the commit itself can be run again.
+# SELinux is in use. Every file it places is world-readable (0644), so the web server's user can serve it. It runs as the
+# publish user and writes only under DOCROOT and STATE. Any failure before the commit leaves the repository as it was;
+# the commit itself can be run again.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
@@ -55,6 +56,7 @@ if [ -d "$stage/x/targets" ]; then
       cmp -s "$object" "$DOCROOT/targets/$base" || die "object-differs $base"
     else
       cp "$object" "$DOCROOT/targets/.incoming.$$"
+      chmod 0644 "$DOCROOT/targets/.incoming.$$"
       mv "$DOCROOT/targets/.incoming.$$" "$DOCROOT/targets/$base"
     fi
   done

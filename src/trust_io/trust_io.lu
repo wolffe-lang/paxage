@@ -58,6 +58,24 @@ pub fn create(path: str, bytes: List[byte]) -> str {
     error
 }
 
+/// Like `create`, for a file a web server is to serve: mode 0644 by an explicit chmod, so the caller's umask cannot hide it.
+pub fn create_public(path: str, bytes: List[byte]) -> str {
+    let error = create(path, bytes)
+    if error != "" { return error }
+    fs_set_mode(path, 420) else |_| { return "state-mode" }
+    ""
+}
+
+/// Like `replace`, with the temporary file made 0644 before the rename, so a served file is never briefly unreadable.
+pub fn replace_public(dir: str, name: str, temporary: str, bytes: List[byte]) -> str {
+    let error = create("{dir}/{temporary}", bytes)
+    if error != "" { return error }
+    fs_set_mode("{dir}/{temporary}", 420) else |_| { return "state-mode" }
+    fs_rename("{dir}/{temporary}", "{dir}/{name}") else |_| { return "state-rename" }
+    fs_sync_dir(dir) else |_| { return "state-dir-sync" }
+    ""
+}
+
 /// Exclusive temporary creation, file sync, same-directory rename, directory sync.
 pub fn replace(dir: str, name: str, temporary: str, bytes: List[byte]) -> str {
     let error = create("{dir}/{temporary}", bytes)
