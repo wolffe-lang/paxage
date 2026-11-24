@@ -60,6 +60,12 @@ def tree(path):
     return h.hexdigest()
 
 
+def unreadable(path):
+    """Regular files under path that a web server running as another user could not read."""
+    return sorted(str(f.relative_to(path)) for f in Path(path).rglob('*')
+                  if f.is_file() and f.stat().st_mode & 0o044 != 0o044)
+
+
 def run(script, *args, env=None, stdin=None, timeout=120):
     full = dict(os.environ)
     full.update(env or {})
@@ -112,6 +118,7 @@ def rows():
     root1 = out / '1.root.json'
     oc.attach(s, [(r1, r1.sign(s)), (r2, r2.sign(s))], root1)
     ok(pxg('repo', 'commit', '--repo', docroot.as_uri(), '--add', root1), 'scripts-setup-root', last='repo commit ok')
+    check(unreadable(docroot) == [], 'scripts-commit-files-are-world-readable', str(unreadable(docroot)))
 
     def batch(version, packages, label):
         stage = WORK / f'stage-{label}'
@@ -185,6 +192,7 @@ def rows():
           text(p))
     v = verify('one')
     check(v.returncode == 0 and 'verified targets 3' in v.stdout.splitlines(), 'scripts-publish-verifies', ct.describe(v))
+    check(unreadable(docroot) == [], 'scripts-publish-files-are-world-readable', str(unreadable(docroot)))
     check(not lock.exists(), 'scripts-publish-releases-the-lock')
     check(not list(state.glob('upload.*')), 'scripts-publish-leaves-no-scratch')
 
@@ -227,6 +235,7 @@ def rows():
           'scripts-resign-snapshot', text(p))
     v = verify('four')
     check(v.returncode == 0 and 'verified targets 6' in v.stdout.splitlines(), 'scripts-resign-verifies', ct.describe(v))
+    check(unreadable(docroot) == [], 'scripts-resign-files-are-world-readable', str(unreadable(docroot)))
     p = run('pxg-resign', 'other', env=env)
     check(p.returncode != 0 and 'usage' in text(p), 'scripts-resign-usage', text(p))
     os.chmod(keys / 'timestamp.key', 0o640)
@@ -378,6 +387,7 @@ def rows():
 
 
 def main():
+    os.umask(0o077)  # a caller with a strict umask (sudo -u, a service) must still leave a servable repository
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True, mode=0o755)
