@@ -288,7 +288,7 @@ def rows():
     check(p.returncode == 0 and 'skip: systemctl daemon-reload (systemctl is not present)' in lines
           and not any(l.startswith('do:') for l in lines) and any(l.startswith('would: create user') for l in lines),
           'scripts-install-skips-systemd-where-absent', text(p))
-    (farm / 'systemctl').write_text('#!/bin/sh\nexit 0\n')
+    (farm / 'systemctl').write_text('#!/bin/sh\ncase "$1" in is-enabled|is-active) exit 1;; esac\nexit 0\n')
     os.chmod(farm / 'systemctl', 0o755)
     p = run('install', '--check', '--enable-timers', env=penv)
     lines = text(p).splitlines()
