@@ -947,7 +947,7 @@ pub fn pending(c: Ctx) -> Pending {
     let d = walk.dir(c.root, "{path}")
     if d.error != "" {
         if walk.missing(d) { return Pending { name: "", error: "" } }
-        return Pending { name: "", error: "pending-unreadable {path} ({d.error})" }
+        return Pending { name: "", error: "" }
     }
     let listed = walk.names(d)
     walk.close(d)
