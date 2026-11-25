@@ -273,8 +273,9 @@ DIR must exist on a qualified filesystem (TRANSACTIONS X2) and, for an
 unprivileged caller, belong to the caller. Makes `DIR/var/lib/paxage` (the lock
 inode, generation 0, `current`, `transactions/`, `trust/` bootstrapped from the
 caller's pinned root) and `DIR/var/cache/paxage`. An existing state refuses
-`state-exists`. The ownership mode (privileged for euid 0, logical otherwise) is
-fixed here. Success: `init ok`.
+`state-exists`; a state or cache directory that lies on another filesystem than the root
+refuses `cross-filesystem PATH` (TRANSACTIONS X2). The ownership mode (privileged for
+euid 0, logical otherwise) is fixed here. Success: `init ok`.
 
 ## C13 — install, upgrade, remove, autoremove
 
@@ -293,7 +294,8 @@ fixed here. Success: `init ok`.
 Each prints its plan (`install`, `upgrade`, `remove`, `mark`, `residual`,
 `proposal`, `purge`, `pending` lines), then `VERB ok generation=N`, or `VERB ok
 nothing to do`. `--dry-run` prints the plan and writes nothing but trust and
-cache state. A refusal before the first durable step writes nothing in the root.
+cache state. A refusal before the first durable step writes nothing in the root; a destination on another
+filesystem than the root is one (`cross-filesystem PATH`, TRANSACTIONS X2).
 A failure after it is undone in-process (`rolled back`) or left for `rescue`
 (`rollback refused`).
 

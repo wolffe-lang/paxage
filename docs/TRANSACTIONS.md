@@ -29,6 +29,14 @@ reports `pax` on PAX; it must not acquire the development exception. PAX ext-fam
 roots currently refuse `unqualified-filesystem` until a native positive journal
 proof is qualified. Other unsupported operating systems fail closed as well.
 
+One filesystem. The root, the state and cache directories and every directory a
+plan touches must lie on the root's own device. A filesystem mounted below the root
+(another disk, a tmpfs) has its own journal and free space, which the qualification and
+the capacity check above never covered, so `init` and every transaction refuse
+`cross-filesystem PATH` (exit 1), naming the first component on another device, before
+a `transactions/tN` exists or a file changes. The test is the device number: a bind
+mount of the same filesystem is the same device and passes.
+
 ## X3 — The descriptor walk
 
 Every name in the root is reached one component at a time from the held root
