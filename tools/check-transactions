@@ -590,6 +590,19 @@ def install_directory_conflict(r):
     check(tree_digest(root) == before, 'install-directory-conflict-coowned-no-writes')
 
 
+@row('install-directory-action-conflict')
+def install_directory_action_conflict(r):
+    # A registered directory action finds its path already there with other metadata: refused by name, nothing written.
+    root = r.ready('directory-action-conflict')
+    spool = root / 'var/spool/test-daemon'
+    spool.mkdir(parents=True)
+    os.chmod(spool, 0o777)
+    before = tree_digest(root)
+    refused(pxg('install', '--root', root, 'alpha', '--now', NOW), 'install-directory-action-conflict', 1,
+            'directory-conflict var/spool/test-daemon')
+    check(tree_digest(root) == before, 'install-directory-action-conflict-no-writes')
+
+
 @row('upgrade-directory-conflict')
 def upgrade_directory_conflict(r):
     # A new version declares a directory that already exists, unowned, with other metadata: the upgrade refuses.
