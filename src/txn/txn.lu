@@ -417,7 +417,7 @@ fn plan_directories(c: Ctx, mut w: Work, old: db.Db, mut next: db.Db, adds: List
                 (mut w.mkdirs).push(op("mkdir", r.path, intent.nothing(), want, false))
                 (mut w.msrc).push(none_source())
             } else if !matches(live, want, !c.privileged) {
-                w.error = "directory-conflict {r.path}"
+                w.error = "directory-mismatch {r.path}"
                 return
             }
             (mut next.directories).push(db.Owned { path: r.path, package: p.name })
