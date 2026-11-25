@@ -546,7 +546,7 @@ pub fn plan(c: Ctx, old: db.Db, olds: List[Pkg], news: List[Pkg], purge: List[st
                     for q in olds {
                         if q.name == p.name && rec_index(q, r.path) >= 0 { owned_before = true }
                     }
-                    if !owned_before { out.error = "directory-conflict {r.path}"; return out }
+                    if !owned_before { out.error = "directory-mismatch {r.path}"; return out }
                     (mut w.chmetas).push(op("chmeta", r.path, want_of_live(live), want, false))
                 }
                 continue
