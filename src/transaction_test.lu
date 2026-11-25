@@ -215,10 +215,21 @@ fn main() -> int {
         inos: [1, 2, 3],
         error: "",
     }
-    let at_root = walk.Dir { fd: -1, rel: "", names: List[str](), devs: List[int](), inos: List[int](), error: "" }
+    let at_root = walk.Dir {
+        fd: -1,
+        rel: "",
+        names: List[str](),
+        devs: List[int](),
+        inos: List[int](),
+        error: "",
+    }
     if !row(walk.cross_device(r, same_dev) == "", "X2-boundary-same-device") { ok = false }
-    if !row(walk.cross_device(r, leaf_dev) == "usr/share/cross", "X2-boundary-cross-leaf") { ok = false }
-    if !row(walk.cross_device(r, mid_dev) == "usr/share", "X2-boundary-cross-first-component") { ok = false }
+    if !row(walk.cross_device(r, leaf_dev) == "usr/share/cross", "X2-boundary-cross-leaf") {
+        ok = false
+    }
+    if !row(walk.cross_device(r, mid_dev) == "usr/share", "X2-boundary-cross-first-component") {
+        ok = false
+    }
     if !row(walk.cross_device(r, at_root) == "", "X2-boundary-root-itself") { ok = false }
 
     if !row(
