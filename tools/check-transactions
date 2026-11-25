@@ -621,6 +621,92 @@ def upgrade_directory_conflict(r):
         r.repo.publish(universe())
 
 
+def can_mount():
+    return sys.platform.startswith('linux') and os.geteuid() == 0 and shutil.which('mount') and shutil.which('umount')
+
+
+class Mounted:
+    """A filesystem mounted at a directory for the length of a with block; always unmounted."""
+
+    def __init__(self, path, kind='tmpfs', image=None):
+        self.path, self.kind, self.image = Path(path), kind, image
+        self.done = False
+
+    def __enter__(self):
+        self.path.mkdir(parents=True, exist_ok=True)
+        if self.kind == 'tmpfs':
+            cmd = ['mount', '-t', 'tmpfs', '-o', 'size=8m,mode=0755', 'tmpfs', str(self.path)]
+        else:
+            cmd = ['mount', '-o', 'loop', str(self.image), str(self.path)]
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode != 0:
+            raise OSError(f'mount {self.kind} at {self.path}: {p.stderr.strip()}')
+        self.done = True
+        os.chmod(self.path, 0o755)
+        return self
+
+    def __exit__(self, *exc):
+        if self.done:
+            subprocess.run(['umount', str(self.path)], capture_output=True)
+        return False
+
+
+def cross_package():
+    return simple('cross', path='usr/share/cross/x')
+
+
+def no_transaction_started(root):
+    tx = root / 'var/lib/paxage/transactions'
+    return tx.is_dir() and not any(tx.iterdir())
+
+
+@row('cross-filesystem')
+def cross_filesystem(r):
+    # A filesystem mounted below the root is not covered by the root's qualification or capacity check: refused by name,
+    # before any transaction exists. Mounting needs root on Linux; other takes name the skip.
+    if not can_mount():
+        print('  skipped cross-filesystem: needs root on Linux with mount(8); the sudo and guest takes run it', flush=True)
+        return
+    r.repo.publish(universe() + [cross_package()])
+    try:
+        # the control: a nested directory on the root's own device installs
+        same = r.ready('cross-same-device', 'cross')
+        check((same / 'usr/share/cross/x').is_file(), 'cross-filesystem-control-same-device-installs')
+        # a second filesystem at a package destination
+        root = r.ready('cross-payload')
+        with Mounted(root / 'usr/share/cross'):
+            before = tree_digest(root)
+            refused(pxg('install', '--root', root, 'cross', '--now', NOW), 'cross-filesystem-payload', 1,
+                    'cross-filesystem usr/share/cross')
+            check(no_transaction_started(root), 'cross-filesystem-payload-no-transaction')
+            check(tree_digest(root) == before, 'cross-filesystem-payload-no-writes')
+        # the state directory on another filesystem, before init
+        root = r.fresh('cross-state')
+        with Mounted(root / 'var/lib/paxage') as m:
+            p = pxg('init', '--root', root, '--repo', r.repo.url, '--pinned-root', r.repo.pinned, '--arch', ARCH,
+                    '--slot', SLOT, '--now', NOW)
+            refused(p, 'cross-filesystem-state', 1, 'cross-filesystem var/lib/paxage')
+            check(not any(m.path.iterdir()) and not (root / 'var/cache').exists(), 'cross-filesystem-state-writes-nothing')
+        # a journalled filesystem is no exception: a second ext4 at the destination, when this host can make one
+        if shutil.which('mkfs.ext4') and shutil.which('truncate'):
+            image = WORK / 'cross.ext4'
+            subprocess.run(['truncate', '-s', '16M', str(image)], check=True)
+            made = subprocess.run(['mkfs.ext4', '-q', '-F', '-O', 'has_journal', str(image)], capture_output=True)
+            root = r.ready('cross-payload-ext4')
+            try:
+                with Mounted(root / 'usr/share/cross', 'ext4', image):
+                    refused(pxg('install', '--root', root, 'cross', '--now', NOW), 'cross-filesystem-payload-ext4', 1,
+                            'cross-filesystem usr/share/cross')
+            except OSError as e:
+                print(f'  skipped cross-filesystem-payload-ext4: {e}', flush=True)
+            if made.returncode != 0:
+                print('  skipped cross-filesystem-payload-ext4: mkfs.ext4 failed', flush=True)
+    except OSError as e:
+        emit(False, 'cross-filesystem', f'setup: {e}')
+    finally:
+        r.repo.publish(universe())
+
+
 @row('install-unowned-collision')
 def install_collision(r):
     root = r.ready('install-collision')
