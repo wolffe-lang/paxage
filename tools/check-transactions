@@ -564,6 +564,36 @@ def install_conflict(r):
     check(tree_digest(root) == before, 'install-file-conflict-no-writes')
 
 
+@row('pending-unreadable')
+def pending_unreadable(r):
+    # A transactions directory that cannot be read must not look like an empty one (an unprepared t1 may be waiting in it).
+    # Directory modes bind only a non-root caller, so a root take names the skip.
+    if os.geteuid() == 0:
+        print('SKIP pending-unreadable reason=root ignores directory modes; the plain-user takes run it', flush=True)
+        return
+    root = r.ready('pending-unreadable', 'alpha')
+    tx = root / 'var/lib/paxage/transactions'
+    (tx / 't1').mkdir()
+    before = tree_digest(root)
+    os.chmod(tx, 0)
+    try:
+        for label, args, code in (('rescue', ['rescue'], 9), ('status', ['status'], 1), ('verify', ['verify'], 1),
+                                  ('install', ['install', 'lone', '--now', NOW], 1),
+                                  ('upgrade', ['upgrade', '--now', NOW], 1), ('remove', ['remove', 'alpha'], 1),
+                                  ('autoremove', ['autoremove', '--yes'], 1)):
+            p = pxg(args[0], '--root', root, *args[1:])
+            refused(p, f'pending-unreadable-{label}', code, 'pending-unreadable var/lib/paxage/transactions')
+            check('nothing to do' not in p.stdout, f'pending-unreadable-{label}-is-not-nothing-to-do', p.stdout)
+    finally:
+        os.chmod(tx, 0o700)
+    check(tree_digest(root) == before, 'pending-unreadable-no-writes')
+    # the control, without the fault: the same unprepared transaction is discarded, and a second rescue has nothing to do
+    p = pxg('rescue', '--root', root)
+    check(p.returncode == 0 and 'nothing to do' not in p.stdout, 'pending-readable-rescue-discards', describe(p))
+    p = pxg('rescue', '--root', root)
+    check(p.returncode == 0 and 'nothing to do' in p.stdout, 'pending-readable-second-rescue-nothing-to-do', describe(p))
+
+
 @row('install-unowned-collision')
 def install_collision(r):
     root = r.ready('install-collision')
