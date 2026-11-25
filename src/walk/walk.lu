@@ -168,6 +168,11 @@ pub fn dir(r: Root, rel: str) -> Dir {
 
 /// The first component of a held directory's path that lives on another device than the root, or "".
 pub fn cross_device(r: Root, d: Dir) -> str {
+    var path = ""
+    for i in 0..d.devs.len {
+        path = join(path, d.names[i])
+        if d.devs[i] != r.dev { return path }
+    }
     ""
 }
 

@@ -340,6 +340,10 @@ fn init(o: Opts, k: transport.Knobs) -> int {
         walk.close_root(c.root)
         return fail("root-owner: an unprivileged root must be the caller's")
     }
+    for rel in [txn.state(), "var/cache/paxage"] {
+        let far = txn.boundary(c, rel)
+        if far != "" { walk.close_root(c.root); return fail(far) }
+    }
     let existing = walk.look_path(c.root, txn.state(), false)
     if existing.kind != "absent" {
         walk.close_root(c.root)

@@ -1433,6 +1433,45 @@ fn rollback(c: Ctx, t: str, to: int, durable: bool, error: str) -> Done {
     Done { generation: -1, error: "{error}; rolled back" }
 }
 
+/// The nearest directory at or above rel that exists must lie on the root's own device (TRANSACTIONS X2). A mount
+/// below the root is another filesystem, with its own journal and free space, which the root's qualification and
+/// capacity check never covered. Returns "cross-filesystem PATH" for the first component on another device, else "".
+/// A bind mount of the same device passes. An error the walk itself reports is left to the step that needs the directory.
+pub fn boundary(c: Ctx, rel: str) -> str {
+    var at = rel
+    while at != "" {
+        let d = walk.dir(c.root, at)
+        if d.error == "" {
+            let far = walk.cross_device(c.root, d)
+            walk.close(d)
+            if far != "" { return "cross-filesystem {far}" }
+            return ""
+        }
+        if !walk.missing(d) { return "" }
+        at = walk.parent_of(at)
+    }
+    ""
+}
+
+/// The state, the cache and every directory the plan touches are held to the root's device before the first durable step.
+fn same_filesystem(c: Ctx, p: Plan) -> str {
+    for rel in [state(), "var/cache/paxage"] {
+        let far = boundary(c, rel)
+        if far != "" { return far }
+    }
+    var seen = Map[str, int]()
+    for o in p.ops {
+        let parent = walk.parent_of(o.path)
+        if parent == "" { continue }
+        let known = seen[parent] else -1
+        if known >= 0 { continue }
+        seen[parent] = 1
+        let far = boundary(c, parent)
+        if far != "" { return far }
+    }
+    ""
+}
+
 /// Space and inodes for backups, staged payloads, new files and the records, with
 /// 1 MiB of headroom; refused before the first durable step.
 fn capacity(c: Ctx, p: Plan) -> str {
@@ -1461,6 +1500,8 @@ fn capacity(c: Ctx, p: Plan) -> str {
 pub fn execute(c: Ctx, p: Plan, from: int) -> Done {
     let to = from + 1
     let t = "t{to}"
+    let boundary_error = same_filesystem(c, p)
+    if boundary_error != "" { return Done { generation: -1, error: boundary_error } }
     var room = capacity(c, p)
     room = step(c, "capacity", "", room)
     if room != "" { return Done { generation: -1, error: room } }
