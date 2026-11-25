@@ -313,8 +313,9 @@ exits 1. Success: `verify ok`.
 never became durable, or undoes one whose intent is valid (X6). It prints `rescue:
 nothing to do`, `rescue: finished t<N>`, `rescue: discarded t<N>` or `rescue:
 undone t<N>`. It refuses, exit 9, with `rescue-unknown-state PATH`,
-`rescue-missing-backup PATH`, `rescue-malformed-intent` or
-`rescue-ambiguous-generation`. A refused rescue may be repeated.
+`rescue-missing-backup PATH`, `rescue-malformed-intent`,
+`rescue-ambiguous-generation` or, when the `transactions/` directory cannot be read,
+`pending-unreadable PATH`. A refused rescue may be repeated.
 
 ## C16 — The test-only failpoint executable
 
