@@ -183,8 +183,11 @@ The shipped `paxage` passes an inert hook set. The test-only `paxage-failpoint`
 
 - **Conflicts.** A non-directory path owned by another package that stays
   refuses `file-conflict PATH owner=NAME`. An existing unowned non-directory
-  refuses `unowned-collision PATH`. A co-owned directory with other metadata
-  refuses `directory-conflict PATH`. There is no overwrite option.
+  refuses `unowned-collision PATH`. A directory that already exists with metadata
+  other than the package's (mode, owner or group) refuses `directory-conflict PATH`,
+  whether another package owns it or none does; a directory the same package
+  owned before is changed to the new metadata by an upgrade. There is no
+  overwrite option.
 - **Configs.** Each `configs` path keeps a baseline B (the packaged digest).
   Upgrade compares the live digest L with B and the new packaged digest N:
   - L absent: the file stays absent;
