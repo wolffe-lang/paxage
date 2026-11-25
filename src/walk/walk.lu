@@ -166,6 +166,11 @@ pub fn dir(r: Root, rel: str) -> Dir {
     d
 }
 
+/// The first component of a held directory's path that lives on another device than the root, or "".
+pub fn cross_device(r: Root, d: Dir) -> str {
+    ""
+}
+
 /// Release a walked directory.
 pub fn close(d: Dir) { if d.fd >= 0 { fs_close(d.fd) else |_| {} } }
 

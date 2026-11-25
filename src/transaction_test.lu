@@ -190,6 +190,37 @@ fn main() -> int {
         ok = false
     }
 
+    let r = walk.Root { path: "/r", fd: -1, dev: 5, ino: 2, cwd: "", error: "" }
+    let same_dev = walk.Dir {
+        fd: -1,
+        rel: "usr/share/x",
+        names: ["usr", "share", "x"],
+        devs: [5, 5, 5],
+        inos: [1, 2, 3],
+        error: "",
+    }
+    let leaf_dev = walk.Dir {
+        fd: -1,
+        rel: "usr/share/cross",
+        names: ["usr", "share", "cross"],
+        devs: [5, 5, 9],
+        inos: [1, 2, 3],
+        error: "",
+    }
+    let mid_dev = walk.Dir {
+        fd: -1,
+        rel: "usr/share/cross",
+        names: ["usr", "share", "cross"],
+        devs: [5, 9, 9],
+        inos: [1, 2, 3],
+        error: "",
+    }
+    let at_root = walk.Dir { fd: -1, rel: "", names: List[str](), devs: List[int](), inos: List[int](), error: "" }
+    if !row(walk.cross_device(r, same_dev) == "", "X2-boundary-same-device") { ok = false }
+    if !row(walk.cross_device(r, leaf_dev) == "usr/share/cross", "X2-boundary-cross-leaf") { ok = false }
+    if !row(walk.cross_device(r, mid_dev) == "usr/share", "X2-boundary-cross-first-component") { ok = false }
+    if !row(walk.cross_device(r, at_root) == "", "X2-boundary-root-itself") { ok = false }
+
     if !row(
         walk.parent_of("usr/share/a") == "usr/share" &&
             walk.parent_of("usr") == "" &&
