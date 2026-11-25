@@ -64,6 +64,8 @@ else
   echo 'SKIP fs-unqualified-refused reason=no tmpfs root on this host; Linux takes refuse one by name'
   step transactions python3 -I tools/check-transactions
 fi
+# A caller's umask must not decide a row: the group that builds its own directories runs under 0002 as well.
+step transactions-umask sh -c 'umask 0002; exec python3 -I tools/check-transactions --rows install-unowned-collision,install-directory-conflict'
 if bash tools/check-transactions-privileged --available; then
   step transactions-privileged bash tools/check-transactions-privileged
 else
