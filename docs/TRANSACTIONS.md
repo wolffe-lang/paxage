@@ -118,7 +118,10 @@ the transaction for `rescue`. An error after the commit leaves cleanup to
 
 While `transactions/` holds anything, `install`, `remove`, `upgrade`,
 `autoremove` and `verify` exit 8 `recovery-needed`. `status` reports it
-read-only. Only `rescue` acts:
+read-only. A `transactions/` that cannot be read (opened or listed) is never read as
+empty: every verb above, and `status`, refuses `pending-unreadable PATH` (exit 1),
+and `rescue` refuses it with exit 9; only a `transactions/` that is absent counts as
+nothing pending. Only `rescue` acts:
 
 - Nothing pending: `rescue: nothing to do`, zero writes, exit 0.
 - `current` names t<N>: finish (X5 step 8), `rescue: finished t<N>`.
