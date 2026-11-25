@@ -564,6 +564,50 @@ def install_conflict(r):
     check(tree_digest(root) == before, 'install-file-conflict-no-writes')
 
 
+def dirs_package(version, extra):
+    files = {'usr': ('dir', 0o755), 'usr/share': ('dir', 0o755), 'usr/share/dirs': ('dir', 0o755),
+             'usr/share/dirs/f': ('file', 0o644, b'f\n')}
+    if extra:
+        files['usr/share/dirs/extra'] = ('dir', 0o755)
+    return Package('dirs', version, files)
+
+
+@row('install-directory-conflict')
+def install_directory_conflict(r):
+    # An existing directory whose metadata differs from the package's refuses, whoever owns it (TRANSACTIONS X9).
+    root = r.ready('directory-conflict-unowned')
+    (root / 'usr').mkdir()
+    os.chmod(root / 'usr', 0o700)
+    before = tree_digest(root)
+    refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'install-directory-conflict-unowned', 1,
+            'directory-conflict usr')
+    check(tree_digest(root) == before, 'install-directory-conflict-unowned-no-writes')
+    root = r.ready('directory-conflict-coowned', 'alpha')
+    os.chmod(root / 'usr', 0o700)
+    before = tree_digest(root)
+    refused(pxg('install', '--root', root, 'lone', '--now', NOW), 'install-directory-conflict-coowned', 1,
+            'directory-conflict usr')
+    check(tree_digest(root) == before, 'install-directory-conflict-coowned-no-writes')
+
+
+@row('upgrade-directory-conflict')
+def upgrade_directory_conflict(r):
+    # A new version declares a directory that already exists, unowned, with other metadata: the upgrade refuses.
+    r.repo.publish(universe() + [dirs_package('1-1', False)])
+    try:
+        root = r.ready('upgrade-directory-conflict', 'dirs')
+        extra = root / 'usr/share/dirs/extra'
+        extra.mkdir()
+        os.chmod(extra, 0o700)
+        r.repo.publish(universe() + [dirs_package('2-1', True)])
+        before = tree_digest(root)
+        refused(pxg('upgrade', '--root', root, '--now', NOW), 'upgrade-directory-conflict', 1,
+                'directory-conflict usr/share/dirs/extra')
+        check(tree_digest(root) == before, 'upgrade-directory-conflict-no-writes')
+    finally:
+        r.repo.publish(universe())
+
+
 @row('install-unowned-collision')
 def install_collision(r):
     root = r.ready('install-collision')
