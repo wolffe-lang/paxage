@@ -626,7 +626,8 @@ def pending_unreadable(r):
     # A transactions directory that cannot be read must not look like an empty one (an unprepared t1 may be waiting in it).
     # Directory modes bind only a non-root caller, so a root take names the skip.
     if os.geteuid() == 0:
-        print('SKIP pending-unreadable reason=root ignores directory modes; the plain-user takes run it', flush=True)
+        # Indented, as the other rows' skips are: a column-0 SKIP inside a step would read as a nested SKIP.
+        print('  skipped pending-unreadable: root ignores directory modes; the plain-user takes run it', flush=True)
         return
     root = r.ready('pending-unreadable', 'alpha')
     tx = root / 'var/lib/paxage/transactions'
