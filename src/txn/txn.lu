@@ -829,9 +829,10 @@ fn deleted(w: Work, path: str) -> bool {
 fn empty_after(c: Ctx, w: Work, rel: str) -> bool {
     let d = walk.dir(c.root, rel)
     if d.error != "" { return false }
-    let names = walk.names(d)
+    let listed = walk.names(d)
     walk.close(d)
-    for n in names {
+    if listed.error != "" { return false }
+    for n in listed.list {
         if !deleted(w, walk.join(rel, n)) { return false }
     }
     true
@@ -936,16 +937,27 @@ pub fn installed(c: Ctx, g: db.Db) -> List[Pkg] {
     out
 }
 
-/// The pending transaction's name, or "".
-pub fn pending(c: Ctx) -> str {
-    let d = walk.dir(c.root, "{state()}/transactions")
-    if d.error != "" { return "" }
-    let names = walk.names(d)
+/// The pending transactions' names (comma-joined, "" for none) and why they could not be read. A directory that is
+/// absent is nothing pending; any other failure to open or list it is `pending-unreadable PATH`, never "nothing".
+pub struct Pending { name: str, error: str }
+
+/// The transactions waiting in the state directory, or why they cannot be read (see Pending).
+pub fn pending(c: Ctx) -> Pending {
+    let path = "{state()}/transactions"
+    let d = walk.dir(c.root, "{path}")
+    if d.error != "" {
+        if walk.missing(d) { return Pending { name: "", error: "" } }
+        return Pending { name: "", error: "pending-unreadable {path} ({d.error})" }
+    }
+    let listed = walk.names(d)
     walk.close(d)
-    if names.len == 0 { return "" }
-    var all = copy names
+    if listed.error != "" {
+        return Pending { name: "", error: "pending-unreadable {path} ({listed.error})" }
+    }
+    if listed.list.len == 0 { return Pending { name: "", error: "" } }
+    var all = copy listed.list
     list.sort_by(mut all, str_less)
-    text.join(",", all)
+    Pending { name: text.join(",", all), error: "" }
 }
 
 fn str_less(a: str, b: str) -> bool { version.lexical(a, b) < 0 }
