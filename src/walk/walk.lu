@@ -321,15 +321,20 @@ pub fn look_path(r: Root, rel: str, hash: bool) -> Ident {
     out
 }
 
+/// The entry names of a directory and why they could not be read: an empty list with an empty error is an empty directory.
+pub struct Names { list: List[str], error: str }
+
 /// Entry names of a held directory, in host order.
-pub fn names(d: Dir) -> List[str] {
+pub fn names(d: Dir) -> Names {
     var out = List[str]()
-    let rows = fs_read_dir_entries_at(d.fd) else |_| { return out }
+    let rows = fs_read_dir_entries_at(d.fd) else |_| {
+        return Names { list: out, error: "walk-read {d.rel}" }
+    }
     for row in rows {
         let n = str_from_utf8(row[1..row.len]) else |_| { continue }
         (mut out).push(n)
     }
-    out
+    Names { list: out, error: "" }
 }
 
 fn remove_fd(parent: int, name: str, depth: int) -> str {

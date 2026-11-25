@@ -651,7 +651,9 @@ fn mutate(verb: str, opts: Opts, fp: failpoint.Fail, k: transport.Knobs) -> int 
     if hooked != "" { return finish_open(o, 1, "lock: {hooked}") }
     let guard = check_state(c)
     if guard != "" { return finish_open(o, 1, guard) }
-    let waiting = txn.pending(c)
+    let pend = txn.pending(c)
+    if pend.error != "" { return finish_open(o, 1, pend.error) }
+    let waiting = pend.name
     if waiting != "" {
         return finish_open(
             o,
@@ -828,7 +830,9 @@ fn status(opts: Opts) -> int {
         code: 0,
         error: "",
     }
-    let waiting = txn.pending(c)
+    let pend = txn.pending(c)
+    if pend.error != "" { walk.close_root(c.root); return fail(pend.error) }
+    let waiting = pend.name
     o.cur = txn.current(c)
     if o.cur.error != "" { walk.close_root(c.root); return fail(o.cur.error) }
     o.g = txn.load(c, o.cur)
@@ -879,7 +883,9 @@ fn status(opts: Opts) -> int {
 fn verify(opts: Opts) -> int {
     let c = open_root(opts.root, failpoint.none())
     if c.root.error != "" { return fail(c.root.error) }
-    let waiting = txn.pending(c)
+    let pend = txn.pending(c)
+    if pend.error != "" { walk.close_root(c.root); return fail(pend.error) }
+    let waiting = pend.name
     if waiting != "" {
         walk.close_root(c.root)
         eprint("paxage: recovery-needed: {waiting} pending")
@@ -932,7 +938,9 @@ fn rescue(opts: Opts, fp: failpoint.Fail) -> int {
     if o.cur.error != "" { return finish_open(o, 9, "rescue-ambiguous-generation ({o.cur.error})") }
     o.g = txn.load(c, o.cur)
     if o.g.error != "" { return finish_open(o, 9, "rescue-ambiguous-generation ({o.g.error})") }
-    let waiting = txn.pending(c)
+    let pend = txn.pending(c)
+    if pend.error != "" { return finish_open(o, 9, pend.error) }
+    let waiting = pend.name
     if waiting == "" {
         print("rescue: nothing to do")
         return finish_open(o, 0, "")
