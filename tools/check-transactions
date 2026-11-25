@@ -1087,6 +1087,9 @@ def unqualified(r):
 
 def main():
     global KEEP_GOING
+    # Every row's tree digests compare modes, and the rows make directories the package must match: the caller's umask
+    # must not decide either, so the tool fixes its own.
+    os.umask(0o022)
     ap = argparse.ArgumentParser()
     ap.add_argument('--all', action='store_true', help='keep going after a FAIL')
     ap.add_argument('--rows', default='', help='comma-separated row-group names')
