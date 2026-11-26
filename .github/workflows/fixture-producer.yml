@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/producer-output
-          docker run --rm --cpus 2 --memory 6g --memory-swap 6g \
+          docker run --rm -i --cpus 2 --memory 6g --memory-swap 6g \
             -v "$GITHUB_WORKSPACE:/work:ro" -v "$GITHUB_WORKSPACE/target/producer-output:/out" \
             -w /work -e PRODUCER_REVISION="$GITHUB_SHA" \
             ubuntu:24.04@sha256:9a04f13b3f80ef056361e30868593b1cfd2279fe19e4081cb93a90bf56819d6a bash -se <<'BUILD'
