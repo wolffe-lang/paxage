@@ -15,18 +15,58 @@ fn main() -> int {
     let live = qualify.pax_proof("vda2", "254:2", "vda2-8", good)
     if !row(live.error == "" && live.kind == "journalled", "X2-pax-ordered-live") { ok = false }
     let refused = "unqualified-filesystem ext2-family (journal not qualified on PAX)"
-    if !row(qualify.pax_proof("vda2", "254:2", "", "").error == refused, "X2-pax-plain-ext2") { ok = false }
+    if !row(qualify.pax_proof("vda2", "254:2", "", "").error == refused, "X2-pax-plain-ext2") {
+        ok = false
+    }
     for mode in ["writeback", "journal", "unknown", ""] {
-        if !row(qualify.pax_proof("vda2", "254:2", "vda2-8", report("vda2", "254:2", mode)).error == refused, "X2-pax-mode-{mode}") { ok = false }
+        if !row(
+            qualify.pax_proof("vda2", "254:2", "vda2-8", report("vda2", "254:2", mode)).error ==
+                refused,
+            "X2-pax-mode-{mode}",
+        ) {
+            ok = false
+        }
     }
-    if !row(qualify.pax_proof("vda2", "254:2", "vdb-8", report("vdb", "254:16", "ordered")).error == refused, "X2-pax-other-device-journal") { ok = false }
-    if !row(qualify.pax_proof("vda2", "254:2", "vda2-8", report("vda2", "254:0", "ordered")).error == refused, "X2-pax-device-number") { ok = false }
-    if !row(qualify.pax_proof("vda2", "254:2", "vda2-9", good).error == refused, "X2-pax-journal-inode") { ok = false }
+    if !row(
+        qualify.pax_proof("vda2", "254:2", "vdb-8", report("vdb", "254:16", "ordered")).error ==
+            refused,
+        "X2-pax-other-device-journal",
+    ) {
+        ok = false
+    }
+    if !row(
+        qualify.pax_proof("vda2", "254:2", "vda2-8", report("vda2", "254:0", "ordered")).error ==
+            refused,
+        "X2-pax-device-number",
+    ) {
+        ok = false
+    }
+    if !row(
+        qualify.pax_proof("vda2", "254:2", "vda2-9", good).error == refused,
+        "X2-pax-journal-inode",
+    ) {
+        ok = false
+    }
     for info in ["", "state gone\n", "state live\n", "{good}state live\n", "{good}extra\n"] {
-        if !row(qualify.pax_proof("vda2", "254:2", "vda2-8", info).error == refused, "X2-pax-incomplete-proof") { ok = false }
+        if !row(
+            qualify.pax_proof("vda2", "254:2", "vda2-8", info).error == refused,
+            "X2-pax-incomplete-proof",
+        ) {
+            ok = false
+        }
     }
-    if !row(qualify.pax_proof("vda2", "254:2", "../vda2-8", good).error == refused, "X2-pax-proof-path") { ok = false }
-    if !row(qualify.pax_proof("vda2", "254:2", "vda2-08", good).error == refused, "X2-pax-proof-inode-canonical") { ok = false }
+    if !row(
+        qualify.pax_proof("vda2", "254:2", "../vda2-8", good).error == refused,
+        "X2-pax-proof-path",
+    ) {
+        ok = false
+    }
+    if !row(
+        qualify.pax_proof("vda2", "254:2", "vda2-08", good).error == refused,
+        "X2-pax-proof-inode-canonical",
+    ) {
+        ok = false
+    }
     let sda = qualify.pax_proof("sda2", "8:2", "sda2-8", report("sda2", "8:2", "ordered"))
     if !row(sda.error == "", "X2-pax-sata-device") { ok = false }
     if !row(!qualify.development_host("pax"), "X2-pax-not-development") { ok = false }

@@ -1,6 +1,6 @@
 //! Filesystem qualification. Linux requires an active journal for the root's
-//! own device. PAX's positive journal proof is not qualified yet, so its ext
-//! roots fail closed. Only macOS roots are development roots without a claim
+//! own device. PAX additionally binds a live ordered journal report to the
+//! candidate root's device. Only macOS roots are development roots without a claim
 //! of durability. OS names describe the running kernel, not the build target.
 
 use std.str as text
@@ -11,13 +11,18 @@ pub struct Verdict { kind: str, detail: str, error: str }
 fn read_small(path: str, cap: int) -> str {
     let fd = fs_open_mode(path, 21) else |_| { return "" }
     var data = List[byte]()
+    var failed = false
     loop {
-        let chunk = fs_read_chunk(fd, 65536) else |_| { break }
+        let chunk = fs_read_chunk(fd, 65536) else |e| match e {
+            eof => { break },
+            io => { failed = true; break },
+        }
         if chunk.len == 0 { break }
         for b in chunk { (mut data).push(b) }
-        if data.len > cap { break }
+        if data.len > cap { failed = true; break }
     }
-    fs_close(fd) else |_| {}
+    fs_close(fd) else |_| { failed = true }
+    if failed { return "" }
     str_from_utf8(data) else |_| { "" }
 }
 
@@ -57,13 +62,79 @@ fn kernel_name(majmin: str) -> str {
 /// macOS alone has the explicitly supported development-root exception.
 pub fn development_host(host: str) -> bool { host == "macos" }
 
-/// Validate PAX's device-bound live ordered journal report.
+/// A bounded canonical decimal, without conversion or arithmetic overflow.
+fn decimal(value: str, zero: bool) -> bool {
+    if value == "0" { return zero }
+    if value.len == 0 || value.len > 19 { return false }
+    let bytes = value.bytes()
+    if bytes[0] < 49 as byte || bytes[0] > 57 as byte { return false }
+    for b in bytes { if b < 48 as byte || b > 57 as byte { return false } }
+    true
+}
+
+fn device_name(name: str) -> bool {
+    if name.len == 0 || name.len > 255 { return false }
+    for b in name.bytes() {
+        if b >= 48 as byte && b <= 57 as byte ||
+            b >= 65 as byte && b <= 90 as byte ||
+            b >= 97 as byte && b <= 122 as byte ||
+            b == 95 as byte ||
+            b == 45 as byte {
+            continue
+        }
+        return false
+    }
+    true
+}
+
+/// Validate PAX's device-bound live ordered journal report. Unknown formats fail closed.
 pub fn pax_proof(name: str, device: str, entry: str, info: str) -> Verdict {
-    let _name = name
-    let _device = device
-    let _entry = entry
-    let _info = info
-    Verdict { kind: "", detail: "", error: "unqualified-filesystem ext2-family (journal not qualified on PAX)" }
+    var v = Verdict {
+        kind: "",
+        detail: "",
+        error: "unqualified-filesystem ext2-family (journal not qualified on PAX)",
+    }
+    if !device_name(name) || device.len > 41 || entry.len > 275 || info.len > 4096 { return v }
+    let numbers = text.split(device, ":")
+    if numbers.len != 2 || !decimal(numbers[0], true) || !decimal(numbers[1], true) { return v }
+    let lines = text.split(info, "\n")
+    if lines.len != 5 || lines[0] != "state live" || lines[4] != "" { return v }
+    let dev = text.split(lines[1], " ")
+    if dev.len != 3 || dev[0] != "device" || !device_name(dev[1]) { return v }
+    let journal = text.split(lines[2], " ")
+    if journal.len != 9 ||
+        journal[0] != "journal" ||
+        journal[1] != "inode" ||
+        journal[4] != "blocks" ||
+        journal[5] != "in" ||
+        journal[8] != "data=ordered" {
+        return v
+    }
+    let raw_inode = journal[2]
+    if raw_inode.len < 2 || !raw_inode.ends_with(",") { return v }
+    let inode = raw_inode[0..raw_inode.len - 1]
+    if !decimal(inode, false) || !decimal(journal[3], false) || !decimal(journal[6], false) {
+        return v
+    }
+    let runs = if journal[6] == "1" { "run," } else { "runs," }
+    if journal[7] != runs { return v }
+    let sequence = text.split(lines[3], " ")
+    if sequence.len != 4 || sequence[0] != "sequence" { return v }
+    let raw_seq = sequence[1]
+    if raw_seq.len < 2 ||
+        !raw_seq.ends_with(",") ||
+        !decimal(raw_seq[0..raw_seq.len - 1], true) ||
+        !decimal(sequence[2], true) {
+        return v
+    }
+    let commits = if sequence[2] == "1" { "commit" } else { "commits" }
+    if sequence[3] != commits { return v }
+    // This is the single binding between the kernel report and the candidate root.
+    if dev[1] != name || dev[2] != device || entry != "{name}-{inode}" { return v }
+    v.kind = "journalled"
+    v.detail = "PAX ext journal {entry} on {device}, data=ordered"
+    v.error = ""
+    v
 }
 
 /// Qualify the filesystem holding path for mutation.
@@ -85,12 +156,21 @@ pub fn root(path: str) -> Verdict {
     if kind == 16914836 { v.error = "unqualified-filesystem tmpfs"; return v }
     if kind == 2035054128 { v.error = "unqualified-filesystem overlay"; return v }
     if kind != 61267 { v.error = "unqualified-filesystem type={kind}"; return v }
-    if host == "pax" {
-        v.error = "unqualified-filesystem ext2-family (journal not qualified on PAX)"
-        return v
-    }
     let majmin = "{major(st[9])}:{minor(st[9])}"
     let name = kernel_name(majmin)
+    if host == "pax" {
+        if device_name(name) {
+            let journals = fs_read_dir("/proc/fs/jbd2") else |_| { List[str]() }
+            let prefix = "{name}-"
+            for j in journals {
+                if !text.starts_with(j, prefix) || !decimal(j[prefix.len..], false) { continue }
+                let info = read_small("/proc/fs/jbd2/{j}/info", 4096)
+                let proof = pax_proof(name, majmin, j, info)
+                if proof.error == "" { return proof }
+            }
+        }
+        return pax_proof(name, majmin, "", "")
+    }
     if name == "" {
         v.error = "unqualified-filesystem ext journal unproven (device {majmin})"
         return v
