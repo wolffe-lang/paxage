@@ -442,7 +442,7 @@ class TrunkPushCover(unittest.TestCase):
 
     def test_nothing_is_asked_without_a_trunk_push(self):
         cases = [dict(token=None), dict(sha='2' * 40), dict(event_name='pull_request'),
-                 dict(ref='refs/heads/a-lane'), dict(ref='refs/tags/v0.1.0'),
+                 dict(ref='refs/heads/a-branch'), dict(ref='refs/tags/v0.1.0'),
                  dict(event_name='schedule'), dict(event_name='workflow_dispatch')]
         for kw in cases:
             with self.subTest(**{k: str(v) for k, v in kw.items()}):
