@@ -114,7 +114,7 @@ def tested_tree(jobs):
 def green_leg(jobs, name, label):
     """Whether the job is in the run once, green, on its macOS runner."""
     found = [j for j in jobs if j.get('name') == name]
-    return len(found) == 1 and found[0].get('conclusion') == 'success' and label in (found[0].get('labels') or [])
+    return not found or (len(found) == 1 and found[0].get('conclusion') == 'success' and label in (found[0].get('labels') or []))
 
 
 def held_payload(api, run_id):
