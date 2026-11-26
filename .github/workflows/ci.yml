@@ -26,34 +26,56 @@ on:
       - '.gitmodules'
       - 'Cargo.toml'
       - 'Cargo.lock'
+# actions: read: the plan reads this workflow's runs at a trunk push's commit,
+# and the determinism job a payload from the run it relied on (ci/plan.py).
 permissions:
   contents: read
+  actions: read
 jobs:
   plan:
     name: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      matrix_gate: ${{ steps.plan.outputs.matrix_gate }}
+      macos_run: ${{ steps.plan.outputs.macos_run }}
+      covered: ${{ steps.plan.outputs.covered }}
     steps:
       - name: full job set selected
         if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}
         run: echo 'SELECTED gate determinism'
       - uses: actions/checkout@v4
+        id: checkout
         if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}
       - name: local gate wiring proof
         if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix') }}
         run: python3 -I ci/local-gate-test.py
+      - name: the planner can say no (ci/plan-test.py)
+        if: ${{ steps.checkout.outcome == 'success' }}
+        run: python3 -I ci/plan-test.py
+      - name: the tree this run tests
+        id: tree
+        if: ${{ steps.checkout.outcome == 'success' }}
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: the tree under test is ${{ steps.tree.outputs.tree }}
+        if: ${{ steps.checkout.outcome == 'success' }}
+        run: test "$(git rev-parse 'HEAD^{tree}')" = "${{ steps.tree.outputs.tree }}"
+      - id: plan
+        if: ${{ steps.checkout.outcome == 'success' }}
+        env:
+          PLAN_TOKEN: ${{ github.token }}
+        run: python3 -I ci/plan.py --github-output "$GITHUB_OUTPUT"
       - name: local evidence gate
         if: ${{ !(github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) }}
         run: echo 'Local gauntlet evidence is the gate; request ci or full-matrix for CI.'
   gate:
+    needs: plan
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) }}
     name: ${{ matrix.name }} (fmt, build, units, CLI e2e)
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {name: linux x86-64, os: ubuntu-24.04, arch: x86_64}
-          - {name: macOS arm64, os: macos-latest, arch: arm64}
+        include: ${{ fromJSON(needs.plan.outputs.matrix_gate || '[]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -77,7 +99,7 @@ jobs:
           if-no-files-found: error
   determinism:
     name: Cross-host four-payload byte identity
-    needs: gate
+    needs: [plan, gate]
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-matrix') || contains(github.event.pull_request.labels.*.name, 'ci') || contains(github.event.pull_request.labels.*.name, 'release-matrix')) && (!cancelled()) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -85,6 +107,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: canonical-*
+      - name: the macOS payload of the run this push relied on
+        if: ${{ needs.plan.outputs.macos_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: canonical-arm64
+          path: canonical-arm64
+          run-id: ${{ needs.plan.outputs.macos_run }}
+          github-token: ${{ github.token }}
+      - name: the macOS leg this push left
+        if: ${{ needs.plan.outputs.macos_run != '' }}
+        run: |
+          echo 'skip macOS arm64 (fmt, build, units, CLI e2e): green in run ${{ needs.plan.outputs.macos_run }}; its payload is compared below'
       - name: Compare the per-host identical pairs byte for byte
         shell: bash
         run: |
