@@ -137,7 +137,7 @@ def fetch_payload(api, artifact_id):
         location = e.headers.get('Location') if e.code in (301, 302, 303, 307, 308) and e.headers else None
         if not location or urllib.parse.urlsplit(location).scheme not in ('https', 'http'):
             raise
-    store = urllib.request.Request(location, headers={'User-Agent': 'paxage-ci-plan'})
+    store = urllib.request.Request(location, headers=dict(api.headers()))
     with api.opener.open(store, timeout=api.timeout) as r:
         data = r.read(MAX_ARCHIVE + 1)
     if len(data) > MAX_ARCHIVE:
