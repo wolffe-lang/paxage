@@ -1,11 +1,385 @@
 #!/usr/bin/env python3
-"""Public-only reproducibility checks for the dispatch-only fixture producer."""
+"""Dispatch-only disposable signing producer; all local checks are public-only."""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
 import time
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+DOMAIN = 'paxage-disposable-install-fixture-v1'
+ROLES = ('root1', 'root2', 'root3', 'targets', 'snapshot', 'timestamp')
+FORBIDDEN_FIELDS = {'seed', 'private', 'private_key', 'private-key'}
 
 
 def fixture_epoch():
     return 1795651200  # 2026-11-26T00:00:00Z
 
 
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def hosted_allowed(env, uid):
+    return (uid != 0 and env.get('GITHUB_ACTIONS') == 'true'
+            and env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+            and env.get('RUNNER_OS') == 'Linux')
+
+
+def require_hosted():
+    if (not hosted_allowed(os.environ, os.geteuid())
+            or platform.system() != 'Linux' or platform.machine() != 'x86_64'):
+        raise ValueError('producer requires the authorized unprivileged hosted dispatch')
+
+
+def public_json(value):
+    if isinstance(value, dict):
+        if FORBIDDEN_FIELDS.intersection(str(key).lower() for key in value):
+            raise ValueError('private field in public export')
+        for child in value.values():
+            public_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            public_json(child)
+
+
+def allowed_name(name):
+    return (name in ('TEST-ONLY.json', 'pinned-root.json')
+            or re.fullmatch(r'metadata/(?:[1-9][0-9]*\.)?(?:root|targets|snapshot|timestamp)\.json', name)
+            or re.fullmatch(r'targets/[0-9a-f]{64}\.[A-Za-z0-9_.+-]+\.(?:manifest|payload\.tar|buildinfo)', name))
+
+
+def public_inventory(directory):
+    directory = Path(directory)
+    result = {}
+    for path in sorted(directory.rglob('*')):
+        name = path.relative_to(directory).as_posix()
+        if path.is_symlink():
+            raise ValueError('link in public export')
+        if path.is_dir():
+            if name not in ('metadata', 'targets'):
+                raise ValueError('unexpected public directory')
+            continue
+        if not path.is_file() or not allowed_name(name):
+            raise ValueError('unexpected public file')
+        data = path.read_bytes()
+        if b'PRIVATE KEY' in data or b'"seed"' in data:
+            raise ValueError('private material in public export')
+        if name.endswith('.json'):
+            public_json(json.loads(data))
+        result[name] = digest(data)
+    if not result:
+        raise ValueError('empty public export')
+    return result
+
+
 def two_builds_equal(first, second):
-    return True
+    return public_inventory(first) == public_inventory(second)
+
+
+def write_json(path, value):
+    Path(path).write_text(json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n')
+
+
+def command(argv, cwd=None):
+    # Commands involving private test files never echo arguments or captured data.
+    try:
+        result = subprocess.run([str(arg) for arg in argv], cwd=cwd, capture_output=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        raise ValueError('producer child timed out: ' + Path(str(argv[0])).name) from None
+    if result.returncode:
+        raise ValueError('producer child failed: ' + Path(str(argv[0])).name)
+    return result.stdout
+
+
+def make_test_keys(directory):
+    require_hosted()  # Never invoked by local tests, even with mocked inputs.
+    directory.mkdir(mode=0o700)
+    for role in ROLES:
+        material = hashlib.sha256((DOMAIN + '/' + role).encode('ascii')).digest()
+        # RFC 8410 Ed25519 PKCS#8 wrapper. No caller supplies material or a key path.
+        private = directory / (role + '.private.der')
+        fd = os.open(private, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(bytes.fromhex('302e020100300506032b657004220420') + material)
+        public = command(['openssl', 'pkey', '-inform', 'DER', '-in', private, '-pubout', '-outform', 'DER'])
+        prefix = bytes.fromhex('302a300506032b6570032100')
+        if len(public) != 44 or not public.startswith(prefix):
+            raise ValueError('unexpected public-key wrapper')
+        marked = directory / (role + '.test-only.key')
+        fd = os.open(marked, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            json.dump({'public': public[12:].hex(), 'seed': material.hex(), 'test-only': True}, stream, sort_keys=True)
+            stream.write('\n')
+        private.unlink()
+
+
+def source_copy(destination):
+    destination.mkdir()
+    for name in ('src', 'tools', 'wolf-toolchain.toml'):
+        source = ROOT / name
+        if source.is_dir():
+            shutil.copytree(source, destination/name, ignore=shutil.ignore_patterns('.lu-cache', '__pycache__'))
+        else:
+            shutil.copyfile(source, destination/name)
+
+
+def extract_source(archive, destination):
+    destination.mkdir()
+    with tarfile.open(archive, 'r:gz') as source:
+        members = source.getmembers()
+        top = {member.name.split('/')[0] for member in members}
+        if len(top) != 1:
+            raise ValueError('source archive has no single top directory')
+        for member in members:
+            parts = Path(member.name).parts
+            if member.issym() or member.islnk() or member.isdev() or '..' in parts or member.name.startswith('/'):
+                raise ValueError('unsafe source archive member')
+        source.extractall(destination, filter='data')
+    return destination/next(iter(top))
+
+
+def package(pxg, work, version, executable, license_bytes, inputs, source_length, epoch):
+    source, output = work/('source-' + version), work/('packed-' + version)
+    (source/'usr/bin').mkdir(parents=True)
+    (source/'usr/share/scent-fixture').mkdir(parents=True)
+    (source/'usr/share/licenses/scent').mkdir(parents=True)
+    (source/'usr/share/licenses/scent/LICENSE').write_bytes(license_bytes)
+    (source/'usr/share/licenses/scent/LICENSE').chmod(0o644)
+    shutil.copyfile(executable, source/'usr/bin/scent')
+    (source/'usr/bin/scent').chmod(0o755)
+    (source/'usr/share/scent-fixture/version').write_text(version + '\n')
+    (source/'usr/share/scent-fixture/version').chmod(0o644)
+    output.mkdir()
+    buildinfo = work/(version + '.buildinfo')
+    buildinfo.write_text('buildinfo { test_only: true, name: "scent", version: "' + version
+                         + '", source: "' + inputs['scent_revision'] + '", binary: "'
+                         + digest(Path(executable).read_bytes()) + '" }\n')
+    template = work/(version + '.template')
+    template.write_text('manifest { schema: 1, features: [], name: "scent", version: "' + version
+                        + '", arch: "x86_64", slot: "default", license: "GPL-3.0-or-later", '
+                        + 'sources: [source { name: "source", sha256: "' + inputs['scent_source_sha256']
+                        + '", length: ' + str(source_length) + ' }], buildinfo: "' + digest(buildinfo.read_bytes())
+                        + '", installed_bytes: 0, installed_inodes: 0, requires: [], optional: [], provides: [], '
+                        + 'conflicts: [], replaces: [], files: [], configs: [], actions: [] }\n')
+    command([pxg, 'pack', source, template, output, '--epoch', str(epoch)])
+    manifests = list(output.glob('*.manifest'))
+    if len(manifests) != 1:
+        raise ValueError('pack produced no single manifest')
+    return manifests[0], buildinfo
+
+
+def build_public(work, archives, inputs, revision):
+    require_hosted()
+    epoch = fixture_epoch()
+    now = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    paxage = work/'paxage'
+    source_copy(paxage)
+    command(['sh', 'tools/fetch-toolchain'], paxage)
+    command(['sh', 'tools/build'], paxage)
+    pxg = paxage/'target/bin/paxage'
+    packages, package_inputs = [], []
+    for item in inputs['scent_packages']:
+        version = item['package_version']
+        archive = archives[version]
+        scent = extract_source(archive, work/('scent-source-' + version))
+        command(['sh', 'tools/fetch-toolchain'], scent)
+        command(['sh', 'tools/build', '--static'], scent)
+        executable = scent/'target/static/scent'
+        command(['strip', executable])
+        header = command(['readelf', '-hW', executable])
+        segments = command(['readelf', '-lW', executable])
+        if b'EXEC' not in header or b'X86-64' not in header or b'INTERP' in segments or b'DYNAMIC' in segments:
+            raise ValueError('scent fixture is not a static x86-64 executable')
+        command([executable, '--version'])
+        packages.append(package(pxg, work, version, executable, (scent/'LICENSE').read_bytes(),
+                                item, archive.stat().st_size, epoch))
+        package_inputs.append(dict(item, binary_sha256=digest(executable.read_bytes()),
+                                   toolchain_sha256=digest((scent/'wolf-toolchain.toml').read_bytes())))
+    if len({item['binary_sha256'] for item in package_inputs}) != 2:
+        raise ValueError('fixture-upgrade-payload-not-distinct')
+    keys, repo = work/'private-test-keys', work/'repo'
+    make_test_keys(keys)
+    validity = '31536000'
+    command([pxg, 'repo', 'init', '--repo', repo.as_uri(), '--keys', keys, '--now', now,
+             '--root-validity', validity])
+    arguments = [pxg, 'repo', 'publish', '--repo', repo.as_uri(), '--keys', keys,
+                 '--version', '1', '--now', now, '--targets-validity', validity,
+                 '--snapshot-validity', validity, '--timestamp-validity', validity]
+    for manifest, buildinfo in packages:
+        arguments += ['--manifest', manifest, '--buildinfo', buildinfo]
+    command(arguments)
+    public = work/'public'
+    public.mkdir()
+    for dirname in ('metadata', 'targets'):
+        (public/dirname).mkdir()
+        for path in (repo/dirname).iterdir():
+            if path.is_symlink() or not path.is_file() or not allowed_name(dirname + '/' + path.name):
+                raise ValueError('unexpected repository export entry')
+            shutil.copyfile(path, public/dirname/path.name)
+    shutil.copyfile(public/'metadata/1.root.json', public/'pinned-root.json')
+    descriptor = dict(test_only=True, purpose='disposable-install-test', derivation_domain=DOMAIN,
+                      epoch=epoch, now=now, validity_seconds=int(validity), architecture='x86_64', slot='default',
+                      package_versions=['1-1', '2-1'], paxage_revision=revision, inputs=inputs,
+                      packages=package_inputs, pinned_root_sha256=digest((public/'pinned-root.json').read_bytes()),
+                      toolchain_sha256=digest((paxage/'wolf-toolchain.toml').read_bytes()),
+                      libc_archive_sha256=digest(Path(command(['cc', '-print-file-name=libc.a']).decode().strip()).read_bytes()),
+                      packages_installed=command(['dpkg-query', '-W', '-f=${Package}=${Version}\\n']).decode().splitlines())
+    write_json(public/'TEST-ONLY.json', descriptor)
+    public_inventory(public)
+    # Verification is a public-reader operation, never an export of publisher state.
+    command([pxg, 'repo', 'verify', '--repo', public.as_uri(), '--root', public/'pinned-root.json',
+             '--state', work/'verify-state', '--cache', work/'verify-cache', '--now', now])
+    return public
+
+
+def canonical_tar(public, output):
+    public_inventory(public)
+    with tarfile.open(output, 'w', format=tarfile.USTAR_FORMAT) as archive:
+        for path in sorted(Path(public).rglob('*')):
+            info = tarfile.TarInfo(path.relative_to(public).as_posix())
+            info.uid = info.gid = 0
+            info.uname = info.gname = ''
+            info.mtime = fixture_epoch()
+            if path.is_dir():
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                archive.addfile(info)
+            else:
+                info.mode = 0o644
+                info.size = path.stat().st_size
+                with path.open('rb') as stream:
+                    archive.addfile(info, stream)
+
+
+def validate_upload(directory):
+    directory = Path(directory)
+    if {path.name for path in directory.iterdir()} != {'disposable-install.tar', 'PUBLIC-RECEIPT.json'}:
+        raise ValueError('upload allowlist mismatch')
+    if any(path.is_symlink() or not path.is_file() for path in directory.iterdir()):
+        raise ValueError('unsafe upload entry')
+    receipt = json.loads((directory/'PUBLIC-RECEIPT.json').read_text())
+    if not isinstance(receipt, dict):
+        raise ValueError('invalid public receipt')
+    public_json(receipt)
+    bundle = directory/'disposable-install.tar'
+    if (receipt.get('test_only') is not True or bundle.stat().st_size > 128 * 1024 * 1024
+            or receipt.get('bundle_length') != bundle.stat().st_size
+            or receipt.get('bundle_sha256') != digest(bundle.read_bytes())):
+        raise ValueError('public bundle binding mismatch')
+    found = {}
+    descriptor = None
+    with tarfile.open(bundle, 'r:') as archive:
+        seen = set()
+        for member in archive:
+            name = member.name
+            if name in seen:
+                raise ValueError('duplicate public archive entry')
+            seen.add(name)
+            if member.uid or member.gid or member.uname or member.gname or member.mtime != fixture_epoch():
+                raise ValueError('noncanonical public archive metadata')
+            if member.isdir():
+                if name not in ('metadata', 'targets') or member.mode != 0o755:
+                    raise ValueError('unexpected public archive directory')
+                continue
+            if not member.isfile() or member.mode != 0o644 or not allowed_name(name):
+                raise ValueError('unexpected public archive file')
+            if member.size > 64 * 1024 * 1024:
+                raise ValueError('oversized public archive member')
+            data = archive.extractfile(member).read()
+            if b'PRIVATE KEY' in data or b'"seed"' in data:
+                raise ValueError('private material in public archive')
+            if name.endswith('.json'):
+                value = json.loads(data)
+                public_json(value)
+                if name == 'TEST-ONLY.json':
+                    descriptor = value
+            found[name] = digest(data)
+    if found != receipt.get('inventory'):
+        raise ValueError('public archive inventory mismatch')
+    if (not descriptor or descriptor.get('test_only') is not True
+            or descriptor.get('purpose') != 'disposable-install-test'
+            or descriptor.get('package_versions') != ['1-1', '2-1']
+            or descriptor.get('pinned_root_sha256') != found.get('pinned-root.json')):
+        raise ValueError('test-only descriptor binding mismatch')
+    return receipt
+
+
+def produce(output, revision):
+    require_hosted()
+    if output.exists():
+        raise ValueError('output directory already exists')
+    actual = command(['git', '-C', ROOT, 'rev-parse', 'HEAD']).decode().strip()
+    if actual != revision:
+        raise ValueError('producer source revision mismatch')
+    inputs = json.loads((ROOT/'tests/fixture-producer-inputs.json').read_text())
+    packages = inputs.get('scent_packages', [])
+    if (len(packages) != 2 or [item.get('package_version') for item in packages] != ['1-1', '2-1']
+            or any(not re.fullmatch('[0-9a-f]{40}', item.get('scent_revision', ''))
+                   or not re.fullmatch('[0-9a-f]{64}', item.get('scent_source_sha256', '')) for item in packages)
+            or inputs.get('architecture') != 'x86_64' or inputs.get('purpose') != 'disposable-install-test'
+            or digest((ROOT/'ci/fixture-ca/cacert.pem').read_bytes()) != inputs['bootstrap_ca_sha256']):
+        raise ValueError('locked producer input mismatch')
+    os.umask(0o022)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    os.environ.update(SOURCE_DATE_EPOCH=str(fixture_epoch()), RAYON_NUM_THREADS='2', CARGO_BUILD_JOBS='2')
+    with tempfile.TemporaryDirectory(prefix='disposable-producer-', dir=os.environ['TMPDIR']) as temp:
+        private = Path(temp)
+        archives = {}
+        for item in packages:
+            archive = private/('scent-' + item['package_version'] + '.tar.gz')
+            url = 'https://codeload.github.com/wolffe-lang/scent/tar.gz/' + item['scent_revision']
+            with urllib.request.urlopen(url, timeout=120) as response:
+                data = response.read(32 * 1024 * 1024 + 1)
+            if len(data) > 32 * 1024 * 1024 or digest(data) != item['scent_source_sha256']:
+                raise ValueError('scent source digest mismatch')
+            archive.write_bytes(data)
+            archives[item['package_version']] = archive
+        first, second = private/'first', private/'second'
+        first.mkdir(); second.mkdir()
+        one = build_public(first, archives, inputs, revision)
+        two = build_public(second, archives, inputs, revision)
+        if not two_builds_equal(one, two):
+            raise ValueError('fixture-two-builds-equal')
+        first_tar, second_tar = private/'first.tar', private/'second.tar'
+        canonical_tar(one, first_tar)
+        canonical_tar(two, second_tar)
+        if first_tar.read_bytes() != second_tar.read_bytes():
+            raise ValueError('fixture-two-builds-equal')
+        output.mkdir()
+        shutil.copyfile(first_tar, output/'disposable-install.tar')
+        receipt = dict(test_only=True, producer_revision=revision,
+                       bundle_sha256=digest(first_tar.read_bytes()), bundle_length=first_tar.stat().st_size,
+                       inventory=public_inventory(one), inputs_sha256=digest((ROOT/'tests/fixture-producer-inputs.json').read_bytes()))
+        write_json(output/'PUBLIC-RECEIPT.json', receipt)
+        validate_upload(output)
+    print('PASS fixture-two-builds-equal')
+    print('PASS fixture-public-export')
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--out', type=Path, required=True)
+    ap.add_argument('--revision', required=True)
+    args = ap.parse_args()
+    try:
+        produce(args.out.resolve(), args.revision)
+    except (ValueError, OSError, subprocess.SubprocessError, tarfile.TarError) as error:
+        # No child arguments, private file bytes or traceback locals are printed.
+        print('FAIL fixture-producer: ' + str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

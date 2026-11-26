@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""No signing material is generated or loaded by these local tests."""
+"""Public-only local checks; never generate, derive or load signing material."""
+import argparse
+import io
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
 import sys
+import tarfile
 import tempfile
 from unittest import mock
 
@@ -16,24 +22,161 @@ producer = importlib.util.module_from_spec(spec)
 loader.exec_module(producer)
 
 
-def main():
+def require(condition, row):
+    if not condition:
+        raise AssertionError(row)
+
+
+def rejects(function, row):
+    try:
+        function()
+    except (ValueError, OSError, json.JSONDecodeError):
+        print('PASS ' + row)
+        return
+    raise AssertionError(row)
+
+
+def public_stub(path):
+    # Deliberately unsigned public JSON, not a usable repository or signing input.
+    path.mkdir()
+    (path/'metadata').mkdir()
+    (path/'targets').mkdir()
+    root = b'{"signed":{"_type":"root","keys":{}},"signatures":[]}\n'
+    (path/'metadata/1.root.json').write_bytes(root)
+    (path/'pinned-root.json').write_bytes(root)
+    producer.write_json(path/'TEST-ONLY.json', dict(test_only=True, purpose='disposable-install-test',
+                        package_versions=['1-1', '2-1'], epoch=producer.fixture_epoch(),
+                        pinned_root_sha256=producer.digest(root)))
+
+
+def public_receipt(public, output):
+    output.mkdir()
+    tar = output/'disposable-install.tar'
+    producer.canonical_tar(public, tar)
+    producer.write_json(output/'PUBLIC-RECEIPT.json', dict(test_only=True,
+                        bundle_length=tar.stat().st_size, bundle_sha256=producer.digest(tar.read_bytes()),
+                        inventory=producer.public_inventory(public)))
+
+
+def workflow_checks():
+    inputs = json.loads((ROOT/'tests/fixture-producer-inputs.json').read_text())
+    workflow = (ROOT/'.github/workflows/fixture-producer.yml').read_text()
+    packages = inputs['scent_packages']
+    require([item['package_version'] for item in packages] == ['1-1', '2-1']
+            and len({item['scent_revision'] for item in packages}) == 2
+            and all(re.fullmatch('[0-9a-f]{40}', item['scent_revision'])
+                    and re.fullmatch('[0-9a-f]{64}', item['scent_source_sha256']) for item in packages), 'fixture-two-pinned-scent-sources')
+    require('on:\n  workflow_dispatch:\n' in workflow and 'pull_request:' not in workflow
+            and '\n  push:' not in workflow and '\n  schedule:' not in workflow, 'fixture-dispatch-only')
+    require('permissions:\n  contents: read\n' in workflow and ': write' not in workflow, 'fixture-least-permissions')
+    require('persist-credentials: false' in workflow and 'env -i PATH=' in workflow
+            and 'runuser -u fixture' in workflow, 'fixture-isolated-producer-environment')
+    actions = re.findall(r'uses: ([^\s]+)', workflow)
+    require(len(actions) == 2 and all(re.fullmatch(r'actions/[a-z-]+@[0-9a-f]{40}', a) for a in actions), 'fixture-pinned-actions')
+    require(inputs['build_image'] in workflow and inputs['apt_snapshot'] in workflow
+            and inputs['bootstrap_ca_sha256'] in workflow, 'fixture-locked-build-environment')
+    require(producer.digest((ROOT/'ci/fixture-ca/cacert.pem').read_bytes()) == inputs['bootstrap_ca_sha256'], 'fixture-bootstrap-ca-digest')
+    require('always()' not in workflow and 'if-no-files-found: error' in workflow
+            and 'target/producer-output/disposable-public/disposable-install.tar' in workflow
+            and 'target/producer-output/disposable-public/PUBLIC-RECEIPT.json' in workflow
+            and 'path: target\n' not in workflow, 'fixture-upload-allowlist')
+    for chunk in workflow.split('run: |\n')[1:]:
+        lines = []
+        for line in chunk.splitlines():
+            if not line.startswith('          '):
+                break
+            lines.append(line[10:])
+        parsed = subprocess.run(['/bin/bash', '-n'], input='\n'.join(lines)+'\n',
+                                text=True, capture_output=True)
+        require(parsed.returncode == 0, 'fixture-workflow-shell-syntax')
+    print('PASS fixture-workflow-boundaries')
+
+
+def checks():
     with tempfile.TemporaryDirectory(dir=ROOT/'target', prefix='public-fixture-check-') as temp:
-        first, second = Path(temp)/'first', Path(temp)/'second'
+        temp = Path(temp)
+        first, second = temp/'first', temp/'second'
         first.mkdir(); second.mkdir()
         with mock.patch.object(producer.time, 'time', side_effect=[100, 200]):
             for directory in (first, second):
-                (directory/'TEST-ONLY.json').write_text(json.dumps(dict(test_only=True, epoch=producer.fixture_epoch()))+'\n')
-        if not producer.two_builds_equal(first, second):
-            print('FAIL fixture-two-builds-equal', flush=True)
-            return 1
-        (second/'TEST-ONLY.json').write_text('{"test_only":true,"changed":true}\n')
-        if producer.two_builds_equal(first, second):
-            print('FAIL fixture-two-builds-equal', flush=True)
-            return 1
-    print('PASS fixture-two-builds-equal', flush=True)
+                producer.write_json(directory/'TEST-ONLY.json', dict(test_only=True, epoch=producer.fixture_epoch()))
+        require(producer.two_builds_equal(first, second), 'fixture-two-builds-equal')
+        producer.write_json(second/'TEST-ONLY.json', dict(test_only=True, changed=True))
+        require(not producer.two_builds_equal(first, second), 'fixture-two-builds-equal')
+        print('PASS fixture-two-builds-equal')
+        with mock.patch.dict(os.environ, {}, clear=True):
+            rejects(lambda: producer.make_test_keys(temp/'never-created'), 'fixture-local-signing-refused')
+        require(not (temp/'never-created').exists(), 'fixture-local-signing-zero-writes')
+        require(not producer.hosted_allowed(dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='pull_request', RUNNER_OS='Linux'), 1001), 'fixture-pull-request-signing-refused')
+        require(not producer.hosted_allowed(dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='workflow_dispatch', RUNNER_OS='Linux'), 0), 'fixture-root-signing-refused')
+        bad = temp/'bad'; bad.mkdir()
+        (bad/'unexpected.txt').write_text('public non-key placeholder\n')
+        rejects(lambda: producer.public_inventory(bad), 'fixture-unexpected-export-refused')
+        (bad/'unexpected.txt').unlink()
+        (bad/'pinned-root.json').write_text('{"nested":{"seed":"NONKEY-REJECTION-PLACEHOLDER"}}\n')
+        rejects(lambda: producer.public_inventory(bad), 'fixture-private-field-refused')
+        (bad/'pinned-root.json').unlink()
+        (bad/'pinned-root.json').symlink_to(first/'TEST-ONLY.json')
+        rejects(lambda: producer.public_inventory(bad), 'fixture-export-link-refused')
+        public = temp/'public'; public_stub(public)
+        one, two = temp/'one.tar', temp/'two.tar'
+        producer.canonical_tar(public, one)
+        for path in public.rglob('*'):
+            os.utime(path, (100, 200))
+        producer.canonical_tar(public, two)
+        require(one.read_bytes() == two.read_bytes(), 'fixture-canonical-tar')
+        print('PASS fixture-canonical-tar')
+        output = temp/'upload'; public_receipt(public, output)
+        producer.validate_upload(output)
+        print('PASS fixture-public-upload-validation')
+        (output/'extra.txt').write_text('not exported\n')
+        rejects(lambda: producer.validate_upload(output), 'fixture-upload-extra-refused')
+        (output/'extra.txt').unlink()
+        receipt = json.loads((output/'PUBLIC-RECEIPT.json').read_text())
+        receipt['bundle_sha256'] = '0' * 64
+        producer.write_json(output/'PUBLIC-RECEIPT.json', receipt)
+        rejects(lambda: producer.validate_upload(output), 'fixture-upload-digest-refused')
+        # Rebind the outer digest: archive policy must still reject the link.
+        tar = output/'disposable-install.tar'
+        with tarfile.open(tar, 'a') as archive:
+            link = tarfile.TarInfo('metadata/2.root.json')
+            link.type = tarfile.SYMTYPE
+            link.linkname = '../outside'
+            link.uid = link.gid = 0
+            link.uname = link.gname = ''
+            link.mtime = producer.fixture_epoch()
+            link.mode = 0o644
+            archive.addfile(link)
+        receipt['bundle_sha256'] = producer.digest(tar.read_bytes())
+        receipt['bundle_length'] = tar.stat().st_size
+        producer.write_json(output/'PUBLIC-RECEIPT.json', receipt)
+        rejects(lambda: producer.validate_upload(output), 'fixture-upload-archive-link-refused')
+        source_tar = temp/'unsafe-source.tar.gz'
+        with tarfile.open(source_tar, 'w:gz') as archive:
+            member = tarfile.TarInfo('top/../outside')
+            member.size = 1
+            archive.addfile(member, io.BytesIO(b'x'))
+        rejects(lambda: producer.extract_source(source_tar, temp/'source'), 'fixture-source-traversal-refused')
+        require(not (temp/'outside').exists(), 'fixture-source-zero-escape')
+    workflow_checks()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--export', type=Path)
+    args = ap.parse_args()
+    try:
+        if args.export:
+            producer.validate_upload(args.export)
+            print('PASS fixture-public-upload-validation')
+        else:
+            (ROOT/'target').mkdir(exist_ok=True)
+            checks()
+    except (AssertionError, ValueError, OSError) as error:
+        print('FAIL ' + str(error), flush=True)
+        return 1
     return 0
 
 
 if __name__ == '__main__':
-    (ROOT/'target').mkdir(exist_ok=True)
     sys.exit(main())
