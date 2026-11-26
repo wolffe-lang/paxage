@@ -4,9 +4,13 @@
 The plan hands the gate its two legs. On the runner's own push to trunk it
 leaves the macOS leg when a completed, successful pull_request or
 workflow_dispatch run of ci.yml at the pushed commit tested the same tree, ran
-that leg once, green, on macOS, and still holds the leg's payload artifact; the
-determinism job then compares this push's linux payload with that one. Anything
-else runs the leg. The wiring rows hold .github/workflows/ci.yml to it."""
+that leg once, green, on macOS, and still holds the leg's payload artifact,
+which the plan downloads; the plan job uploads it as this run's, and the
+determinism job compares this push's linux payload with it. Anything else,
+a download that fails among them, runs the leg. The wiring rows hold
+.github/workflows/ci.yml to it."""
+import io
+import zipfile
 import http.server
 import json
 import os
@@ -30,6 +34,8 @@ MAC_LABEL = 'macos-latest'
 LINUX = 'linux x86-64 (fmt, build, units, CLI e2e)'
 DETERMINISM = 'Cross-host four-payload byte identity'
 ARTIFACT = 'canonical-arm64'
+PAYLOAD_FILE = 'canonical.payload.tar'
+PAYLOAD_BYTES = b'the macOS payload of the run relied on\n' * 64
 LEGS = [{'name': 'linux x86-64', 'os': 'ubuntu-24.04', 'arch': 'x86_64'},
         {'name': 'macOS arm64', 'os': 'macos-latest', 'arch': 'arm64'}]
 # The runner's own GITHUB_* and any token stay out of every plan this file
@@ -58,9 +64,14 @@ class FakeAPI:
     commit, a run's jobs (paged) and a run's artifacts. `fault` is (path
     prefix, kind)."""
 
-    def __init__(self, runs=(), jobs=None, artifacts=None, fault=None, page_cap=100, ignore_filter=False, totals=None):
+    def __init__(self, runs=(), jobs=None, artifacts=None, fault=None, page_cap=100, ignore_filter=False, totals=None,
+                 archive=None):
         self.runs, self.jobs = list(runs), dict(jobs or {})
         self.artifacts = artifacts
+        # The artifact's archive: the API answers its zip with a redirect to
+        # storage, and storage with the zip. `archive` replaces the zip's bytes.
+        self.archive = archive
+        self.storage_auth = []
         self.fault, self.page_cap, self.ignore_filter = fault, page_cap, ignore_filter
         self.totals = dict(totals or {})
         self.requests = []
@@ -69,7 +80,10 @@ class FakeAPI:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                api.requests.append((self.path, self.headers.get('Authorization')))
+                if self.path.startswith('/storage/'):
+                    api.storage_auth.append(self.headers.get('Authorization'))
+                else:
+                    api.requests.append((self.path, self.headers.get('Authorization')))
                 status, body, extra = api.answer(self.path)
                 data = body if isinstance(body, bytes) else json.dumps(body).encode()
                 self.send_response(status)
@@ -106,6 +120,12 @@ class FakeAPI:
                 time.sleep(4)
             if kind == 'redirect':
                 return 302, {}, {'Location': self.redirect_to + path}
+        m = re.fullmatch(r'/repos/%s/actions/artifacts/(\d+)/zip' % re.escape(REPO), u.path)
+        if m:
+            return 302, {}, {'Location': '%s/storage/%s.zip' % (self.url, m.group(1))}
+        m = re.fullmatch(r'/storage/(\d+)\.zip', u.path)
+        if m:
+            return 200, self.archive if self.archive is not None else payload_zip(), {}
         if u.path == '/repos/%s/actions/workflows/ci.yml/runs' % REPO:
             rs = [r for r in self.runs if self.ignore_filter or r['head_sha'] == q.get('head_sha')]
             return 200, {'total_count': len(rs), 'workflow_runs': rs}, {}
@@ -153,8 +173,17 @@ def wjob(name, conclusion='success', labels=None, steps=None):
     return {'name': name, 'status': 'completed', 'conclusion': conclusion, 'labels': labels, 'steps': steps or []}
 
 
-def artifact(name=ARTIFACT, expired=False):
-    return {'id': 1, 'name': name, 'expired': expired, 'size_in_bytes': 1024}
+def artifact(name=ARTIFACT, expired=False, aid=41):
+    return {'id': aid, 'name': name, 'expired': expired, 'size_in_bytes': 1024}
+
+
+def payload_zip(members=None):
+    """An artifact's archive as GitHub serves it: a zip of the uploaded file."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        for name, data in (members if members is not None else [(PAYLOAD_FILE, PAYLOAD_BYTES)]):
+            z.writestr(name, data)
+    return buf.getvalue()
 
 
 def plan_job(tree, step=True):
@@ -228,12 +257,18 @@ class TrunkPushCover(unittest.TestCase):
             env['PLAN_API_TIMEOUT'] = str(timeout)
         if summary:
             env['GITHUB_STEP_SUMMARY'] = summary
+        payload = Path(self.dir, 'canonical-arm64')
+        shutil.rmtree(payload, ignore_errors=True)
         p = subprocess.run([sys.executable, '-I', str(PLAN), '--github-output', str(out)],
                            capture_output=True, text=True, env=env, cwd=self.dir, timeout=120)
         self.seen.append(p.stdout + p.stderr + out.read_text())
         self.assertEqual(p.returncode, 0, p.stderr)
         outputs = dict(l.split('=', 1) for l in out.read_text().splitlines() if '=' in l)
         shutil.rmtree(out.parent, ignore_errors=True)
+        # What the plan left for the plan job's upload: the payload, or nothing.
+        self.payload = sorted(str(f.relative_to(payload)) for f in payload.rglob('*')) if payload.exists() else None
+        self.payload_bytes = Path(payload, PAYLOAD_FILE).read_bytes() if Path(payload, PAYLOAD_FILE).is_file() else None
+        shutil.rmtree(payload, ignore_errors=True)
         return (json.loads(outputs.get('matrix_gate', 'null')), outputs.get('macos_run'),
                 json.loads(outputs.get('covered', 'null')), p.stdout + p.stderr)
 
@@ -242,6 +277,7 @@ class TrunkPushCover(unittest.TestCase):
         self.assertEqual(legs, LEGS, text)
         self.assertEqual((run, covered), ('', {}), text)
         self.assertRegex(text, r'(?m)^plan: keep %s: ' % re.escape(MAC), text)
+        self.assertIsNone(self.payload, 'a leg that runs leaves no payload for the plan to upload: %s' % text)
         return text
 
     def assert_leaves_macos(self, api, rid, event='pull_request', **kw):
@@ -253,6 +289,9 @@ class TrunkPushCover(unittest.TestCase):
                          (rid, event, self.sha, self.tree), text)
         self.assertRegex(text, r'(?m)^plan: skip %s: green in %s run %d at %s, tree %s' % (
             re.escape(MAC), event, rid, self.sha, self.tree))
+        # The leg it leaves, it hands on: the run's payload, byte for byte, alone.
+        self.assertEqual(self.payload, [PAYLOAD_FILE], text)
+        self.assertEqual(self.payload_bytes, PAYLOAD_BYTES, text)
         return text
 
     def test_green_pull_request_run_leaves_macos(self):
@@ -313,6 +352,33 @@ class TrunkPushCover(unittest.TestCase):
                 self.assert_runs_macos(api)
             finally:
                 api.close()
+
+    def test_a_payload_that_cannot_be_fetched_runs_it(self):
+        # The plan downloads the payload itself; a download that is refused,
+        # redirected nowhere, or answers anything but a zip of the one file
+        # leaves nothing to compare against, so the leg runs.
+        faults = [(('/repos/%s/actions/artifacts' % REPO, kind), None) for kind in (403, 404, 500, 'html')]
+        faults += [(('/storage/', kind), None) for kind in (500, 403)]
+        faults += [(None, b'not a zip at all'), (None, payload_zip([])),
+                   (None, payload_zip([('other.tar', b'x')])),
+                   (None, payload_zip([(PAYLOAD_FILE, PAYLOAD_BYTES), ('extra', b'x')])),
+                   (None, payload_zip([('../' + PAYLOAD_FILE, PAYLOAD_BYTES)]))]
+        for fault, archive in faults:
+            with self.subTest(fault=str(fault), archive=str(archive)[:30]):
+                api = FakeAPI([wrun(7023, self.sha)], {7023: self.green()}, fault=fault, archive=archive)
+                try:
+                    self.assert_runs_macos(api)
+                finally:
+                    api.close()
+
+    def test_the_token_goes_to_the_api_alone(self):
+        api = FakeAPI([wrun(7024, self.sha)], {7024: self.green()})
+        try:
+            self.assert_leaves_macos(api, 7024)
+            self.assertEqual(api.storage_auth, [None])
+            self.assertTrue(any('/actions/artifacts/41/zip' in p for p, _ in api.requests), api.requests)
+        finally:
+            api.close()
 
     def test_the_green_run_among_red_ones_counts(self):
         api = FakeAPI([wrun(7010, self.sha, conclusion='failure'), wrun(7011, self.sha), wrun(7012, self.sha)],
@@ -427,13 +493,24 @@ class Wiring(unittest.TestCase):
         for out in ('matrix_gate', 'macos_run', 'covered'):
             self.assertIn('      %s: ${{ steps.plan.outputs.%s }}\n' % (out, out), plan)
 
-    def test_only_the_plan_and_the_payload_download_get_the_token(self):
+    def test_only_the_plan_step_gets_the_token(self):
         text = self.text()
-        self.assertEqual(text.count('github.token'), 2)
+        self.assertEqual(text.count('github.token'), 1)
         self.assertEqual(text.count('PLAN_TOKEN'), 1)
         self.assertRegex(self.block('plan'),
                          r'(?m)^      - id: plan\n(        .*\n)*        env:\n          PLAN_TOKEN: \$\{\{ github\.token \}\}\n')
-        self.assertIn('          github-token: ${{ github.token }}\n', self.block('determinism'))
+
+    def test_the_plan_job_hands_on_the_payload_it_fetched(self):
+        plan = self.block('plan')
+        up = ("      - name: the macOS payload of the run this push relies on\n"
+              "        if: ${{ steps.plan.outputs.macos_run != '' }}\n"
+              "        uses: actions/upload-artifact@v4\n"
+              "        with:\n"
+              "          name: canonical-arm64\n"
+              "          path: canonical-arm64/canonical.payload.tar\n"
+              "          if-no-files-found: error\n")
+        self.assertIn(up, plan)
+        self.assertLess(plan.index('      - id: plan\n'), plan.index(up))
 
     def test_the_gate_takes_its_legs_from_the_plan(self):
         gate = self.block('gate')
@@ -443,21 +520,14 @@ class Wiring(unittest.TestCase):
         self.assertEqual(['%s (fmt, build, units, CLI e2e)' % l['name'] for l in LEGS], [LINUX, MAC])
         self.assertNotIn('macos-latest', gate)
 
-    def test_determinism_compares_against_the_run_relied_on(self):
+    def test_determinism_compares_this_runs_payloads_and_names_the_left_leg(self):
         d = self.block('determinism')
         self.assertIn('    needs: [plan, gate]\n', d)
-        get = ("      - name: the macOS payload of the run this push relied on\n"
-               "        if: ${{ needs.plan.outputs.macos_run != '' }}\n"
-               "        uses: actions/download-artifact@v4\n"
-               "        with:\n"
-               "          name: canonical-arm64\n"
-               "          path: canonical-arm64\n"
-               "          run-id: ${{ needs.plan.outputs.macos_run }}\n"
-               "          github-token: ${{ github.token }}\n")
-        self.assertIn(get, d)
-        self.assertLess(d.index('          pattern: canonical-*\n'), d.index(get))
-        self.assertLess(d.index(get), d.index('cmp canonical-arm64/canonical.payload.tar canonical-x86_64/canonical.payload.tar'))
-        self.assertIn("echo 'skip %s: green in run ${{ needs.plan.outputs.macos_run }}" % MAC, d)
+        self.assertNotIn('run-id:', d)
+        self.assertIn('          pattern: canonical-*\n', d)
+        say = "echo 'skip %s: green in run ${{ needs.plan.outputs.macos_run }}" % MAC
+        self.assertIn(say, d)
+        self.assertLess(d.index(say), d.index('cmp canonical-arm64/canonical.payload.tar canonical-x86_64/canonical.payload.tar'))
 
 
 if __name__ == '__main__':
