@@ -25,9 +25,30 @@ same magic, no journal), tmpfs, overlay and every other type refuse
 `unqualified-filesystem`, by name, at init and before every transaction. macOS
 roots are development roots: accepted, with no durability claim. This exception
 is macOS-only. `os_name` describes the running kernel, so a static Linux binary
-reports `pax` on PAX; it must not acquire the development exception. PAX ext-family
-roots currently refuse `unqualified-filesystem` until a native positive journal
-proof is qualified. Other unsupported operating systems fail closed as well.
+reports `pax` on PAX; it must not acquire the development exception.
+
+On PAX, a synthetic root on internal ext3 additionally requires a bounded native
+report at `/proc/fs/jbd2/NAME-INODE/info`: `state live`, `device NAME MAJOR:MINOR`,
+`journal inode INODE, BLOCKS blocks in RUNS runs, data=ordered`, and a sequence/commit
+line. Singular `run` and `commit` are required for counts of one. The device name
+and numbers must match the candidate root's `st_dev`, and the journal entry must
+match that name and inode. Missing, malformed, oversized, non-live, wrong-device
+or non-ordered reports refuse `unqualified-filesystem`; the existing ext-family
+refusal text is retained. Read-only mounts, plain ext2 and aborted journals have
+no live report in PAX. Qualification is checked again at each normal transaction;
+I/O or sync failure during a transaction still fails that operation. No result is
+cached across remount or failure. This does not enable `/`.
+
+Linux's existing predicate checks the journal entry, not its mode or abort state;
+its power-cut witness below covers ordered mode. PAX's additional parser is
+covered by `tools/check-qualification` and the normal unit gate. Actual PAX
+transaction and power-cut takes remain required before claiming the Linux X11
+witness applies to PAX. Other unsupported operating systems fail closed.
+
+`rescue` takes the persistent lock and checks the recorded recovery state rather
+than requalifying the filesystem: recovery must still report actual write/sync
+failures after an abort. It does not grant permission to initialize an unsupported
+root or to mutate the live `/`.
 
 One filesystem. The root, the state and cache directories and every directory a
 plan touches must lie on the root's own device. A filesystem mounted below the root
