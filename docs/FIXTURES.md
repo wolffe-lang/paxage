@@ -12,7 +12,7 @@ The isolated hosted container derives disposable role material internally from f
 
 The source checkout is read-only inside the container. Private temporary work stays inside its ephemeral filesystem, not a host-mounted output directory. The producer receives a cleared environment without the checkout credentials or the workflow's service credentials. Child arguments, private bytes and captured child output are never logged. No cache or failure-time workspace upload is configured.
 
-Local tests never generate or load signing material. They cover the public comparator, controlled-clock sensitivity, canonical archive metadata, export allowlists, digest binding, unsafe source paths and refusal of local signing. Their unsigned public JSON stubs are deliberately not installable repositories and are not substitutes for a successful producer dispatch.
+Local tests never generate or load signing material. They inspect generation entrypoints as AST and test only the public environment predicate; no generation entrypoint is called locally, even negatively. They cover the public comparator, controlled-clock sensitivity, canonical archive metadata, export allowlists, digest binding and unsafe source paths. Their unsigned public JSON stubs are deliberately not installable repositories and are not substitutes for a successful producer dispatch.
 
 ## Public artifact
 
