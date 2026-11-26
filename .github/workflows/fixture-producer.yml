@@ -1,0 +1,56 @@
+name: disposable fixture producer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  produce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: public-only producer checks
+        run: python3 -I tools/check-fixture-producer
+      - name: fixture-two-builds-equal and public-only export
+        timeout-minutes: 80
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/producer-output
+          docker run --rm --cpus 2 --memory 6g --memory-swap 6g \
+            -v "$GITHUB_WORKSPACE:/work:ro" -v "$GITHUB_WORKSPACE/target/producer-output:/out" \
+            -w /work -e PRODUCER_REVISION="$GITHUB_SHA" \
+            ubuntu:24.04@sha256:9a04f13b3f80ef056361e30868593b1cfd2279fe19e4081cb93a90bf56819d6a bash -se <<'BUILD'
+          set -euo pipefail
+          printf '%s  %s\n' 796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe ci/fixture-ca/cacert.pem | sha256sum -c -
+          mkdir -p /etc/ssl/certs
+          cp ci/fixture-ca/cacert.pem /etc/ssl/certs/ca-certificates.crt
+          rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
+          printf '%s\n' 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20241001T000000Z noble main universe' > /etc/apt/sources.list.d/fixture.list
+          printf '%s\n' 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20241001T000000Z noble-updates main universe' >> /etc/apt/sources.list.d/fixture.list
+          printf '%s\n' 'deb [check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20241001T000000Z noble-security main universe' >> /etc/apt/sources.list.d/fixture.list
+          printf '%s\n' 'Package: *' 'Pin: origin snapshot.ubuntu.com' 'Pin-Priority: 1001' > /etc/apt/preferences.d/fixture
+          apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=2 -o Acquire::https::Timeout=60 update
+          DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=60 --allow-downgrades install -y --no-install-recommends python3 git curl ca-certificates gcc libc6-dev binutils clang lld openssl passwd util-linux
+          cp ci/fixture-ca/cacert.pem /etc/ssl/certs/ca-certificates.crt
+          useradd --uid 1001 --create-home fixture
+          mkdir -p /fixture-private/tmp /fixture-private/home
+          chmod 700 /fixture-private /fixture-private/tmp /fixture-private/home
+          chown -R fixture:fixture /fixture-private /out
+          runuser -u fixture -- env -i PATH=/usr/bin:/bin HOME=/fixture-private/home TMPDIR=/fixture-private/tmp SHELL=/bin/sh GITHUB_ACTIONS=true GITHUB_EVENT_NAME=workflow_dispatch RUNNER_OS=Linux \
+            python3 -I tools/fixture-producer --revision "$PRODUCER_REVISION" --out /out/disposable-public
+          BUILD
+      - name: verify the upload allowlist
+        run: python3 -I tools/check-fixture-producer --export target/producer-output/disposable-public
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: disposable-install-public
+          path: |
+            target/producer-output/disposable-public/disposable-install.tar
+            target/producer-output/disposable-public/PUBLIC-RECEIPT.json
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: false
