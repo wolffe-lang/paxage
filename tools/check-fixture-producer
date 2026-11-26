@@ -104,7 +104,8 @@ def checks():
         producer.write_json(second/'TEST-ONLY.json', dict(test_only=True, changed=True))
         require(not producer.two_builds_equal(first, second), 'fixture-two-builds-equal')
         print('PASS fixture-two-builds-equal')
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                producer.hashlib, 'sha256', side_effect=AssertionError('fixture-local-derivation-attempt')):
             rejects(lambda: producer.make_test_keys(temp/'never-created'), 'fixture-local-signing-refused')
         require(not (temp/'never-created').exists(), 'fixture-local-signing-zero-writes')
         require(not producer.hosted_allowed(dict(GITHUB_ACTIONS='true', GITHUB_EVENT_NAME='pull_request', RUNNER_OS='Linux'), 1001), 'fixture-pull-request-signing-refused')
