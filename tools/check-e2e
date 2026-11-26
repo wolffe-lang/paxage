@@ -36,7 +36,12 @@ for binary in [BINARY,LINK]:
         names=[] if verb=='upgrade' else ['alpha']
         run([verb,'--root','/do-not-touch',*names],1,out='',err='paxage: root-missing\n',binary=binary)
         run([verb,'--root','/',*names],1,out='',err='paxage: live-root-unsupported\n',binary=binary)
+        print(f'PASS X1-live-root-refused-{verb}-{binary.name}')
         assert not Path('/do-not-touch').exists(), 'C2-no-root-created'
+    run(['init','--root','/','--repo',ROOT.as_uri(),'--pinned-root',ROOT/'tests/missing-root.json',
+         '--arch','x86_64','--slot','default','--now','2026-11-26T00:00:00Z'],
+        1,out='',err='paxage: live-root-unsupported\n',binary=binary)
+    print(f'PASS X1-live-root-refused-init-{binary.name}')
     for verb in ['init','status','verify','rescue','autoremove']:
         run([verb,'--root','/'],code={'init':2}.get(verb,1),binary=binary)
         run([verb],2,out='',binary=binary)
