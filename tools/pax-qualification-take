@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Fixture-free PAX qualification take. Run only on an allocated Linux guest host.
+# Requires reviewed prebuilt kernel and static executables; builds no compiler.
+set -euo pipefail
+: "${PAX_TREE:?}" "${PAX_REV:?}" "${PAX_ELF:?}" "${PAX_ELF_SHA256:?}"
+: "${PXG_STATIC:?}" "${PXG_STATIC_SHA256:?}" "${QUALIFY_STATIC:?}" "${QUALIFY_STATIC_SHA256:?}"
+: "${OUT:?}" "${TMPDIR:?}" "${HOME:?}"
+export SHELL=/bin/sh SOURCE_DATE_EPOCH=1795219200
+[ "$(uname -s):$(uname -m)" = Linux:x86_64 ] || { printf 'REFUSED guest-host\n'; exit 75; }
+[ "$(git -C "$PAX_TREE" rev-parse HEAD)" = "$PAX_REV" ] || { printf 'REFUSED kernel-source-head\n'; exit 75; }
+for pair in "$PAX_ELF:$PAX_ELF_SHA256" "$PXG_STATIC:$PXG_STATIC_SHA256" "$QUALIFY_STATIC:$QUALIFY_STATIC_SHA256"; do
+    file=${pair%:*}; digest=${pair##*:}
+    [ -f "$file" ] && [ "$(sha256sum "$file" | cut -d' ' -f1)" = "$digest" ] || { printf 'REFUSED input-digest\n'; exit 75; }
+done
+for tool in python3 readelf qemu-system-x86_64; do command -v "$tool" >/dev/null || exit 75; done
+for binary in "$PXG_STATIC" "$QUALIFY_STATIC"; do
+    [ -x "$binary" ] || exit 75
+    readelf -hW "$binary" | grep -Eq 'Type: +EXEC' || exit 75
+    ! readelf -lW "$binary" | grep -Eq 'INTERP|DYNAMIC' || exit 75
+done
+[ "${1:-}" != --dry ] || { printf 'PREFLIGHT OK qualification inputs\n'; exit 0; }
+[ $# = 0 ] || exit 2
+[ ! -e "$OUT" ] || { printf 'REFUSED output-exists\n'; exit 75; }
+mkdir -p "$OUT"
+for kind in ext3 ext2 readonly; do
+    dir=$OUT/$kind
+    mkdir -p "$dir"
+    flags=()
+    type=ext2; options=defaults
+    if [ "$kind" != ext2 ]; then flags=(--journal); type=ext3; fi
+    [ "$kind" != readonly ] || options=ro
+    "$PAX_TREE/tools/mkdisk" "${flags[@]}" --label "qualification-$kind" 128M "$dir/data.img"
+    printf '/dev/vda /case %s %s 0 0\n' "$type" "$options" > "$dir/fstab"
+    printf '/bin/qualify-probe /case\n/bin/pxg install --root / scent\n' > "$dir/run"
+    "$PAX_TREE/tools/mkinitramfs" "$dir/root.cpio" \
+        "/bin/pxg=$PXG_STATIC" "/bin/qualify-probe=$QUALIFY_STATIC" \
+        "/etc/pax-run=$dir/run" "/etc/fstab=$dir/fstab" /case/:755
+    "$PAX_TREE/tools/mkimage" --conf "$PAX_TREE/boot/limine-initramfs.conf" \
+        --add "$dir/root.cpio" initramfs.cpio "$PAX_ELF" "$dir/test.iso"
+    "$PAX_TREE/tools/qemu-halt" --firmware "${FIRMWARE:-bios}" --accel "${ACCEL:-kvm}" \
+        --elf "$PAX_ELF" --drive "$dir/data.img" --serial "$dir/serial.log" --timeout 300 \
+        --qemu -rtc --qemu base=2026-11-26T00:00:00,clock=vm \
+        --marker 'halt|PANIC .*' "$dir/test.iso"
+done
+python3 -I - "$OUT" <<'PY'
+from pathlib import Path
+import re, sys
+root = Path(sys.argv[1])
+for kind in ('ext3', 'ext2', 'readonly'):
+    text = (root/kind/'serial.log').read_text(errors='replace').replace('\r', '')
+    assert 'PLATFORM os=pax arch=x86_64' in text, 'X2-pax-guest-platform'
+    assert 'PANIC ' not in text, 'X2-pax-guest-panic'
+    assert 'on /case:' in text, 'X2-pax-guest-mounted'
+    observations = re.findall(r'^QUALIFY kind=(.*?) error=(.*?) last_error=.*$', text, re.M)
+    wanted = [('journalled', '')] if kind == 'ext3' else [('', 'unqualified-filesystem ext2-family (journal not qualified on PAX)')]
+    assert observations == wanted, f'X2-pax-guest-{kind}: {observations!r}'
+    assert re.findall(r'^paxage: live-root-unsupported$', text, re.M) == ['paxage: live-root-unsupported'], 'X1-pax-guest-live-root'
+    assert re.search(r'^user: pxg pid [0-9]+ exit_group 1\b', text, re.M), 'X1-pax-guest-live-root-exit'
+    print(f'PASS X2-pax-guest-{kind}')
+    print(f'PASS X1-pax-guest-live-root-{kind}')
+PY
