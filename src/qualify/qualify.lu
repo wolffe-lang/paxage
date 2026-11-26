@@ -57,6 +57,15 @@ fn kernel_name(majmin: str) -> str {
 /// macOS alone has the explicitly supported development-root exception.
 pub fn development_host(host: str) -> bool { host == "macos" }
 
+/// Validate PAX's device-bound live ordered journal report.
+pub fn pax_proof(name: str, device: str, entry: str, info: str) -> Verdict {
+    let _name = name
+    let _device = device
+    let _entry = entry
+    let _info = info
+    Verdict { kind: "", detail: "", error: "unqualified-filesystem ext2-family (journal not qualified on PAX)" }
+}
+
 /// Qualify the filesystem holding path for mutation.
 pub fn root(path: str) -> Verdict {
     var v = Verdict { kind: "", detail: "", error: "" }
