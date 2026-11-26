@@ -52,6 +52,10 @@ PAX root transactions. Do not use it
 as a production system package manager. Both `paxage` and `pxg` are included.
 
 
+## Disposable install fixture
+
+A separate [dispatch-only producer](docs/FIXTURES.md) prepares a reproducible, public-only test repository with two static scent versions. Local checks never generate or load signing material. The isolated hosted producer uses only disposable test identities, exports no private work, and publishes no live repository. Guest tests must wait for a reviewed successful run and a later digest pin; the workflow's existence is not fixture evidence.
+
 ## Build and try
 
 Requires the platform C linker, Python 3 (fixture harness), curl, git and tar.
