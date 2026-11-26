@@ -8,8 +8,10 @@ loads or handles a production private key, and the keys `repo keygen` makes are 
 `repo verify` and `repo index` publish and read a repository, and the scripts under `publish/` set up a machine
 that serves one. paxage bootstraps, updates and fetches from local repositories, or over HTTPS, through a bounded
 TUF profile. Install, upgrade and removal use crash-safe transactions on journalled Linux filesystems under test,
-with a rescue entry. Selected read-only commands are tested on PAX under QEMU, but PAX package
-transactions are not enabled. The live root `/` remains refused until PAX's boot
+with a rescue entry. Selected read-only commands are tested on PAX under QEMU. Synthetic
+PAX roots now have an explicit device-bound live ordered-ext3 qualification path;
+its parser is tested, but guest transactions and the PAX power-cut witness remain
+unverified. Plain ext2 stays refused. The live root `/` remains refused until PAX's boot
 recovery. The HTTPS transport is experimental: it is tested against local test repositories and a live handshake,
 and no public repository is published yet. `sync` is refused:
 `upgrade` is the refresh-and-upgrade operation. The std pin includes bounded SHA-2 and
