@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pure qualification rows: no signing, network, mount or guest.
+set -eu
+PAXAGE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PAXAGE_ROOT
+cd "$PAXAGE_ROOT"
+. tools/lib-toolchain.sh
+mkdir -p target/tests
+"$WOLF" build --deny-warnings src/qualify_test.lu -o target/tests/qualify
+target/tests/qualify
