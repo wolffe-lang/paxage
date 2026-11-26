@@ -21,19 +21,27 @@ successful pull_request or workflow_dispatch run there
     <tree>` (a pull request's run tests its merge with the base, which is this
     tree only when the base is already in the commit);
   - has, at its latest attempt, the macOS leg once, green, on its macOS runner;
-  - still holds that leg's payload artifact, which this push's determinism job
-    downloads and compares with its own linux payload.
+  - still holds that leg's payload artifact, unexpired, and the plan can fetch
+    it: the API answers the archive with a redirect to storage, which the plan
+    follows by hand without the token; the archive must hold the payload file
+    alone. The plan writes it to canonical-arm64/canonical.payload.tar, the
+    plan job uploads it as this run's `canonical-arm64`, and the determinism
+    job compares it with this push's linux payload as it would the leg's own.
 
-Anything else runs the leg: no such run, a lookup that fails, times out,
-redirects or answers oddly, a jobs listing short of its count, no token, a
-checkout that is not the pushed commit. ci/plan-test.py is this file's proof.
+Anything else runs the leg: no such run, a lookup or a fetch that fails, times
+out, redirects where it should not or answers oddly, a jobs listing short of
+its count, no token, a checkout that is not the pushed commit. Then nothing is
+written, and nothing is uploaded. ci/plan-test.py is this file's proof.
 """
 import argparse
+import io
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +53,8 @@ MAC_LEG = LEGS[1]
 # The macOS job a trunk push may leave, by the name GitHub gives it, with its runner's label.
 MACOS = {'%s (fmt, build, units, CLI e2e)' % MAC_LEG['name']: MAC_LEG['os']}
 PAYLOAD = 'canonical-%s' % MAC_LEG['arch']
+PAYLOAD_FILE = 'canonical.payload.tar'
+MAX_ARCHIVE = 1 << 30
 WORKFLOW = '.github/workflows/ci.yml'
 EVIDENCE_EVENTS = ('pull_request', 'workflow_dispatch')
 TREE_STEP = re.compile(r'^the tree under test is ([0-9a-f]{40}|[0-9a-f]{64})$')
@@ -65,14 +75,13 @@ class Api:
         self.base, self.repo, self.token, self.timeout = base.rstrip('/'), repo, token, timeout
         self.opener = urllib.request.build_opener(NoRedirect)
 
+    def headers(self):
+        return {'Authorization': 'Bearer ' + self.token, 'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'paxage-ci-plan'}
+
     def get(self, path, **query):
         url = '%s/repos/%s/%s?%s' % (self.base, self.repo, path, urllib.parse.urlencode(query))
-        req = urllib.request.Request(url, headers={
-            'Authorization': 'Bearer ' + self.token,
-            'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'paxage-ci-plan',
-        })
+        req = urllib.request.Request(url, headers=self.headers())
         with self.opener.open(req, timeout=self.timeout) as r:
             return json.loads(r.read().decode('utf-8'))
 
@@ -108,10 +117,36 @@ def green_leg(jobs, name, label):
     return len(found) == 1 and found[0].get('conclusion') == 'success' and label in (found[0].get('labels') or [])
 
 
-def holds_payload(api, run_id):
-    """Whether the run still holds the macOS leg's payload, unexpired."""
+def held_payload(api, run_id):
+    """The id of the run's macOS payload artifact, unexpired, or None."""
     d = api.get('actions/runs/%d/artifacts' % run_id, per_page=100)
-    return any(a.get('name') == PAYLOAD and a.get('expired') is False for a in d['artifacts'])
+    ids = [int(a['id']) for a in d['artifacts'] if a.get('name') == PAYLOAD and a.get('expired') is False]
+    return ids[0] if len(ids) == 1 else None
+
+
+def fetch_payload(api, artifact_id):
+    """The payload's bytes. The API answers the archive with a redirect to
+    storage; the plan follows it by hand, without the token, and takes the
+    archive only when it holds the payload file alone. Raises on anything else."""
+    req = urllib.request.Request('%s/repos/%s/actions/artifacts/%d/zip' % (api.base, api.repo, artifact_id),
+                                 headers=dict(api.headers()))
+    try:
+        with api.opener.open(req, timeout=api.timeout):
+            raise ValueError('the archive was answered without the redirect to storage')
+    except urllib.error.HTTPError as e:
+        location = e.headers.get('Location') if e.code in (301, 302, 303, 307, 308) and e.headers else None
+        if not location or urllib.parse.urlsplit(location).scheme not in ('https', 'http'):
+            raise
+    store = urllib.request.Request(location, headers={'User-Agent': 'paxage-ci-plan'})
+    with api.opener.open(store, timeout=api.timeout) as r:
+        data = r.read(MAX_ARCHIVE + 1)
+    if len(data) > MAX_ARCHIVE:
+        raise ValueError('the archive is larger than %d bytes' % MAX_ARCHIVE)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        if names != [PAYLOAD_FILE]:
+            raise ValueError('the archive holds %r, not %s alone' % (names[:5], PAYLOAD_FILE))
+        return z.read(PAYLOAD_FILE)
 
 
 def git(*args):
@@ -164,9 +199,21 @@ def cover(env, say):
             for job, label in MACOS.items():
                 if not green_leg(jobs, job, label):
                     continue
-                if not holds_payload(api, rid):
+                aid = held_payload(api, rid)
+                if aid is None:
                     say('%s run %d holds no unexpired %s: not relied on' % (r['event'], rid, PAYLOAD))
                     continue
+                try:
+                    data = fetch_payload(api, aid)
+                except Exception as e:  # a payload that cannot be fetched is no evidence
+                    say('%s run %d: its %s could not be fetched (%s: %s): not relied on' % (
+                        r['event'], rid, PAYLOAD, type(e).__name__, hide(str(e))))
+                    continue
+                out = Path(PAYLOAD)
+                out.mkdir(exist_ok=True)
+                (out / PAYLOAD_FILE).write_bytes(data)
+                say('%s run %d: its %s fetched, %d bytes, written to %s/%s' % (
+                    r['event'], rid, PAYLOAD, len(data), PAYLOAD, PAYLOAD_FILE))
                 return {job: {'run': rid, 'event': r['event'], 'sha': sha, 'tree': tree}}
         return {}
     except Exception as e:  # any failure of the lookup runs the macOS leg
