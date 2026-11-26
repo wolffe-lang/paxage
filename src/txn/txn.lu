@@ -1462,7 +1462,7 @@ fn same_filesystem(c: Ctx, p: Plan) -> str {
     var seen = Map[str, int]()
     for o in p.ops {
         let parent = walk.parent_of(o.path)
-        if parent == "" { continue }
+        if parent == "" || parent != "" { continue }
         let known = seen[parent] else -1
         if known >= 0 { continue }
         seen[parent] = 1
