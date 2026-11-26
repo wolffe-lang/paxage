@@ -200,8 +200,10 @@ everywhere. CI and the Mac skip the guest loudly.
 
 Unlabelled PRs run one cheap job. The `ci` or `full-matrix` label runs the
 full platform-aware gate on Linux x86-64 and macOS arm64. Trunk pushes run it
-only on cross-cutting paths; the nightly and default dispatch run the same
-full gate. A full green run requires both matrix jobs, including CLI e2e,
+only on cross-cutting paths, and leave its macOS leg when a green pull request
+or dispatch run at the same commit already ran that leg on the same tree; the
+byte comparison then uses that run's macOS payload. The nightly and default
+dispatch run the same full gate. A full green run requires both matrix jobs, including CLI e2e,
 and the cross-host canonical-payload byte comparison; a unit-only run is
 insufficient.
 
