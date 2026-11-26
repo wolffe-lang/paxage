@@ -23,7 +23,7 @@ FORBIDDEN_FIELDS = {'seed', 'private', 'private_key', 'private-key'}
 
 
 def fixture_epoch():
-    return 1795651200  # 2026-11-26T00:00:00Z
+    return int(time.time())
 
 
 def digest(data):
