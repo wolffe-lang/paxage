@@ -1,0 +1,20 @@
+{
+  "architecture": "x86_64",
+  "build_image": "ubuntu:24.04@sha256:9a04f13b3f80ef056361e30868593b1cfd2279fe19e4081cb93a90bf56819d6a",
+  "apt_snapshot": "20241001T000000Z",
+  "bootstrap_ca_url": "https://curl.se/ca/cacert-2026-10-20.pem",
+  "bootstrap_ca_sha256": "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe",
+  "scent_packages": [
+    {
+      "package_version": "1-1",
+      "scent_revision": "b6f63a4892cca631475cd0b87a0b648ce9b532a9",
+      "scent_source_sha256": "1806f9b86662b0ff29e3001522e78355e8c04ca09026c3b86321aa4ea6779709"
+    },
+    {
+      "package_version": "2-1",
+      "scent_revision": "eb888dfc09cba931a747cc59c7c44ab549bd9997",
+      "scent_source_sha256": "c6c0daebe5bb4643b7e1d87fe5af7bc58048df52f1e24122b81dd555d08ea5ab"
+    }
+  ],
+  "purpose": "disposable-install-test"
+}
