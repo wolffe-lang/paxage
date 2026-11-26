@@ -70,6 +70,7 @@ def workflow_checks():
     require('on:\n  workflow_dispatch:\n' in workflow and 'pull_request:' not in workflow
             and '\n  push:' not in workflow and '\n  schedule:' not in workflow, 'fixture-dispatch-only')
     require('permissions:\n  contents: read\n' in workflow and ': write' not in workflow, 'fixture-least-permissions')
+    require('docker run --rm -i ' in workflow, 'fixture-container-stdin')
     require('persist-credentials: false' in workflow and 'env -i PATH=' in workflow
             and 'runuser -u fixture' in workflow, 'fixture-isolated-producer-environment')
     actions = re.findall(r'uses: ([^\s]+)', workflow)
