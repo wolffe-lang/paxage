@@ -26,7 +26,12 @@ def load_consumer():
     require((ROOT/'tests/pax-fixture-pin.json').is_file(), 'pax-fixture-reviewed-pin')
     pin = json.loads((ROOT/'tests/pax-fixture-pin.json').read_text())
     require(pin['bundle']['sha256'] == 'f185488197c4ac0924b921dabbf39b60c3542f34a034ac0e26b947ccc132ee2e'
-            and pin['bundle']['length'] == 2908160 and pin['producer']['run_id'] == 45914664981,
+            and pin['bundle']['length'] == 2908160 and pin['producer']['run_id'] == 45914664981
+            and pin['producer']['run_attempt'] == 1 and pin['producer']['artifact_id'] == 15162290198
+            and pin['producer']['artifact_name'] == 'disposable-install-public'
+            and pin['producer']['revision'] == 'd88e8d54befa1b2cef29a2ca2edeaa5e89c28eef'
+            and pin['producer']['service_digest'] == 'sha256:a6f24a7546b75aaf25b1901d8187c320d0010f0b7aeaa111e6a6d4a3cbdbffee'
+            and pin['root']['sha256'] == '57da38ddbc7279a4a639920256399c03152443161173a8d18462b6c087513288',
             'pax-fixture-reviewed-pin')
     path = ROOT/'tools/pax-fixture'
     require(path.is_file(), 'pax-fixture-consumer-present')
@@ -105,6 +110,13 @@ def checks(consumer, pin):
         rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-producer-bound')
         bad_pin = copy.deepcopy(control); bad_pin['producer']['inputs_sha256'] = '0'*64
         rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-inputs-bound')
+        bad_pin = copy.deepcopy(control); bad_pin['descriptor_sha256'] = '0'*64
+        rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-descriptor-bound')
+        bad_pin = copy.deepcopy(control); bad_pin['packages'][0]['binary_sha256'] = '0'*64
+        rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-packages-bound')
+        (export/'extra-public.txt').write_text('PUBLIC CONTROL\n')
+        rejects(lambda: consumer.validate_export(export, control), 'pax-fixture-extra-export-refused')
+        (export/'extra-public.txt').unlink()
         (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes+b' ')
         rejects(lambda: consumer.validate_export(export, control), 'pax-fixture-receipt-bound')
         (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes)
