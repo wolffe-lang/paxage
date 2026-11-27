@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "test_only": true,
+  "producer": {
+    "repository": "https://github.com/wolffe-lang/paxage",
+    "revision": "d88e8d54befa1b2cef29a2ca2edeaa5e89c28eef",
+    "run_id": 45914664981,
+    "run_attempt": 1,
+    "artifact_id": 15162290198,
+    "artifact_name": "disposable-install-public",
+    "service_digest": "sha256:a6f24a7546b75aaf25b1901d8187c320d0010f0b7aeaa111e6a6d4a3cbdbffee",
+    "inputs_sha256": "ad407829a42b0d6d71ee55ec57a3b69af17e6bc499f60b2bcff30daf68dec479"
+  },
+  "bundle": {
+    "length": 2908160,
+    "sha256": "f185488197c4ac0924b921dabbf39b60c3542f34a034ac0e26b947ccc132ee2e"
+  },
+  "descriptor_sha256": "a1da5498781a13550357fd486731a4cf40f03a454302d0b1d2bf2191eff8b159",
+  "receipt_sha256": "e6311ba1b259074e9e51d9d77ee43d799b59ee92c02ca97179c79389ccc97093",
+  "root": {
+    "version": 1,
+    "sha256": "57da38ddbc7279a4a639920256399c03152443161173a8d18462b6c087513288"
+  },
+  "verification_now": "2026-11-26T00:00:00Z",
+  "packages": [
+    {
+      "package_version": "1-1",
+      "scent_revision": "b6f63a4892cca631475cd0b87a0b648ce9b532a9",
+      "scent_source_sha256": "1806f9b86662b0ff29e3001522e78355e8c04ca09026c3b86321aa4ea6779709",
+      "binary_sha256": "a3a8a3b9eab7c9cbd54470e054786e998671224d92211309b900c5b891484132",
+      "toolchain_sha256": "c0dcfcbb373f7157130dd53f6276cb981b973a88d9d1ccf8efd8eea699bc9a25"
+    },
+    {
+      "package_version": "2-1",
+      "scent_revision": "eb888dfc09cba931a747cc59c7c44ab549bd9997",
+      "scent_source_sha256": "c6c0daebe5bb4643b7e1d87fe5af7bc58048df52f1e24122b81dd555d08ea5ab",
+      "binary_sha256": "db5f3d8a64e8b57b3fce0527049d8b7aef67424534e0bcea748a69ee65aa9133",
+      "toolchain_sha256": "bcd58faca7ac59bd7333114751472dc3fa283c199395132acabd896689f7799f"
+    }
+  ]
+}

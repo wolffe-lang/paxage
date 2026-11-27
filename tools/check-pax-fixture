@@ -91,6 +91,7 @@ def checks(consumer, pin):
         (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes)
         control['bundle'] = dict(length=len(bundle), sha256=consumer.sha256(bundle))
         control['receipt_sha256'] = consumer.sha256(receipt_bytes)
+        control['descriptor_sha256'] = consumer.sha256(entries['TEST-ONLY.json'])
         control['root'] = dict(version=1, sha256=consumer.sha256(root))
         validated = consumer.validate_export(export, control)
         out = work/'extracted'

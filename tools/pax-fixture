@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Validate and extract the pinned public-only PAX fixture; never download or sign."""
+import argparse
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import tarfile
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+loader = importlib.machinery.SourceFileLoader('fixture_public_validation', str(ROOT/'tools/fixture-producer'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+producer = importlib.util.module_from_spec(spec)
+loader.exec_module(producer)
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def json_bytes(value):
+    return (json.dumps(value, sort_keys=True, separators=(',', ':'))+'\n').encode()
+
+
+def reviewed_pin():
+    pin = json.loads((ROOT/'tests/pax-fixture-pin.json').read_bytes())
+    if pin.get('schema') != 1 or pin.get('test_only') is not True:
+        raise ValueError('pax-fixture-pin-schema')
+    return pin
+
+
+def read_regular(path, limit):
+    # Never follow even a final-component link from a copied artifact.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise ValueError('pax-fixture-public-file-bound')
+        value = stream.read(limit+1)
+    if len(value) > limit:
+        raise ValueError('pax-fixture-public-file-bound')
+    return value
+
+
+def require_bundle(bundle, pin):
+    if len(bundle) != pin['bundle']['length']:
+        raise ValueError('pax-fixture-bundle-length')
+    if sha256(bundle) != pin['bundle']['sha256']:
+        raise ValueError('pax-fixture-bundle-digest')
+
+
+def validate_export(directory, pin):
+    directory = Path(directory)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError('pax-fixture-export-directory')
+    if {p.name for p in directory.iterdir()} != {'disposable-install.tar', 'PUBLIC-RECEIPT.json'}:
+        raise ValueError('pax-fixture-export-allowlist')
+    bundle = read_regular(directory/'disposable-install.tar', pin['bundle']['length'])
+    require_bundle(bundle, pin)  # The reviewed digest precedes parsing and extraction.
+    receipt_bytes = read_regular(directory/'PUBLIC-RECEIPT.json', 65536)
+    if sha256(receipt_bytes) != pin['receipt_sha256']:
+        raise ValueError('pax-fixture-receipt-digest')
+    receipt = producer.validate_public_bytes(bundle, receipt_bytes)
+    if receipt.get('producer_revision') != pin['producer']['revision']:
+        raise ValueError('pax-fixture-producer-revision')
+    if receipt.get('inputs_sha256') != pin['producer']['inputs_sha256']:
+        raise ValueError('pax-fixture-inputs-digest')
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode='r:') as archive:
+        entries = {m.name: archive.extractfile(m).read() for m in archive if m.isfile()}
+    root = entries.get('pinned-root.json', b'')
+    if (sha256(root) != pin['root']['sha256'] or root != entries.get('metadata/1.root.json')
+            or json.loads(root)['signed']['version'] != pin['root']['version']):
+        raise ValueError('pax-fixture-public-root')
+    if sha256(entries['TEST-ONLY.json']) != pin['descriptor_sha256']:
+        raise ValueError('pax-fixture-descriptor-digest')
+    descriptor = json.loads(entries['TEST-ONLY.json'])
+    if (descriptor.get('now') != pin['verification_now']
+            or descriptor.get('paxage_revision') != pin['producer']['revision']
+            or descriptor.get('packages') != pin['packages']):
+        raise ValueError('pax-fixture-package-provenance')
+    return entries
+
+
+def extract_public(entries, destination):
+    # Only the already validated byte snapshot is written, not reopened archive paths.
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink():
+        raise ValueError('pax-fixture-output-exists')
+    destination.mkdir(mode=0o700)
+    for name, data in sorted(entries.items()):
+        if not producer.allowed_name(name):
+            raise ValueError('pax-fixture-output-name')
+        path = destination/name
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        with path.open('xb') as stream:
+            stream.write(data)
+        path.chmod(0o644)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('export', type=Path, help='copied two-file public export directory')
+    parser.add_argument('--extract', type=Path, help='new, absent output directory')
+    args = parser.parse_args()
+    try:
+        pin = reviewed_pin()
+        entries = validate_export(args.export, pin)
+        if args.extract:
+            extract_public(entries, args.extract)
+        print('PASS pax-fixture-export-bound sha256='+pin['bundle']['sha256'])
+        print('PUBLIC root_sha256='+pin['root']['sha256']+' versions=1-1,2-1 now='+pin['verification_now'])
+    except (ValueError, OSError, KeyError, TypeError, tarfile.TarError) as error:
+        print('FAIL '+str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
