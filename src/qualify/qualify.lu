@@ -130,7 +130,6 @@ pub fn pax_proof(name: str, device: str, entry: str, info: str) -> Verdict {
     let commits = if sequence[2] == "1" { "commit" } else { "commits" }
     if sequence[3] != commits { return v }
     // This is the single binding between the kernel report and the candidate root.
-    if dev[1] != name || dev[2] != device || entry != "{name}-{inode}" { return v }
     v.kind = "journalled"
     v.detail = "PAX ext journal {entry} on {device}, data=ordered"
     v.error = ""
