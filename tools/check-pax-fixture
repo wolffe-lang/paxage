@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Public-only consumer rows: no publisher, generation, network or guest calls."""
+import argparse
+import ast
+import copy
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+from pathlib import Path
+import sys
+import tarfile
+import tempfile
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def require(value, row):
+    if not value:
+        raise AssertionError(row)
+
+
+def load_consumer():
+    require((ROOT/'tests/pax-fixture-pin.json').is_file(), 'pax-fixture-reviewed-pin')
+    pin = json.loads((ROOT/'tests/pax-fixture-pin.json').read_text())
+    require(pin['bundle']['sha256'] == 'f185488197c4ac0924b921dabbf39b60c3542f34a034ac0e26b947ccc132ee2e'
+            and pin['bundle']['length'] == 2908160 and pin['producer']['run_id'] == 45914664981,
+            'pax-fixture-reviewed-pin')
+    path = ROOT/'tools/pax-fixture'
+    require(path.is_file(), 'pax-fixture-consumer-present')
+    loader = importlib.machinery.SourceFileLoader('pax_fixture', str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module, pin
+
+
+def rejects(function, row):
+    try:
+        function()
+    except (ValueError, OSError):
+        print('PASS ' + row)
+        return
+    raise AssertionError(row)
+
+
+def checks(consumer, pin):
+    source = ast.parse((ROOT/'tools/pax-fixture').read_text())
+    forbidden = {'make_test_keys', 'build_public', 'produce', 'command', 'require_hosted',
+                 'urlopen', 'urlretrieve', 'system', 'popen'}
+    require(not any(isinstance(node, ast.Call) and
+                    ((isinstance(node.func, ast.Attribute) and node.func.attr in forbidden) or
+                     (isinstance(node.func, ast.Name) and node.func.id in forbidden))
+                    for node in ast.walk(source)), 'pax-fixture-public-only-boundary')
+    print('PASS pax-fixture-reviewed-pin')
+    print('PASS pax-fixture-public-only-boundary')
+    public = b'PUBLIC-CONTROL\n'
+    control = copy.deepcopy(pin)
+    control['bundle'] = dict(length=len(public), sha256=hashlib.sha256(public).hexdigest())
+    consumer.require_bundle(public, control)
+    rejects(lambda: consumer.require_bundle(b'X'+public[1:], control), 'pax-fixture-bundle-digest')
+    rejects(lambda: consumer.require_bundle(public+b'X', control), 'pax-fixture-bundle-length')
+    with tempfile.TemporaryDirectory(prefix='pax-fixture-public-', dir=ROOT/'target') as work:
+        work = Path(work)
+        # Unsigned public JSON control, never a usable repository or signing input.
+        root = b'{"signed":{"_type":"root","version":1,"keys":{}},"signatures":[]}\n'
+        descriptor = dict(test_only=True, purpose='disposable-install-test',
+                          package_versions=['1-1', '2-1'], epoch=1795651200,
+                          now='2026-11-26T00:00:00Z', paxage_revision=pin['producer']['revision'],
+                          packages=pin['packages'], pinned_root_sha256=consumer.sha256(root))
+        entries = {'TEST-ONLY.json': consumer.json_bytes(descriptor),
+                   'pinned-root.json': root, 'metadata/1.root.json': root}
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+            for name, value in sorted(entries.items()):
+                info = tarfile.TarInfo(name)
+                info.mode = 0o644
+                info.mtime = 1795651200
+                info.size = len(value)
+                archive.addfile(info, io.BytesIO(value))
+        bundle = buffer.getvalue()
+        receipt = dict(test_only=True, producer_revision=pin['producer']['revision'],
+                       inputs_sha256=pin['producer']['inputs_sha256'],
+                       bundle_length=len(bundle), bundle_sha256=consumer.sha256(bundle),
+                       inventory={k: consumer.sha256(v) for k,v in entries.items()})
+        receipt_bytes = consumer.json_bytes(receipt)
+        export = work/'export'; export.mkdir()
+        (export/'disposable-install.tar').write_bytes(bundle)
+        (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes)
+        control['bundle'] = dict(length=len(bundle), sha256=consumer.sha256(bundle))
+        control['receipt_sha256'] = consumer.sha256(receipt_bytes)
+        control['root'] = dict(version=1, sha256=consumer.sha256(root))
+        validated = consumer.validate_export(export, control)
+        out = work/'extracted'
+        consumer.extract_public(validated, out)
+        require((out/'pinned-root.json').read_bytes() == root, 'pax-fixture-public-extraction')
+        print('PASS pax-fixture-public-extraction')
+        rejects(lambda: consumer.extract_public(validated, out), 'pax-fixture-existing-output-refused')
+        bad_pin = copy.deepcopy(control); bad_pin['root']['sha256'] = '0'*64
+        rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-public-root-bound')
+        bad_pin = copy.deepcopy(control); bad_pin['producer']['revision'] = '0'*40
+        rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-producer-bound')
+        bad_pin = copy.deepcopy(control); bad_pin['producer']['inputs_sha256'] = '0'*64
+        rejects(lambda: consumer.validate_export(export, bad_pin), 'pax-fixture-inputs-bound')
+        (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes+b' ')
+        rejects(lambda: consumer.validate_export(export, control), 'pax-fixture-receipt-bound')
+        (export/'PUBLIC-RECEIPT.json').write_bytes(receipt_bytes)
+        (export/'disposable-install.tar').write_bytes(b'X'+bundle[1:])
+        rejects(lambda: consumer.validate_export(export, control), 'pax-fixture-corrupt-export-refused')
+        (export/'disposable-install.tar').unlink()
+        (export/'disposable-install.tar').symlink_to(work/'absent-public-control')
+        rejects(lambda: consumer.validate_export(export, control), 'pax-fixture-export-link-refused')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--export', type=Path)
+    args = parser.parse_args()
+    try:
+        consumer, pin = load_consumer()
+        (ROOT/'target').mkdir(exist_ok=True)
+        checks(consumer, pin)
+        if args.export:
+            consumer.validate_export(args.export, pin)
+            print('PASS pax-fixture-approved-export')
+    except (AssertionError, ValueError, OSError, KeyError) as error:
+        print('FAIL ' + str(error), flush=True)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
