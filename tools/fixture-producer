@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -268,18 +269,25 @@ def validate_upload(directory):
         raise ValueError('upload allowlist mismatch')
     if any(path.is_symlink() or not path.is_file() for path in directory.iterdir()):
         raise ValueError('unsafe upload entry')
-    receipt = json.loads((directory/'PUBLIC-RECEIPT.json').read_text())
+    bundle = directory/'disposable-install.tar'
+    if bundle.stat().st_size > 128 * 1024 * 1024:
+        raise ValueError('public bundle binding mismatch')
+    return validate_public_bytes(bundle.read_bytes(), (directory/'PUBLIC-RECEIPT.json').read_bytes())
+
+
+def validate_public_bytes(bundle, receipt_bytes):
+    """Validate a public byte snapshot without reopening any caller-controlled path."""
+    receipt = json.loads(receipt_bytes)
     if not isinstance(receipt, dict):
         raise ValueError('invalid public receipt')
     public_json(receipt)
-    bundle = directory/'disposable-install.tar'
-    if (receipt.get('test_only') is not True or bundle.stat().st_size > 128 * 1024 * 1024
-            or receipt.get('bundle_length') != bundle.stat().st_size
-            or receipt.get('bundle_sha256') != digest(bundle.read_bytes())):
+    if (receipt.get('test_only') is not True or len(bundle) > 128 * 1024 * 1024
+            or receipt.get('bundle_length') != len(bundle)
+            or receipt.get('bundle_sha256') != digest(bundle)):
         raise ValueError('public bundle binding mismatch')
     found = {}
     descriptor = None
-    with tarfile.open(bundle, 'r:') as archive:
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode='r:') as archive:
         seen = set()
         for member in archive:
             name = member.name
