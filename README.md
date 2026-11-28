@@ -12,8 +12,11 @@ with a rescue entry. Selected read-only commands are tested on PAX under QEMU. S
 PAX roots now have an explicit device-bound live ordered-ext3 qualification path;
 its parser is tested, but guest transactions and the PAX power-cut witness remain
 unverified. Plain ext2 stays refused. The live root `/` remains refused until PAX's boot
-recovery. The HTTPS transport is experimental: it is tested against local test repositories and a live handshake,
-and no public repository is published yet. `sync` is refused:
+recovery. The HTTPS transport is experimental. A public repository is available at
+`https://pkg.lupp.us/pax/`; the released 0.2.1 Linux client has fetched, staged and
+installed a package from it into a disposable journalled root. Start with the
+[trust anchor](docs/TRUST-ANCHOR.md) and [first-package walkthrough](docs/FIRST-PACKAGE.md).
+This is not a PAX guest network-installation or live-root claim. `sync` is refused:
 `upgrade` is the refresh-and-upgrade operation. The std pin includes bounded SHA-2 and
 strict Ed25519 verification. Fuzz, growth rows and large-input measurements run
 only on Linux under a 2 GiB cap, never on the Mac.
@@ -21,10 +24,9 @@ The name has not been registered in any package registry.
 
 ## Install 0.2.1
 
-Release preparation targets macOS arm64 (`aarch64-apple-darwin`) and Linux
-x86-64 (`x86_64-unknown-linux-gnu`). A release workflow creates a **draft**;
-these instructions apply only once `v0.2.1` has been published on the
-[release page](https://github.com/wolffe-lang/paxage/releases).
+Published 0.2.1 archives target macOS arm64 (`aarch64-apple-darwin`) and Linux
+x86-64 (`x86_64-unknown-linux-gnu`); see the
+[release page](https://github.com/wolffe-lang/paxage/releases/tag/v0.2.1).
 Other platforms have no prebuilt archive in this release.
 
 Download `paxage-0.2.1-TARGET.tar.gz` and its `.sha256` sidecar into an empty
@@ -47,10 +49,10 @@ they do not replace a trusted download channel or constitute signed releases.
 Homebrew and AUR recipes are prepared separately after published hashes are
 known; preparation does not imply that either package is already available.
 
-This release is experimental. It has the HTTPS transport and the signing-ceremony and publishing verbs, but no public
-repository is published yet, and the HTTPS transport has been exercised only against local test repositories and a live
-TLS handshake. Signatures are made outside paxage, which handles no production private key. It makes no live-root writes and has no
-PAX root transactions. Do not use it
+This release is experimental. Its HTTPS client can read the public repository;
+[First package](docs/FIRST-PACKAGE.md) names the independent trust anchor, explicit
+TLS CA bundle and disposable-root setup. It makes no live-root writes and this
+walkthrough does not establish PAX guest network installation. Do not use it
 as a production system package manager. Both `paxage` and `pxg` are included.
 
 
@@ -112,6 +114,10 @@ refused; live-root writes still require the separate maintenance/recovery path.
   upgrade hand it at most 64 packages: what the request reaches plus everything
   installed. A root may hold up to 256; past 64 in that closure, install and upgrade
   refuse `snapshot-limit` while status, verify, remove and autoremove still work.
+- [TRUST ANCHOR](docs/TRUST-ANCHOR.md): independently confirmed initial public
+  root fingerprint, verification and mismatch handling.
+- [FIRST PACKAGE](docs/FIRST-PACKAGE.md): live HTTPS, public TLS roots,
+  authenticated target inspection, staging and disposable installation.
 - [TRUST](docs/TRUST.md): canonical signed spans, four-role metadata, rotation,
   clock/version floors, atomic generations, verified cache and test-only keys.
 - [TRANSACTIONS](docs/TRANSACTIONS.md): the lock inode, qualification (ext3/ext4
@@ -133,8 +139,8 @@ details the interface, safety refusals, failure state and large-file measurement
 `fetch --stage` authenticates payload, manifest and buildinfo through signed
 metadata and binds the manifest again at staging consumption. The client takes a
 literal `file://` URL or an `https://` base ([TRUST T21](docs/TRUST.md)) and a
-caller-supplied pinned root; the HTTPS transport is tested only against local test
-repositories. Transactions (TRANSACTIONS X1–X11) write a root only through
+caller-supplied pinned root; [Trust anchor](docs/TRUST-ANCHOR.md) publishes the
+initial root identity for the live repository. Transactions (TRANSACTIONS X1–X11) write a root only through
 handles held from its root directory, take the root's persistent lock and refuse an
 unjournalled filesystem. Tests exercise recovery to the old or the new generation
 after process and power cuts. Trusted local state must not be coherently
