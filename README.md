@@ -49,7 +49,8 @@ they do not replace a trusted download channel or constitute signed releases.
 Homebrew and AUR recipes are prepared separately after published hashes are
 known; preparation does not imply that either package is already available.
 
-This release is experimental. Its HTTPS client can read the public repository;
+This release is experimental. Its HTTPS client can read the public repository,
+and it includes the external-signing ceremony verbs.
 [First package](docs/FIRST-PACKAGE.md) names the independent trust anchor, explicit
 TLS CA bundle and disposable-root setup. It makes no live-root writes and this
 walkthrough does not establish PAX guest network installation. Do not use it
