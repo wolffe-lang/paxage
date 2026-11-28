@@ -22,6 +22,15 @@ want = {'live-root-unsupported', 'privileged-staging-refused', 'privileged-trust
 for name in sorted(want - set(found)):
     print(f'FAIL docs-code {name} is not defined in src/')
     failed = True
+# Reviewed public bootstrap identity, independent of the page being checked.
+# This is a documentation pin, not a runtime trust-anchor selection mechanism.
+LIVE_ROOT_SHA256 = 'c770e228533144c436ae8e5ee8d62de0a74f56c5bf9e7aade0259701b7b2b0f3'
+anchor = root / 'docs/TRUST-ANCHOR.md'
+if not anchor.is_file() or f'SHA-256: `{LIVE_ROOT_SHA256}`' not in anchor.read_text(encoding='utf-8'):
+    print('FAIL docs-live-root-fingerprint: trust-anchor page differs from the reviewed documentation pin')
+    failed = True
+else:
+    print('PASS docs-live-root-fingerprint ' + LIVE_ROOT_SHA256)
 if failed:
     sys.exit(1)
 print('PASS docs-code ' + ' '.join(sorted(found)))

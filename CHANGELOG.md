@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Publish the independently confirmed initial trust anchor for `https://pkg.lupp.us/pax/`: `metadata/1.root.json`, version 1, 2,305 bytes, SHA-256 `c770e228533144c436ae8e5ee8d62de0a74f56c5bf9e7aade0259701b7b2b0f3`, expiry `2027-11-24T00:00:00Z`, root threshold 2 of 3. [Trust anchor](docs/TRUST-ANCHOR.md) lists all three full root-role key IDs and the stop-on-mismatch check; [First package](docs/FIRST-PACKAGE.md) covers the public TLS CA bundle, authenticated inspection, staging and a disposable root. No change to runtime trust rules or live-root support.
+
 ## 0.2.1 — 2026-11-24
 
 - Experimental preview. Fixes found by installing on a host that has systemd, SELinux and a web server; no change to the formats or the trust rules.
